@@ -4,8 +4,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use starproc::{
-    StreamPipeline, StarlarkProcessor, PipelineConfig, ErrorStrategy,
-    ProcessingError, CompilationError
+    StreamPipeline, StarlarkProcessor, PipelineConfig, ErrorStrategy
 };
 
 #[derive(Parser)]
@@ -131,7 +130,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Set up input
-    let input_filename = args.input_file.as_ref().map(|p| p.to_string_lossy().as_ref());
+    let input_filename = args.input_file.as_ref().map(|p| p.to_string_lossy().to_string());
     let input: Box<dyn BufRead> = if let Some(input_path) = &args.input_file {
         let file = File::open(input_path)
             .map_err(|e| format!("Failed to open input file '{}': {}", input_path.display(), e))?;
@@ -153,7 +152,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let stats = pipeline.process_stream(
         input,
         &mut output,
-        input_filename
+        input_filename.as_deref()
     ).map_err(|e| format!("Processing failed: {}", e))?;
     
     // Ensure output is flushed
@@ -181,6 +180,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use starproc::{GlobalVariables, LineContext};
     
     #[test]
     fn test_simple_transform() {

@@ -4,7 +4,8 @@ pub enum ProcessingError {
     ScriptError {
         step: String,
         line: usize,
-        source: starlark::Error,
+        #[source]
+        source: anyhow::Error,
     },
     
     #[error("Parse error in step '{step}': {message}")]
@@ -23,7 +24,7 @@ pub enum ProcessingError {
 #[derive(Debug, thiserror::Error)]
 pub enum CompilationError {
     #[error("Starlark syntax error: {0}")]
-    SyntaxError(starlark::Error),
+    SyntaxError(String),
     
     #[error("File not found: {0}")]
     FileNotFound(String),
@@ -34,7 +35,7 @@ pub enum CompilationError {
 
 impl From<starlark::Error> for CompilationError {
     fn from(err: starlark::Error) -> Self {
-        CompilationError::SyntaxError(err)
+        CompilationError::SyntaxError(format!("{}", err))
     }
 }
 

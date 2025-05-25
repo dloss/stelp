@@ -2,9 +2,8 @@ use std::borrow::Cow;
 use std::io::{BufRead, Write};
 use std::time::{Duration, Instant};
 use starlark::syntax::{AstModule, Dialect};
-use starlark::environment::{GlobalsBuilder, Module, FrozenModule};
+use starlark::environment::{GlobalsBuilder, Module, Globals};
 use starlark::eval::Evaluator;
-use starlark::values::Value;
 use crate::error::*;
 use crate::variables::GlobalVariables;
 use crate::builtins::{global_functions, EMIT_BUFFER, SKIP_FLAG, TERMINATE_FLAG, GLOBAL_VARS_REF, LINE_CONTEXT};
@@ -17,7 +16,7 @@ pub struct LineContext<'a> {
 }
 
 /// Result of processing a single line
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ProcessResult {
     /// Transform line (use Cow to avoid allocation if unchanged)
     Transform(Cow<'static, str>),
@@ -238,7 +237,7 @@ impl StreamPipeline {
     }
     
     fn process_line(&mut self, line: &str) -> Result<ProcessResult, ProcessingError> {
-        let mut current_line = Cow::Borrowed(line);
+        let mut current_line = line.to_string();
         
         let ctx = LineContext {
             line_number: self.context.line_number,
@@ -250,13 +249,13 @@ impl StreamPipeline {
         for processor in &mut self.processors {
             match processor.process(&current_line, &ctx) {
                 ProcessResult::Transform(new_line) => {
-                    current_line = new_line;
+                    current_line = new_line.into_owned();
                 }
                 other_result => return Ok(other_result),
             }
         }
         
-        Ok(ProcessResult::Transform(current_line))
+        Ok(ProcessResult::Transform(Cow::Owned(current_line)))
     }
     
     /// Completely reset everything (for reusing pipeline)
@@ -276,29 +275,25 @@ impl StreamPipeline {
 
 /// Starlark-based line processor
 pub struct StarlarkProcessor {
-    frozen_globals: FrozenModule,
-    compiled_ast: AstModule,
+    globals: Globals,
+    script_source: String, // Store script source instead of AST
     name: String,
 }
 
 impl StarlarkProcessor {
     /// Create from script source
     pub fn from_script(name: &str, script: &str) -> Result<Self, CompilationError> {
-        // Create frozen globals with built-ins
+        // Create globals with built-ins
         let globals = GlobalsBuilder::new()
-            .with(starlark::stdlib::LibraryExtension::StructType)
-            .with(starlark::stdlib::LibraryExtension::Map)
             .with(global_functions)
             .build();
         
-        let frozen_globals = globals.freeze()?;
-        
-        // Compile the script
-        let ast = AstModule::parse("script", script, &Dialect::Extended)?;
+        // Validate syntax by parsing (but don't store AST)
+        let _ast = AstModule::parse("script", script.to_string(), &Dialect::Extended)?;
         
         Ok(StarlarkProcessor {
-            frozen_globals,
-            compiled_ast: ast,
+            globals,
+            script_source: script.to_string(),
             name: name.to_string(),
         })
     }
@@ -306,7 +301,7 @@ impl StarlarkProcessor {
     /// Execute script with fresh module per line
     fn execute_with_context(&self, 
                           line: &str, 
-                          ctx: &LineContext) -> Result<Value, starlark::Error> {
+                          ctx: &LineContext) -> Result<String, anyhow::Error> {
         // Set up thread-local context
         GLOBAL_VARS_REF.with(|global_ref| {
             *global_ref.borrow_mut() = Some(ctx.global_vars as *const GlobalVariables);
@@ -318,18 +313,25 @@ impl StarlarkProcessor {
         
         // Create fresh module for each line (local variables)
         let module = Module::new();
-        module.frozen_heap().add_reference(self.frozen_globals.frozen_heap());
         
         // Set built-in variables
-        module.set("line", Value::new(line.to_string()));
-        module.set("LINE_NUMBER", Value::new(ctx.line_number as i32));
+        module.set("line", module.heap().alloc(line.to_string()));
+        module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
         if let Some(filename) = ctx.file_name {
-            module.set("FILE_NAME", Value::new(filename.to_string()));
+            module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
         }
         
-        // Execute pre-compiled AST with frozen globals available
+        // Parse and execute script fresh each time
+        let ast = AstModule::parse("script", self.script_source.clone(), &Dialect::Extended)
+            .map_err(|e| anyhow::anyhow!("Script parse error: {}", e))?;
+        
+        // Execute AST with globals available
         let mut eval = Evaluator::new(&module);
-        eval.eval_module(&self.compiled_ast, &self.frozen_globals)
+        let result = eval.eval_module(ast, &self.globals)
+            .map_err(|e| anyhow::anyhow!("Script execution error: {}", e))?;
+        
+        // Convert result to string to avoid lifetime issues
+        Ok(result.to_string())
     }
 }
 
@@ -342,7 +344,7 @@ impl LineProcessor for StarlarkProcessor {
         
         // Execute script
         match self.execute_with_context(line, ctx) {
-            Ok(value) => {
+            Ok(result_str) => {
                 // Collect emitted lines
                 let emissions: Vec<String> = EMIT_BUFFER.with(|buffer| {
                     buffer.borrow().clone()
@@ -356,20 +358,21 @@ impl LineProcessor for StarlarkProcessor {
                         ProcessResult::MultipleOutputs(emissions)
                     }
                 } else if TERMINATE_FLAG.with(|flag| flag.get()) {
-                    let final_output = if value.is_none() {
+                    let final_output = if result_str == "None" || result_str.is_empty() {
                         None
                     } else {
-                        Some(Cow::Owned(value.to_string()))
+                        Some(Cow::Owned(result_str))
                     };
                     ProcessResult::Terminate(final_output)
                 } else {
                     // Normal processing
-                    match (value.is_none(), emissions.is_empty()) {
-                        (true, true) => ProcessResult::Transform(Cow::Borrowed(line)), // No change
+                    let is_none = result_str == "None" || result_str.is_empty();
+                    match (is_none, emissions.is_empty()) {
+                        (true, true) => ProcessResult::Transform(Cow::Owned(line.to_string())), // No change
                         (true, false) => ProcessResult::MultipleOutputs(emissions),
-                        (false, true) => ProcessResult::Transform(Cow::Owned(value.to_string())),
+                        (false, true) => ProcessResult::Transform(Cow::Owned(result_str)),
                         (false, false) => ProcessResult::TransformWithEmissions {
-                            primary: Some(Cow::Owned(value.to_string())),
+                            primary: Some(Cow::Owned(result_str)),
                             emissions,
                         },
                     }
@@ -392,7 +395,7 @@ impl LineProcessor for StarlarkProcessor {
 
 // Add a convenience method for executing processors outside the main pipeline
 impl StarlarkProcessor {
-    pub fn process(&self, line: &str, ctx: &LineContext) -> ProcessResult {
+    pub fn process_standalone(&self, line: &str, ctx: &LineContext) -> ProcessResult {
         // Clear emit buffer and flags
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
@@ -400,7 +403,7 @@ impl StarlarkProcessor {
         
         // Execute script
         match self.execute_with_context(line, ctx) {
-            Ok(value) => {
+            Ok(result_str) => {
                 // Collect emitted lines
                 let emissions: Vec<String> = EMIT_BUFFER.with(|buffer| {
                     buffer.borrow().clone()
@@ -414,20 +417,21 @@ impl StarlarkProcessor {
                         ProcessResult::MultipleOutputs(emissions)
                     }
                 } else if TERMINATE_FLAG.with(|flag| flag.get()) {
-                    let final_output = if value.is_none() {
+                    let final_output = if result_str == "None" || result_str.is_empty() {
                         None
                     } else {
-                        Some(Cow::Owned(value.to_string()))
+                        Some(Cow::Owned(result_str))
                     };
                     ProcessResult::Terminate(final_output)
                 } else {
                     // Normal processing
-                    match (value.is_none(), emissions.is_empty()) {
-                        (true, true) => ProcessResult::Transform(Cow::Borrowed(line)), // No change
+                    let is_none = result_str == "None" || result_str.is_empty();
+                    match (is_none, emissions.is_empty()) {
+                        (true, true) => ProcessResult::Transform(Cow::Owned(line.to_string())), // No change
                         (true, false) => ProcessResult::MultipleOutputs(emissions),
-                        (false, true) => ProcessResult::Transform(Cow::Owned(value.to_string())),
+                        (false, true) => ProcessResult::Transform(Cow::Owned(result_str)),
                         (false, false) => ProcessResult::TransformWithEmissions {
-                            primary: Some(Cow::Owned(value.to_string())),
+                            primary: Some(Cow::Owned(result_str)),
                             emissions,
                         },
                     }
