@@ -7,16 +7,13 @@ pub enum ProcessingError {
         #[source]
         source: anyhow::Error,
     },
-    
+
     #[error("Parse error in step '{step}': {message}")]
-    ParseError {
-        step: String,
-        message: String,
-    },
-    
+    ParseError { step: String, message: String },
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     #[error("Line too long: {length} > {max_length}")]
     LineTooLong { length: usize, max_length: usize },
 }
@@ -25,10 +22,10 @@ pub enum ProcessingError {
 pub enum CompilationError {
     #[error("Starlark syntax error: {0}")]
     SyntaxError(String),
-    
+
     #[error("File not found: {0}")]
     FileNotFound(String),
-    
+
     #[error("Invalid configuration: {0}")]
     ConfigError(String),
 }

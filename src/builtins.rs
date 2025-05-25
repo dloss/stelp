@@ -1,9 +1,8 @@
-use std::cell::{Cell, RefCell};
-use starlark::values::{Value, list::ListRef, dict::DictRef, Heap};
-use starlark::environment::GlobalsBuilder;
-use starlark::starlark_module;
 use anyhow::Result;
 use regex::Regex;
+use starlark::starlark_module;
+use starlark::values::{dict::DictRef, list::ListRef, Heap, Value};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -22,7 +21,7 @@ static REGEX_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Regex>>> = OnceLoc
 fn get_regex(pattern: &str) -> Result<Regex> {
     let cache = REGEX_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     let mut cache_guard = cache.lock().unwrap();
-    
+
     if let Some(regex) = cache_guard.get(pattern) {
         Ok(regex.clone())
     } else {
@@ -33,7 +32,7 @@ fn get_regex(pattern: &str) -> Result<Regex> {
 }
 
 #[starlark_module]
-pub fn global_functions(builder: &mut GlobalsBuilder) {
+pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
     /// Emit an additional output line
     fn emit(text: String) -> anyhow::Result<starlark::values::none::NoneType> {
         EMIT_BUFFER.with(|buffer| {
@@ -49,13 +48,21 @@ pub fn global_functions(builder: &mut GlobalsBuilder) {
     }
 
     /// Stop processing entirely
-    fn terminate() -> anyhow::Result<starlark::values::none::NoneType> {
+    fn terminate<'v>(heap: &'v Heap, message: Option<String>) -> anyhow::Result<Value<'v>> {
         TERMINATE_FLAG.with(|flag| flag.set(true));
-        Ok(starlark::values::none::NoneType)
+        if let Some(msg) = message {
+            Ok(heap.alloc(msg))
+        } else {
+            Ok(Value::new_none())
+        }
     }
 
     /// Get a global variable
-    fn get_global<'v>(heap: &'v Heap, name: String, default: Option<Value<'v>>) -> anyhow::Result<Value<'v>> {
+    fn get_global<'v>(
+        heap: &'v Heap,
+        name: String,
+        default: Option<Value<'v>>,
+    ) -> anyhow::Result<Value<'v>> {
         GLOBAL_VARS_REF.with(|global_ref| {
             if let Some(globals_ptr) = *global_ref.borrow() {
                 let globals = unsafe { &*globals_ptr };
@@ -116,9 +123,14 @@ pub fn global_functions(builder: &mut GlobalsBuilder) {
     }
 
     /// Find all regex matches
-    fn regex_find_all<'v>(heap: &'v Heap, pattern: String, text: String) -> anyhow::Result<Value<'v>> {
+    fn regex_find_all<'v>(
+        heap: &'v Heap,
+        pattern: String,
+        text: String,
+    ) -> anyhow::Result<Value<'v>> {
         let regex = get_regex(&pattern)?;
-        let matches: Vec<Value> = regex.find_iter(&text)
+        let matches: Vec<Value> = regex
+            .find_iter(&text)
             .map(|m| heap.alloc(m.as_str().to_string()))
             .collect();
         Ok(heap.alloc(matches))
@@ -137,18 +149,23 @@ pub fn global_functions(builder: &mut GlobalsBuilder) {
     }
 
     /// Parse CSV line
-    fn parse_csv<'v>(heap: &'v Heap, line: String, delimiter: Option<String>) -> anyhow::Result<Value<'v>> {
+    fn parse_csv<'v>(
+        heap: &'v Heap,
+        line: String,
+        delimiter: Option<String>,
+    ) -> anyhow::Result<Value<'v>> {
         let delim = delimiter.unwrap_or_else(|| ",".to_string());
         let delim_char = delim.chars().next().unwrap_or(',');
-        
+
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(delim_char as u8)
             .has_headers(false)
             .from_reader(line.as_bytes());
-        
+
         if let Some(record) = reader.records().next() {
             let record = record?;
-            let fields: Vec<Value> = record.iter()
+            let fields: Vec<Value> = record
+                .iter()
                 .map(|field| heap.alloc(field.to_string()))
                 .collect();
             Ok(heap.alloc(fields))
@@ -161,31 +178,36 @@ pub fn global_functions(builder: &mut GlobalsBuilder) {
     fn to_csv(values: Value, delimiter: Option<String>) -> anyhow::Result<String> {
         let delim = delimiter.unwrap_or_else(|| ",".to_string());
         let delim_char = delim.chars().next().unwrap_or(',');
-        
+
         let list = ListRef::from_value(values)
             .ok_or_else(|| anyhow::anyhow!("Expected list for to_csv"))?;
-        
+
         let mut writer = csv::WriterBuilder::new()
             .delimiter(delim_char as u8)
             .has_headers(false)
             .from_writer(Vec::new());
-        
+
         let fields: Vec<String> = list.iter().map(|v| v.to_string()).collect();
         writer.write_record(&fields)?;
-        
+
         let data = writer.into_inner()?;
         let result = String::from_utf8(data)?;
         Ok(result.trim_end().to_string()) // Remove trailing newline
     }
 
     /// Parse key-value pairs
-    fn parse_kv<'v>(heap: &'v Heap, line: String, sep: Option<String>, delim: Option<String>) -> anyhow::Result<Value<'v>> {
+    fn parse_kv<'v>(
+        heap: &'v Heap,
+        line: String,
+        sep: Option<String>,
+        delim: Option<String>,
+    ) -> anyhow::Result<Value<'v>> {
         let separator = sep.unwrap_or_else(|| "=".to_string());
         let delimiter = delim.unwrap_or_else(|| " ".to_string());
-        
+
         // Create a simple dict representation as a string for now
         let mut items = Vec::new();
-        
+
         for pair in line.split(&delimiter) {
             if let Some((key, value)) = pair.split_once(&separator) {
                 let k = key.trim();
@@ -193,13 +215,16 @@ pub fn global_functions(builder: &mut GlobalsBuilder) {
                 items.push(format!("{}: {}", k, v));
             }
         }
-        
+
         let dict_str = format!("{{{}}}", items.join(", "));
         Ok(heap.alloc(dict_str))
     }
 }
 
-fn json_to_starlark_value<'v>(heap: &'v Heap, json: serde_json::Value) -> anyhow::Result<Value<'v>> {
+fn json_to_starlark_value<'v>(
+    heap: &'v Heap,
+    json: serde_json::Value,
+) -> anyhow::Result<Value<'v>> {
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),
@@ -214,7 +239,8 @@ fn json_to_starlark_value<'v>(heap: &'v Heap, json: serde_json::Value) -> anyhow
         }
         serde_json::Value::String(s) => Ok(heap.alloc(s)),
         serde_json::Value::Array(arr) => {
-            let values: Result<Vec<Value>, _> = arr.into_iter()
+            let values: Result<Vec<Value>, _> = arr
+                .into_iter()
                 .map(|v| json_to_starlark_value(heap, v))
                 .collect();
             Ok(heap.alloc(values?))
@@ -245,9 +271,8 @@ fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
     } else if let Some(s) = value.unpack_str() {
         Ok(serde_json::Value::String(s.to_string()))
     } else if let Some(list) = ListRef::from_value(value) {
-        let arr: Result<Vec<serde_json::Value>, _> = list.iter()
-            .map(starlark_to_json_value)
-            .collect();
+        let arr: Result<Vec<serde_json::Value>, _> =
+            list.iter().map(starlark_to_json_value).collect();
         Ok(serde_json::Value::Array(arr?))
     } else if let Some(dict) = DictRef::from_value(value) {
         let mut obj = serde_json::Map::new();

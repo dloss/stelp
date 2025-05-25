@@ -1,6 +1,6 @@
+use starlark::values::{Heap, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use starlark::values::{Value, Heap};
 
 /// Global variables that persist across lines
 pub struct GlobalVariables {
@@ -13,7 +13,7 @@ impl GlobalVariables {
             store: RefCell::new(HashMap::new()),
         }
     }
-    
+
     pub fn get<'v>(&self, heap: &'v Heap, name: &str, default: Option<Value<'v>>) -> Value<'v> {
         if let Some(json_str) = self.store.borrow().get(name) {
             // Try to deserialize from JSON
@@ -25,7 +25,7 @@ impl GlobalVariables {
         }
         default.unwrap_or(Value::new_none())
     }
-    
+
     pub fn set<'v>(&self, name: String, value: Value<'v>) {
         // Convert to JSON for storage
         if let Ok(json_value) = starlark_to_json_value(value) {
@@ -34,7 +34,7 @@ impl GlobalVariables {
             }
         }
     }
-    
+
     pub fn clear(&self) {
         self.store.borrow_mut().clear();
     }
@@ -47,7 +47,10 @@ impl Default for GlobalVariables {
 }
 
 // Helper functions for JSON conversion
-fn json_to_starlark_value<'v>(heap: &'v Heap, json: serde_json::Value) -> anyhow::Result<Value<'v>> {
+fn json_to_starlark_value<'v>(
+    heap: &'v Heap,
+    json: serde_json::Value,
+) -> anyhow::Result<Value<'v>> {
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),
@@ -62,7 +65,8 @@ fn json_to_starlark_value<'v>(heap: &'v Heap, json: serde_json::Value) -> anyhow
         }
         serde_json::Value::String(s) => Ok(heap.alloc(s)),
         serde_json::Value::Array(arr) => {
-            let values: Result<Vec<Value>, _> = arr.into_iter()
+            let values: Result<Vec<Value>, _> = arr
+                .into_iter()
                 .map(|v| json_to_starlark_value(heap, v))
                 .collect();
             Ok(heap.alloc(values?))
@@ -85,8 +89,8 @@ fn json_to_starlark_value<'v>(heap: &'v Heap, json: serde_json::Value) -> anyhow
 }
 
 fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
-    use starlark::values::{list::ListRef, dict::DictRef};
-    
+    use starlark::values::{dict::DictRef, list::ListRef};
+
     if value.is_none() {
         Ok(serde_json::Value::Null)
     } else if let Some(b) = value.unpack_bool() {
@@ -96,9 +100,8 @@ fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
     } else if let Some(s) = value.unpack_str() {
         Ok(serde_json::Value::String(s.to_string()))
     } else if let Some(list) = ListRef::from_value(value) {
-        let arr: Result<Vec<serde_json::Value>, _> = list.iter()
-            .map(starlark_to_json_value)
-            .collect();
+        let arr: Result<Vec<serde_json::Value>, _> =
+            list.iter().map(starlark_to_json_value).collect();
         Ok(serde_json::Value::Array(arr?))
     } else if let Some(dict) = DictRef::from_value(value) {
         let mut obj = serde_json::Map::new();
