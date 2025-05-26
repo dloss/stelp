@@ -16,6 +16,7 @@ thread_local! {
     static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
     static SKIP_FLAG: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static TERMINATE_FLAG: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static TERMINATE_MESSAGE: RefCell<Option<String>> = RefCell::new(None);
 }
 
 /// Context passed to each processor
@@ -206,7 +207,7 @@ impl StreamPipeline {
                         writeln!(output, "{}", output_line)?;
                         self.stats.lines_output += 1;
                     }
-                    // Then stop processing
+                    // Then stop processing - this is the key fix!
                     break;
                 }
                 ProcessResult::Error(err) => match self.config.error_strategy {
@@ -305,16 +306,12 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(starlark::values::none::NoneType)
     }
 
-    fn terminate<'v>(
-        heap: &'v starlark::values::Heap,
-        message: Option<String>,
-    ) -> anyhow::Result<starlark::values::Value<'v>> {
+    fn terminate(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
         TERMINATE_FLAG.with(|flag| flag.set(true));
-        if let Some(msg) = message {
-            Ok(heap.alloc(msg))
-        } else {
-            Ok(starlark::values::Value::new_none())
-        }
+        TERMINATE_MESSAGE.with(|msg| {
+            *msg.borrow_mut() = message;
+        });
+        Ok(starlark::values::none::NoneType)
     }
 
     fn get_global<'v>(
@@ -360,10 +357,11 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         });
         Ok(value)
     }
-
     fn regex_match(pattern: String, text: String) -> anyhow::Result<bool> {
-        let regex = regex::Regex::new(&pattern)?;
-        Ok(regex.is_match(&text))
+        match regex::Regex::new(&pattern) {
+            Ok(regex) => Ok(regex.is_match(&text)),
+            Err(_) => Ok(false), // Return false on regex error instead of propagating
+        }
     }
 
     fn regex_replace(pattern: String, replacement: String, text: String) -> anyhow::Result<String> {
@@ -439,10 +437,19 @@ impl StarlarkProcessor {
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
         TERMINATE_FLAG.with(|flag| flag.set(false));
+        TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
         // Execute script
         match self.execute_with_context(line, ctx) {
             Ok(result_str) => {
+                if line.contains("STOP") || line.contains("123") {
+                    eprintln!(
+                        "DEBUG: line='{}', result_str='{}', terminate_flag={}",
+                        line,
+                        result_str,
+                        TERMINATE_FLAG.with(|f| f.get())
+                    );
+                }
                 // Collect emitted lines
                 let emissions: Vec<String> = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
 
@@ -454,20 +461,13 @@ impl StarlarkProcessor {
                         ProcessResult::MultipleOutputs(emissions)
                     }
                 } else if TERMINATE_FLAG.with(|flag| flag.get()) {
-                    let final_output = if result_str == "None" || result_str.is_empty() {
-                        None
-                    } else {
-                        // Remove surrounding quotes if they exist
-                        let clean_str = if result_str.starts_with('"')
-                            && result_str.ends_with('"')
-                            && result_str.len() > 1
-                        {
-                            result_str[1..result_str.len() - 1].to_string()
+                    let final_output = TERMINATE_MESSAGE.with(|msg| {
+                        if let Some(message) = msg.borrow().clone() {
+                            Some(Cow::Owned(message))
                         } else {
-                            result_str
-                        };
-                        Some(Cow::Owned(clean_str))
-                    };
+                            None
+                        }
+                    });
                     ProcessResult::Terminate(final_output)
                 } else {
                     // Normal processing
