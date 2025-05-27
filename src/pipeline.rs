@@ -390,8 +390,11 @@ impl StarlarkProcessor {
         // Create globals with built-ins
         let globals = GlobalsBuilder::new().with(simple_globals).build();
 
-        // Validate syntax by parsing
-        let dialect = Dialect::Extended;
+        // Validate syntax by parsing with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
         let _ast = AstModule::parse("script", script.to_string(), &dialect)?;
 
         Ok(StarlarkProcessor {
@@ -417,8 +420,11 @@ impl StarlarkProcessor {
         module.set("True", starlark::values::Value::new_bool(true));
         module.set("False", starlark::values::Value::new_bool(false));
 
-        // Parse and execute script fresh each time
-        let dialect = Dialect::Extended;
+        // Parse and execute script with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
         let ast = AstModule::parse("script", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Script parse error: {}", e))?;
 

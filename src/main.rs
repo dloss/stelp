@@ -329,8 +329,6 @@ line.upper()
 
     // Replace the failing tests with these corrected versions using proper Starlark syntax:
 
-    
-   
     // Simple working terminate test
     #[test]
     fn test_terminate_simple() {
@@ -455,7 +453,6 @@ result2 = get_global("test", "default")
         let result3 = processor3.process_standalone("test", &ctx);
         println!("Other functions result: {:?}", result3);
     }
-
 
     #[test]
     fn test_regex_functions() {
@@ -887,5 +884,32 @@ contains_test = '"name": "test"' in line
             Ok(_) => println!("✓ terminate function available"),
             Err(e) => println!("✗ terminate function not available: {}", e),
         }
+    }
+
+    #[test]
+    fn test_f_strings() {
+        let config = PipelineConfig::default();
+        let mut pipeline = StreamPipeline::new(config);
+
+        let processor = StarlarkProcessor::from_script(
+            "test",
+            r#"
+count = 42
+name = "world"
+f"Hello {name}, count is {count}"
+        "#,
+        )
+        .unwrap();
+
+        pipeline.add_processor(Box::new(processor));
+
+        let input = Cursor::new("test\n");
+        let mut output = Vec::new();
+
+        let stats = pipeline.process_stream(input, &mut output, None).unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+
+        println!("F-string output: '{}'", output_str);
+        assert!(output_str.contains("Hello world, count is 42"));
     }
 }
