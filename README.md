@@ -1,4 +1,4 @@
-# Starproc
+# Stelp
 
 A high-performance CLI tool that processes stdin line-by-line using Starlark (Python-like) scripts.
 
@@ -16,9 +16,9 @@ A high-performance CLI tool that processes stdin line-by-line using Starlark (Py
 
 ```bash
 git clone <repository>
-cd starproc
+cd stelp
 cargo build --release
-# Binary will be available at target/release/starproc
+# Binary will be available at target/release/stelp
 ```
 
 ## Quick Start
@@ -27,27 +27,27 @@ cargo build --release
 
 ```bash
 # Simple transformation
-echo "hello world" | starproc --step 'line.upper()'
+echo "hello world" | stelp --step 'line.upper()'
 # Output: HELLO WORLD
 
 # Process files directly
-starproc --step 'line.upper()' input.txt
+stelp --step 'line.upper()' input.txt
 
 # Multiple files
-starproc --step 'line.upper()' file1.txt file2.txt file3.txt
+stelp --step 'line.upper()' file1.txt file2.txt file3.txt
 
 # Multiple steps
-starproc --step 'line.split(",")[0]' --step 'line.upper()' data.csv
+stelp --step 'line.split(",")[0]' --step 'line.upper()' data.csv
 
 # Using script files
-starproc -f script.star input1.txt input2.txt
+stelp -f script.star input1.txt input2.txt
 ```
 
 ### Advanced Examples
 
 #### Global Variables and Counting
 ```bash
-starproc --step '
+stelp --step '
 count = get_global("total", 0) + 1
 set_global("total", count)
 f"Line {count}: {line}"
@@ -56,7 +56,7 @@ f"Line {count}: {line}"
 
 #### Filtering and Multi-line Output
 ```bash
-starproc --step '
+stelp --step '
 if "ERROR" in line:
     emit(f"🚨 {line}")
     emit("---")
@@ -68,7 +68,7 @@ else:
 
 #### CSV Processing
 ```bash
-starproc --step '
+stelp --step '
 fields = parse_csv(line)
 if len(fields) >= 3:
     to_csv([fields[0].upper(), fields[2], "processed"])
@@ -79,7 +79,7 @@ else:
 
 #### JSON Processing
 ```bash
-starproc --step '
+stelp --step '
 try:
     data = parse_json(line)
     data["timestamp"] + " | " + data["event"]
@@ -90,7 +90,7 @@ except:
 
 #### Log Processing with Termination
 ```bash
-starproc --step '
+stelp --step '
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
     terminate("Processing stopped due to fatal error")
@@ -153,7 +153,7 @@ if total > 1000:
 ## Command-Line Options
 
 ```
-starproc [OPTIONS] [FILE]...
+stelp [OPTIONS] [FILE]...
 
 Arguments:
   [FILE]...                Input files to process (default: stdin if none provided)
@@ -206,7 +206,7 @@ f"[{count}] {formatted}"
 
 Run with:
 ```bash
-starproc -f process_logs.star logs.txt
+stelp -f process_logs.star logs.txt
 ```
 
 ## Performance
@@ -220,12 +220,12 @@ starproc -f process_logs.star logs.txt
 
 ### Skip Strategy (Default)
 ```bash
-starproc --step 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
+stelp --step 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
 ```
 
 ### Fail-Fast Strategy
 ```bash
-starproc --fail-fast --step 'parse_json(line)["field"]' data.json  # Stops on first error
+stelp --fail-fast --step 'parse_json(line)["field"]' data.json  # Stops on first error
 ```
 
 ## Examples Repository
@@ -248,10 +248,10 @@ cargo test
 Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | starproc --step 'f"Item {line}: {line_number()}"'
+seq 1 1000 | stelp --step 'f"Item {line}: {line_number()}"'
 
 # Process CSV
-echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | starproc --step '
+echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp --step '
 if line_number() == 1:
     line  # Keep header
 else:
@@ -263,10 +263,10 @@ else:
 '
 
 # Process multiple files
-starproc --step 'line.upper()' file1.txt file2.txt file3.txt
+stelp --step 'line.upper()' file1.txt file2.txt file3.txt
 
 # Use with shell globbing
-starproc --step 'f"[{file_name()}] {line}"' *.log
+stelp --step 'f"[{file_name()}] {line}"' *.log
 ```
 
 ## License

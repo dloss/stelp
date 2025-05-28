@@ -1,13 +1,13 @@
 [package]
-name = "starproc"
-version = "0.2.0"
+name = "stelp"
+version = "0.3.0"
 edition = "2021"
-description = "A high-performance CLI tool that processes stdin line-by-line using Starlark scripts"
+description = "A high-performance CLI tool that processes stdin line-by-line using Starlark scripts (Starlark Event and Line Processor)"
 authors = ["Dirk Loss <mail@dirk-loss.de>"]
 license = "MIT"
 
 [[bin]]
-name = "starproc"
+name = "stelp"
 path = "src/main.rs"
 
 [dependencies]

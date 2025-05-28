@@ -1,8 +1,8 @@
-# Starproc Starlark Dialect Specification
+# Stelp Starlark Dialect Specification
 
 ## Overview
 
-Starproc implements a specialized dialect of Starlark optimized for line-by-line text processing. This dialect extends standard Starlark with stream processing primitives while maintaining core language compatibility.
+Stelp implements a specialized dialect of Starlark optimized for line-by-line text processing. This dialect extends standard Starlark with stream processing primitives while maintaining core language compatibility.
 
 ## Standard Starlark Compliance
 

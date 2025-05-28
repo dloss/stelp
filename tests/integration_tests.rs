@@ -1,4 +1,4 @@
-use starproc::{
+use stelp::{
     ErrorStrategy, GlobalVariables, LineContext, PipelineConfig, StarlarkProcessor, StreamPipeline,
 };
 use std::io::Cursor;

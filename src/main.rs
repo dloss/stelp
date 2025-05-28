@@ -3,12 +3,12 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
-use starproc::{ErrorStrategy, PipelineConfig, ProcessingStats, StarlarkProcessor, StreamPipeline};
+use stelp::{ErrorStrategy, PipelineConfig, ProcessingStats, StarlarkProcessor, StreamPipeline};
 
 #[derive(Parser)]
-#[command(name = "starproc")]
-#[command(about = "Process text streams with Starlark scripts")]
-#[command(version = "0.1.0")]
+#[command(name = "stelp")]
+#[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
+#[command(version = "0.3.0")]
 struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]
