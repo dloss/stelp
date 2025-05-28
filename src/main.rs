@@ -195,8 +195,6 @@ mod tests {
     use starproc::{GlobalVariables, LineContext};
     use std::io::Cursor;
 
-    // Replace the failing tests with these corrected versions:
-
     #[test]
     fn test_terminate_working() {
         println!("=== Testing working terminate ===");
@@ -210,15 +208,19 @@ mod tests {
             global_vars: &globals,
         };
 
-        // Fix: Always return a value explicitly
+        // Fix: Make the logic clearer - always transform first, then check for terminate
         let processor = StarlarkProcessor::from_script(
             "test",
             r#"
+# First transform the line
+result = line.upper()
+
+# Then check if we should terminate
 if "STOP" in line:
     terminate("Stopped at: " + line)
-    line  # Return original line when terminating
-else:
-    line.upper()  # Return uppercased line
+
+# Return the transformed result
+result
         "#,
         )
         .unwrap();
@@ -258,16 +260,20 @@ else:
         let config = PipelineConfig::default();
         let mut pipeline = StreamPipeline::new(config);
 
-        // Fix: Always ensure proper return values
+        // Fix: Make the transformation clear and explicit
         let processor = StarlarkProcessor::from_script(
             "test",
             r#"
-if "STOP" in line:
-    emit("Stopped at: " + line)
+# First transform to uppercase
+result = line.upper()
+
+# Then check if we should emit and skip
+if "STOP" in result:
+    emit("Stopped at: " + line)  # emit original line for message
     skip()
-    ""  # Return empty string when skipping
-else:
-    line.upper()  # Return the transformed line
+
+# Return the transformed result (which will be skipped if skip() was called)
+result
         "#,
         )
         .unwrap();
@@ -276,9 +282,9 @@ else:
         let input = Cursor::new("hello\nSTOP here\nworld\n");
         let mut output = Vec::new();
 
-        let stats = pipeline.process_stream(input, &mut output, None).unwrap();
+        let _stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
-        println!("Stats: {:?}", stats);
+        println!("Stats: {:?}", _stats);
         let output_str = String::from_utf8(output).unwrap();
         println!("Output: '{}'", output_str);
 
@@ -286,8 +292,8 @@ else:
         assert!(output_str.contains("Stopped at: STOP here"));
         assert!(output_str.contains("WORLD"));
 
-        assert_eq!(stats.lines_processed, 3);
-        assert_eq!(stats.lines_output, 3);
+        assert_eq!(_stats.lines_processed, 3);
+        assert_eq!(_stats.lines_output, 3);
     }
 
     // Replace the old test_terminate with this working version:
@@ -327,8 +333,6 @@ line.upper()
         assert!(stats.lines_output >= 2); // At least "HELLO" + terminate message
     }
 
-    // Replace the failing tests with these corrected versions using proper Starlark syntax:
-
     // Simple working terminate test
     #[test]
     fn test_terminate_simple() {
@@ -350,7 +354,7 @@ line.upper()
         let input = Cursor::new("hello\nSTOP here\nworld\n");
         let mut output = Vec::new();
 
-        let stats = pipeline.process_stream(input, &mut output, None).unwrap();
+        let _stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
         println!("Simple terminate output: '{}'", output_str);
@@ -359,8 +363,6 @@ line.upper()
         assert!(output_str.contains("HELLO"));
         assert!(!output_str.contains("WORLD")); // Key test: should not process after STOP
     }
-
-    // Replace the failing tests with these corrected versions that ensure proper return values:
 
     #[test]
     fn test_basic_script_execution() {
@@ -515,7 +517,7 @@ result
         let input = Cursor::new("hello 123\n");
         let mut output = Vec::new();
 
-        let stats = pipeline.process_stream(input, &mut output, None).unwrap();
+        let _stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
         println!("Capture group test output: '{}'", output_str);
