@@ -1,6 +1,6 @@
 [package]
 name = "starproc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A high-performance CLI tool that processes stdin line-by-line using Starlark scripts"
 authors = ["Dirk Loss <mail@dirk-loss.de>"]

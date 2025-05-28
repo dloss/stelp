@@ -10,6 +10,7 @@ A high-performance CLI tool that processes stdin line-by-line using Starlark (Py
 - **Flexible output control** - transform, emit multiple lines, filter, or terminate
 - **Error handling** with skip or fail-fast strategies
 - **Performance focused** - 10K-50K lines/second for simple transformations
+- **Multi-file processing** - process multiple files with accumulated statistics
 
 ## Installation
 
@@ -26,66 +27,70 @@ cargo build --release
 
 ```bash
 # Simple transformation
-echo "hello world" | starproc 'line.upper()'
+echo "hello world" | starproc --step 'line.upper()'
 # Output: HELLO WORLD
 
-# Multiple steps
-echo "hello,world" | starproc 'line.split(",")[0]' 'line.upper()'
-# Output: HELLO
+# Process files directly
+starproc --step 'line.upper()' input.txt
 
-# Using --step flag
-echo "test" | starproc --step 'line.upper()' --step 'line + "!"'
-# Output: TEST!
+# Multiple files
+starproc --step 'line.upper()' file1.txt file2.txt file3.txt
+
+# Multiple steps
+starproc --step 'line.split(",")[0]' --step 'line.upper()' data.csv
+
+# Using script files
+starproc -f script.star input1.txt input2.txt
 ```
 
 ### Advanced Examples
 
 #### Global Variables and Counting
 ```bash
-cat data.txt | starproc '
+starproc --step '
 count = get_global("total", 0) + 1
 set_global("total", count)
 f"Line {count}: {line}"
-'
+' data.txt
 ```
 
 #### Filtering and Multi-line Output
 ```bash
-cat logs.txt | starproc '
+starproc --step '
 if "ERROR" in line:
     emit(f"🚨 {line}")
     emit("---")
     skip()
 else:
     line.upper()
-'
+' logs.txt
 ```
 
 #### CSV Processing
 ```bash
-cat data.csv | starproc '
+starproc --step '
 fields = parse_csv(line)
 if len(fields) >= 3:
     to_csv([fields[0].upper(), fields[2], "processed"])
 else:
     skip()
-'
+' data.csv
 ```
 
 #### JSON Processing
 ```bash
-cat events.json | starproc '
+starproc --step '
 try:
     data = parse_json(line)
     data["timestamp"] + " | " + data["event"]
 except:
     skip()
-'
+' events.json
 ```
 
 #### Log Processing with Termination
 ```bash
-cat server.log | starproc '
+starproc --step '
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
     terminate("Processing stopped due to fatal error")
@@ -94,7 +99,7 @@ if regex_match(r"\[ERROR\]", line):
     regex_replace(r"\[ERROR\]", "[🔴 ERROR]", line)
 else:
     line
-'
+' server.log
 ```
 
 ## Built-in Functions
@@ -148,23 +153,22 @@ if total > 1000:
 ## Command-Line Options
 
 ```
-starproc [OPTIONS] [EXPRESSION]...
+starproc [OPTIONS] [FILE]...
 
 Arguments:
-  [EXPRESSION]...  Pipeline steps (executed in order)
+  [FILE]...                Input files to process (default: stdin if none provided)
 
 Options:
-  -s, --step <EXPRESSION>     Additional pipeline steps
-  -f, --file <FILE>          Script file containing pipeline
-  -i, --input <FILE>         Input file (default: stdin)
-  -o, --output <FILE>        Output file (default: stdout)
-      --debug                Debug mode - show processing details
-      --fail-fast            Fail on first error instead of skipping
-      --progress <N>         Show progress every N lines
-      --max-line-length <N>  Maximum line length [default: 1048576]
-      --buffer-size <N>      Buffer size for I/O [default: 65536]
-  -h, --help                 Print help
-  -V, --version              Print version
+  -s, --step <EXPRESSION>  Pipeline steps (executed in order)
+  -f, --file <FILE>        Script file containing pipeline definition
+  -o, --output <FILE>      Output file (default: stdout)
+      --debug              Debug mode - show processing details
+      --fail-fast          Fail on first error instead of skipping
+      --progress <N>       Show progress every N lines
+      --max-line-length <N> Maximum line length [default: 1048576]
+      --buffer-size <N>    Buffer size for I/O [default: 65536]
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ## Script Files
@@ -202,7 +206,7 @@ f"[{count}] {formatted}"
 
 Run with:
 ```bash
-cat logs.txt | starproc --file process_logs.star
+starproc -f process_logs.star logs.txt
 ```
 
 ## Performance
@@ -216,12 +220,12 @@ cat logs.txt | starproc --file process_logs.star
 
 ### Skip Strategy (Default)
 ```bash
-starproc 'parse_json(line)["field"]'  # Skips invalid JSON lines
+starproc --step 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
 ```
 
 ### Fail-Fast Strategy
 ```bash
-starproc --fail-fast 'parse_json(line)["field"]'  # Stops on first error
+starproc --fail-fast --step 'parse_json(line)["field"]' data.json  # Stops on first error
 ```
 
 ## Examples Repository
@@ -244,10 +248,10 @@ cargo test
 Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | starproc 'f"Item {line}: {line_number()}"'
+seq 1 1000 | starproc --step 'f"Item {line}: {line_number()}"'
 
 # Process CSV
-echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | starproc '
+echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | starproc --step '
 if line_number() == 1:
     line  # Keep header
 else:
@@ -257,16 +261,14 @@ else:
     else:
         skip()
 '
+
+# Process multiple files
+starproc --step 'line.upper()' file1.txt file2.txt file3.txt
+
+# Use with shell globbing
+starproc --step 'f"[{file_name()}] {line}"' *.log
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Run `cargo test` and `cargo clippy`
-5. Submit a pull request
 
 ## License
 
-MIT OR Apache-2.0
+MIT

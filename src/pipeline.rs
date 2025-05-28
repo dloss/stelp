@@ -139,6 +139,13 @@ impl StreamPipeline {
         &self.context.global_vars
     }
 
+    /// Reset processor state between files (but keep global variables)
+    pub fn reset_processors(&mut self) {
+        for processor in &mut self.processors {
+            processor.reset();
+        }
+    }
+
     /// Process a single file/stream
     pub fn process_stream<R: BufRead, W: Write>(
         &mut self,
