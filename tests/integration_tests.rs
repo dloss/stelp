@@ -1,7 +1,7 @@
+use std::io::Cursor;
 use stelp::{
     ErrorStrategy, GlobalVariables, LineContext, PipelineConfig, StarlarkProcessor, StreamPipeline,
 };
-use std::io::Cursor;
 
 #[test]
 fn test_terminate_working() {

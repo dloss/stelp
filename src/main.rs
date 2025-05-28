@@ -14,9 +14,9 @@ struct Args {
     #[arg(value_name = "FILE")]
     input_files: Vec<PathBuf>,
 
-    /// Pipeline steps (executed in order)
-    #[arg(short = 's', long = "step", action = ArgAction::Append)]
-    steps: Vec<String>,
+    /// Pipeline evaluation expressions (executed in order)
+    #[arg(short = 'e', long = "eval", action = ArgAction::Append)]
+    evals: Vec<String>,
 
     /// Script file containing pipeline definition
     #[arg(short = 'f', long = "file")]
@@ -50,13 +50,13 @@ struct Args {
 impl Args {
     fn validate(&self) -> Result<(), String> {
         let has_script_file = self.script_file.is_some();
-        let has_steps = !self.steps.is_empty();
+        let has_evals = !self.evals.is_empty();
 
-        match (has_script_file, has_steps) {
-            (true, true) => Err("Cannot use both --file and --step arguments".to_string()),
+        match (has_script_file, has_evals) {
+            (true, true) => Err("Cannot use both --file and --eval arguments".to_string()),
             (true, false) => Ok(()), // Script file only
-            (false, true) => Ok(()), // Step arguments only
-            (false, false) => Err("Must provide either --file or --step arguments".to_string()),
+            (false, true) => Ok(()), // Eval arguments only
+            (false, false) => Err("Must provide either --file or --eval arguments".to_string()),
         }
     }
 }
@@ -111,10 +111,11 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
         pipeline.add_processor(Box::new(processor));
     } else {
-        // Add processors from --step arguments
-        for (i, step) in args.steps.iter().enumerate() {
-            let processor = StarlarkProcessor::from_script(&format!("step_{}", i + 1), step)
-                .map_err(|e| format!("Failed to compile step {}: {}", i + 1, e))?;
+        // Add processors from --eval arguments
+        for (i, eval_expr) in args.evals.iter().enumerate() {
+            let processor =
+                StarlarkProcessor::from_script(&format!("eval_{}", i + 1), eval_expr)
+                    .map_err(|e| format!("Failed to compile eval expression {}: {}", i + 1, e))?;
 
             pipeline.add_processor(Box::new(processor));
         }

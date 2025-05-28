@@ -160,6 +160,35 @@ else:
     line.upper()
 ```
 
+## CLI Usage
+
+### Command Line Evaluation
+Use `--eval` or `-e` to specify processing expressions:
+
+```bash
+# Simple transformation
+stelp --eval 'line.upper()' input.txt
+
+# Multiple evaluation expressions (executed in order)
+stelp --eval 'line.strip()' --eval 'line.upper()' input.txt
+
+# Complex expressions
+stelp --eval '
+if "ERROR" in line:
+    emit(f"Found error: {line}")
+    skip()
+else:
+    line.replace("INFO", "ℹ️")
+' logfile.txt
+```
+
+### Script Files
+Use `--file` or `-f` for larger scripts:
+
+```bash
+stelp --file process_logs.star input.txt
+```
+
 ## Compatibility Guidelines
 
 ### Standard Starlark Code
@@ -195,7 +224,7 @@ Extension functions should be used judiciously:
 4. **Termination**: Can stop processing mid-stream
 
 ### Best Practices
-1. Keep line processing scripts simple and focused
+1. Keep line processing expressions simple and focused
 2. Use functions to organize complex logic
 3. Minimize global state usage
 4. Test with representative data sets

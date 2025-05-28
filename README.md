@@ -27,17 +27,17 @@ cargo build --release
 
 ```bash
 # Simple transformation
-echo "hello world" | stelp --step 'line.upper()'
+echo "hello world" | stelp --eval 'line.upper()'
 # Output: HELLO WORLD
 
 # Process files directly
-stelp --step 'line.upper()' input.txt
+stelp --eval 'line.upper()' input.txt
 
 # Multiple files
-stelp --step 'line.upper()' file1.txt file2.txt file3.txt
+stelp --eval 'line.upper()' file1.txt file2.txt file3.txt
 
-# Multiple steps
-stelp --step 'line.split(",")[0]' --step 'line.upper()' data.csv
+# Multiple evaluation expressions
+stelp --eval 'line.split(",")[0]' --eval 'line.upper()' data.csv
 
 # Using script files
 stelp -f script.star input1.txt input2.txt
@@ -47,7 +47,7 @@ stelp -f script.star input1.txt input2.txt
 
 #### Global Variables and Counting
 ```bash
-stelp --step '
+stelp --eval '
 count = get_global("total", 0) + 1
 set_global("total", count)
 f"Line {count}: {line}"
@@ -56,7 +56,7 @@ f"Line {count}: {line}"
 
 #### Filtering and Multi-line Output
 ```bash
-stelp --step '
+stelp --eval '
 if "ERROR" in line:
     emit(f"🚨 {line}")
     emit("---")
@@ -68,7 +68,7 @@ else:
 
 #### CSV Processing
 ```bash
-stelp --step '
+stelp --eval '
 fields = parse_csv(line)
 if len(fields) >= 3:
     to_csv([fields[0].upper(), fields[2], "processed"])
@@ -79,7 +79,7 @@ else:
 
 #### JSON Processing
 ```bash
-stelp --step '
+stelp --eval '
 try:
     data = parse_json(line)
     data["timestamp"] + " | " + data["event"]
@@ -90,7 +90,7 @@ except:
 
 #### Log Processing with Termination
 ```bash
-stelp --step '
+stelp --eval '
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
     terminate("Processing stopped due to fatal error")
@@ -159,7 +159,7 @@ Arguments:
   [FILE]...                Input files to process (default: stdin if none provided)
 
 Options:
-  -s, --step <EXPRESSION>  Pipeline steps (executed in order)
+  -e, --eval <EXPRESSION>  Pipeline evaluation expressions (executed in order)
   -f, --file <FILE>        Script file containing pipeline definition
   -o, --output <FILE>      Output file (default: stdout)
       --debug              Debug mode - show processing details
@@ -220,12 +220,12 @@ stelp -f process_logs.star logs.txt
 
 ### Skip Strategy (Default)
 ```bash
-stelp --step 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
+stelp --eval 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
 ```
 
 ### Fail-Fast Strategy
 ```bash
-stelp --fail-fast --step 'parse_json(line)["field"]' data.json  # Stops on first error
+stelp --fail-fast --eval 'parse_json(line)["field"]' data.json  # Stops on first error
 ```
 
 ## Examples Repository
@@ -248,10 +248,10 @@ cargo test
 Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | stelp --step 'f"Item {line}: {line_number()}"'
+seq 1 1000 | stelp --eval 'f"Item {line}: {line_number()}"'
 
 # Process CSV
-echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp --step '
+echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp --eval '
 if line_number() == 1:
     line  # Keep header
 else:
@@ -263,10 +263,10 @@ else:
 '
 
 # Process multiple files
-stelp --step 'line.upper()' file1.txt file2.txt file3.txt
+stelp --eval 'line.upper()' file1.txt file2.txt file3.txt
 
 # Use with shell globbing
-stelp --step 'f"[{file_name()}] {line}"' *.log
+stelp --eval 'f"[{file_name()}] {line}"' *.log
 ```
 
 ## License
