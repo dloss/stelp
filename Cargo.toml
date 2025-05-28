@@ -11,7 +11,7 @@ name = "stelp"
 path = "src/main.rs"
 
 [dependencies]
-starlark = "0.12"
+starlark = "0.13"
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
