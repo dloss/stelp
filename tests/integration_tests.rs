@@ -1,6 +1,7 @@
 use std::io::Cursor;
 use stelp::{
-    ErrorStrategy, GlobalVariables, LineContext, PipelineConfig, StarlarkProcessor, StreamPipeline,
+    ErrorStrategy, FilterProcessor, GlobalVariables, LineContext, LineProcessor, PipelineConfig,
+    StarlarkProcessor, StreamPipeline,
 };
 
 #[test]
@@ -587,4 +588,378 @@ f"Hello {name}, count is {count}"
 
     println!("F-string output: '{}'", output_str);
     assert!(output_str.contains("Hello world, count is 42"));
+}
+
+#[test]
+fn test_simple_filter() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter out lines containing "skip"
+    let filter = FilterProcessor::from_expression("test_filter", r#""skip" in line"#).unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("keep this\nskip this line\nkeep this too\nskip me\nfinal line\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Filter output: '{}'", output_str);
+
+    assert_eq!(stats.lines_processed, 5);
+    assert_eq!(stats.lines_output, 3);
+    assert_eq!(stats.lines_skipped, 2);
+
+    assert!(output_str.contains("keep this\n"));
+    assert!(output_str.contains("keep this too\n"));
+    assert!(output_str.contains("final line\n"));
+    assert!(!output_str.contains("skip this line"));
+    assert!(!output_str.contains("skip me"));
+}
+
+#[test]
+fn test_numeric_filter() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter out lines longer than 10 characters
+    let filter = FilterProcessor::from_expression("length_filter", "len(line) > 10").unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("short\nthis is a longer line\nok\nvery long line indeed\nfine\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Numeric filter output: '{}'", output_str);
+
+    assert_eq!(stats.lines_processed, 5);
+    assert_eq!(stats.lines_output, 3);
+    assert_eq!(stats.lines_skipped, 2);
+
+    assert!(output_str.contains("short\n"));
+    assert!(output_str.contains("ok\n"));
+    assert!(output_str.contains("fine\n"));
+    assert!(!output_str.contains("this is a longer line"));
+    assert!(!output_str.contains("very long line indeed"));
+}
+
+#[test]
+fn test_regex_filter() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter out lines that contain numbers
+    let filter =
+        FilterProcessor::from_expression("regex_filter", r#"regex_match("\\d+", line)"#).unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("no numbers\nhas 123 numbers\npure text\ncode42\nclean line\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Regex filter output: '{}'", output_str);
+
+    assert_eq!(stats.lines_processed, 5);
+    assert_eq!(stats.lines_output, 3);
+    assert_eq!(stats.lines_skipped, 2);
+
+    assert!(output_str.contains("no numbers\n"));
+    assert!(output_str.contains("pure text\n"));
+    assert!(output_str.contains("clean line\n"));
+    assert!(!output_str.contains("has 123 numbers"));
+    assert!(!output_str.contains("code42"));
+}
+
+#[test]
+fn test_filter_with_context() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter out even-numbered lines
+    let filter = FilterProcessor::from_expression("line_filter", "LINE_NUMBER % 2 == 0").unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("line 1\nline 2\nline 3\nline 4\nline 5\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Context filter output: '{}'", output_str);
+
+    assert_eq!(stats.lines_processed, 5);
+    assert_eq!(stats.lines_output, 3);
+    assert_eq!(stats.lines_skipped, 2);
+
+    assert!(output_str.contains("line 1\n"));
+    assert!(output_str.contains("line 3\n"));
+    assert!(output_str.contains("line 5\n"));
+    assert!(!output_str.contains("line 2"));
+    assert!(!output_str.contains("line 4"));
+}
+
+#[test]
+fn test_filter_combined_with_eval() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // First filter out lines containing "skip"
+    let filter = FilterProcessor::from_expression("skip_filter", r#""skip" in line"#).unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    // Then transform remaining lines to uppercase
+    let processor = StarlarkProcessor::from_script("uppercase", "line.upper()").unwrap();
+    pipeline.add_processor(Box::new(processor));
+
+    let input = Cursor::new("hello\nskip this\nworld\nskip me too\nend\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Combined filter+eval output: '{}'", output_str);
+
+    assert_eq!(stats.lines_processed, 5);
+    assert_eq!(stats.lines_output, 3);
+    assert_eq!(stats.lines_skipped, 2);
+
+    assert_eq!(output_str, "HELLO\nWORLD\nEND\n");
+}
+
+#[test]
+fn test_multiple_filters() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter 1: Remove lines containing "skip"
+    let filter1 = FilterProcessor::from_expression("filter1", r#""skip" in line"#).unwrap();
+    pipeline.add_processor(Box::new(filter1));
+
+    // Filter 2: Remove lines longer than 8 characters
+    let filter2 = FilterProcessor::from_expression("filter2", "len(line) > 8").unwrap();
+    pipeline.add_processor(Box::new(filter2));
+
+    let input = Cursor::new("short\nskip this\nvery long line\nok\nskip me\ngood\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Multiple filters output: '{}'", output_str);
+
+    // Only "short", "ok", and "good" should pass both filters
+    assert!(output_str.contains("short\n"));
+    assert!(output_str.contains("ok\n"));
+    assert!(output_str.contains("good\n"));
+    assert!(!output_str.contains("skip"));
+    assert!(!output_str.contains("very long line"));
+
+    assert_eq!(stats.lines_output, 3);
+    assert!(stats.lines_skipped >= 3); // At least 3 lines filtered out
+}
+
+#[test]
+fn test_filter_error_handling() {
+    let config = PipelineConfig {
+        error_strategy: ErrorStrategy::Skip,
+        ..Default::default()
+    };
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Filter with an invalid expression that will cause an error
+    let filter =
+        FilterProcessor::from_expression("error_filter", "undefined_variable > 5").unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("line 1\nline 2\nline 3\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
+    println!("Error handling stats: {:?}", stats);
+
+    // With skip strategy, errors should be counted but not stop processing
+    assert_eq!(stats.lines_processed, 3);
+    assert_eq!(stats.errors, 3); // All lines should error
+    assert_eq!(stats.lines_output, 0); // No successful outputs
+}
+
+// Add this simple debug test to tests/integration_tests.rs to understand what's happening
+
+#[test]
+fn debug_filter_simple() {
+    println!("=== Debug Filter Simple ===");
+
+    let config = PipelineConfig {
+        debug: true,
+        error_strategy: ErrorStrategy::FailFast,
+        ..Default::default()
+    };
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Test the simplest possible filter - should never filter anything
+    let filter = FilterProcessor::from_expression("debug_filter", "False").unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("test line\n");
+    let mut output = Vec::new();
+
+    let result = pipeline.process_stream(input, &mut output, Some("test.txt"));
+
+    match result {
+        Ok(stats) => {
+            println!("Debug stats: {:?}", stats);
+            println!("Debug output: '{}'", String::from_utf8_lossy(&output));
+
+            // This should process 1 line and output 1 line
+            assert_eq!(stats.lines_processed, 1);
+            assert_eq!(stats.lines_output, 1);
+            assert_eq!(String::from_utf8(output).unwrap(), "test line\n");
+        }
+        Err(e) => {
+            println!("Pipeline error: {}", e);
+            panic!("Pipeline failed with error: {}", e);
+        }
+    }
+}
+
+#[test]
+fn debug_filter_standalone() {
+    println!("=== Debug Filter Standalone ===");
+
+    let globals = GlobalVariables::new();
+    let ctx = LineContext {
+        line_number: 1,
+        file_name: None,
+        global_vars: &globals,
+    };
+
+    let mut filter = FilterProcessor::from_expression("debug", "False").unwrap();
+    let result = filter.process("test line", &ctx);
+    println!("Standalone filter result: {:?}", result);
+
+    // Test with True filter
+    let mut filter_true = FilterProcessor::from_expression("debug", "True").unwrap();
+    let result_true = filter_true.process("test line", &ctx);
+    println!("Standalone filter (True) result: {:?}", result_true);
+}
+
+#[test]
+fn debug_filter_expression() {
+    println!("=== Debug Filter Expression ===");
+
+    // Test what the filter expression actually becomes
+    let filter = FilterProcessor::from_expression("debug", "False").unwrap();
+    println!("Filter script: {}", filter.script_source);
+
+    // Test a simple expression
+    let filter2 = FilterProcessor::from_expression("debug2", "len(line) > 5").unwrap();
+    println!("Filter2 script: {}", filter2.script_source);
+}
+
+// Add these debug tests to understand the specific failures
+
+#[test]
+fn debug_numeric_filter() {
+    println!("=== Debug Numeric Filter ===");
+
+    let config = PipelineConfig {
+        debug: true,
+        error_strategy: ErrorStrategy::FailFast,
+        ..Default::default()
+    };
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Test the same filter that's failing
+    let filter = FilterProcessor::from_expression("length_filter", "len(line) > 10").unwrap();
+    println!("Numeric filter script: '{}'", filter.script_source);
+    pipeline.add_processor(Box::new(filter));
+
+    let input = Cursor::new("short\n");
+    let mut output = Vec::new();
+
+    let result = pipeline.process_stream(input, &mut output, Some("test.txt"));
+
+    match result {
+        Ok(stats) => {
+            println!("Numeric filter stats: {:?}", stats);
+            println!(
+                "Numeric filter output: '{}'",
+                String::from_utf8_lossy(&output)
+            );
+        }
+        Err(e) => {
+            println!("Numeric filter error: {}", e);
+        }
+    }
+}
+
+#[test]
+fn debug_multiple_filters_individual() {
+    println!("=== Debug Multiple Filters Individual ===");
+
+    let globals = GlobalVariables::new();
+    let ctx = LineContext {
+        line_number: 1,
+        file_name: None,
+        global_vars: &globals,
+    };
+
+    // Test each filter individually
+    let mut filter1 = FilterProcessor::from_expression("filter1", r#""skip" in line"#).unwrap();
+    println!("Filter1 script: '{}'", filter1.script_source);
+
+    let result1a = filter1.process("short", &ctx);
+    println!("Filter1 on 'short': {:?}", result1a);
+
+    let result1b = filter1.process("skip this", &ctx);
+    println!("Filter1 on 'skip this': {:?}", result1b);
+
+    let mut filter2 = FilterProcessor::from_expression("filter2", "len(line) > 8").unwrap();
+    println!("Filter2 script: '{}'", filter2.script_source);
+
+    let result2a = filter2.process("short", &ctx);
+    println!("Filter2 on 'short': {:?}", result2a);
+
+    let result2b = filter2.process("very long line", &ctx);
+    println!("Filter2 on 'very long line': {:?}", result2b);
+}
+
+#[test]
+fn debug_error_filter() {
+    println!("=== Debug Error Filter ===");
+
+    let globals = GlobalVariables::new();
+    let ctx = LineContext {
+        line_number: 1,
+        file_name: None,
+        global_vars: &globals,
+    };
+
+    // Test the error-producing filter
+    let mut filter =
+        FilterProcessor::from_expression("error_filter", "undefined_variable > 5").unwrap();
+    println!("Error filter script: '{}'", filter.script_source);
+
+    let result = filter.process("line 1", &ctx);
+    println!("Error filter result: {:?}", result);
 }

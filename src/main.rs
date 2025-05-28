@@ -3,7 +3,10 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
-use stelp::{ErrorStrategy, PipelineConfig, ProcessingStats, StarlarkProcessor, StreamPipeline};
+use stelp::{
+    ErrorStrategy, FilterProcessor, PipelineConfig, ProcessingStats, StarlarkProcessor,
+    StreamPipeline,
+};
 
 #[derive(Parser)]
 #[command(name = "stelp")]
@@ -21,6 +24,10 @@ struct Args {
     /// Script file containing pipeline definition
     #[arg(short = 'f', long = "file")]
     script_file: Option<PathBuf>,
+
+    /// Filter expressions - remove lines where expression is true (executed before --eval)
+    #[arg(long = "filter", action = ArgAction::Append)]
+    filters: Vec<String>,
 
     /// Debug mode - show processing details
     #[arg(long)]
@@ -51,12 +58,15 @@ impl Args {
     fn validate(&self) -> Result<(), String> {
         let has_script_file = self.script_file.is_some();
         let has_evals = !self.evals.is_empty();
+        let has_filters = !self.filters.is_empty();
 
-        match (has_script_file, has_evals) {
-            (true, true) => Err("Cannot use both --file and --eval arguments".to_string()),
+        match (has_script_file, has_evals || has_filters) {
+            (true, true) => Err("Cannot use --file with --eval or --filter arguments".to_string()),
             (true, false) => Ok(()), // Script file only
-            (false, true) => Ok(()), // Eval arguments only
-            (false, false) => Err("Must provide either --file or --eval arguments".to_string()),
+            (false, true) => Ok(()), // Eval/filter arguments only
+            (false, false) => {
+                Err("Must provide either --file or --eval/--filter arguments".to_string())
+            }
         }
     }
 }
@@ -74,6 +84,8 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+// Replace the run function in src/main.rs
 
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Create pipeline configuration
@@ -111,6 +123,15 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
         pipeline.add_processor(Box::new(processor));
     } else {
+        // Add filter processors first (they run before eval processors)
+        for (i, filter_expr) in args.filters.iter().enumerate() {
+            let processor =
+                FilterProcessor::from_expression(&format!("filter_{}", i + 1), filter_expr)
+                    .map_err(|e| format!("Failed to compile filter expression {}: {}", i + 1, e))?;
+
+            pipeline.add_processor(Box::new(processor));
+        }
+
         // Add processors from --eval arguments
         for (i, eval_expr) in args.evals.iter().enumerate() {
             let processor =

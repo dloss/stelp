@@ -528,3 +528,107 @@ impl LineProcessor for StarlarkProcessor {
         &self.name
     }
 }
+
+/// Simple filter processor that skips lines based on a boolean expression
+pub struct FilterProcessor {
+    globals: Globals,
+    pub script_source: String, // Make this public for debugging
+    name: String,
+}
+
+impl FilterProcessor {
+    /// Create from filter expression
+    pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
+        // Create globals with built-ins
+        let globals = GlobalsBuilder::new().with(simple_globals).build();
+
+        // Use the expression directly without wrapping in bool()
+        // Starlark will automatically convert the result to boolean when needed
+        let script = expression.to_string();
+
+        // Validate syntax by parsing with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
+        let _ast = AstModule::parse("filter", script.clone(), &dialect)?;
+
+        Ok(FilterProcessor {
+            globals,
+            script_source: script,
+            name: name.to_string(),
+        })
+    }
+
+    /// Execute filter expression with context
+    fn should_filter(&self, line: &str, ctx: &LineContext) -> Result<bool, anyhow::Error> {
+        // Clear thread-local state first
+        crate::builtins::EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
+        crate::builtins::SKIP_FLAG.with(|flag| flag.set(false));
+        crate::builtins::TERMINATE_FLAG.with(|flag| flag.set(false));
+
+        // Set up global variables reference
+        crate::builtins::GLOBAL_VARS_REF.with(|global_ref| {
+            *global_ref.borrow_mut() = Some(ctx.global_vars as *const GlobalVariables);
+        });
+
+        // Set up line context
+        crate::builtins::LINE_CONTEXT.with(|line_ctx| {
+            *line_ctx.borrow_mut() = Some((ctx.line_number, ctx.file_name.map(|s| s.to_string())));
+        });
+
+        // Create fresh module for each line
+        let module = Module::new();
+
+        // Set built-in variables
+        module.set("line", module.heap().alloc(line.to_string()));
+        module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
+        if let Some(filename) = ctx.file_name {
+            module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
+        }
+
+        // Add True/False constants
+        module.set("True", starlark::values::Value::new_bool(true));
+        module.set("False", starlark::values::Value::new_bool(false));
+
+        // Parse and execute script with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
+        let ast = AstModule::parse("filter", self.script_source.clone(), &dialect)
+            .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+
+        // Execute AST with globals available
+        let mut eval = Evaluator::new(&module);
+        let result = eval
+            .eval_module(ast, &self.globals)
+            .map_err(|e| anyhow::anyhow!("Filter execution error: {}", e))?;
+
+        // Convert result to boolean
+        Ok(result.to_bool())
+    }
+}
+
+impl LineProcessor for FilterProcessor {
+    fn process(&mut self, line: &str, ctx: &LineContext) -> ProcessResult {
+        match self.should_filter(line, ctx) {
+            Ok(should_filter) => {
+                if should_filter {
+                    ProcessResult::Skip
+                } else {
+                    ProcessResult::Transform(Cow::Owned(line.to_string()))
+                }
+            }
+            Err(error) => ProcessResult::Error(ProcessingError::ScriptError {
+                step: self.name.clone(),
+                line: ctx.line_number,
+                source: error,
+            }),
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}

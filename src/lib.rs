@@ -6,3 +6,6 @@ pub mod variables;
 pub use error::*;
 pub use pipeline::*;
 pub use variables::*;
+
+// Re-export key types for convenience
+pub use pipeline::{FilterProcessor, LineProcessor, StarlarkProcessor, StreamPipeline};
