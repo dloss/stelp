@@ -716,9 +716,9 @@ impl LineProcessor for FilterProcessor {
         let result = match self.should_filter(line, ctx) {
             Ok(should_filter) => {
                 if should_filter {
-                    ProcessResult::Skip
-                } else {
                     ProcessResult::Transform(Cow::Owned(line.to_string()))
+                } else {
+                    ProcessResult::Skip
                 }
             }
             Err(error) => ProcessResult::Error(ProcessingError::ScriptError {
