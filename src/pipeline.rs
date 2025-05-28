@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::io::{BufRead, Write};
 use std::time::{Duration, Instant};
 
-// Simple global state for testing
+// Thread-local storage for testing and simple state management
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -17,6 +17,7 @@ thread_local! {
     static SKIP_FLAG: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static TERMINATE_FLAG: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static TERMINATE_MESSAGE: RefCell<Option<String>> = RefCell::new(None);
+    static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = RefCell::new(None);
 }
 
 /// Context passed to each processor
@@ -168,6 +169,7 @@ impl StreamPipeline {
         for line_result in input.lines() {
             let line = line_result?;
             self.context.line_number += 1;
+            self.stats.lines_processed += 1; // Count every line processed
 
             // Check line length
             if line.len() > self.config.max_line_length {
@@ -232,7 +234,6 @@ impl StreamPipeline {
                 },
             }
 
-            self.stats.lines_processed += 1;
             self.context.total_processed += 1;
 
             // Progress reporting
@@ -273,8 +274,20 @@ impl StreamPipeline {
             match processor.process(&current_line, &ctx) {
                 ProcessResult::Transform(new_line) => {
                     current_line = new_line.into_owned();
+                    // Continue to next processor
                 }
-                other_result => return Ok(other_result),
+                ProcessResult::Skip => {
+                    // If any processor skips, the whole line is skipped
+                    return Ok(ProcessResult::Skip);
+                }
+                ProcessResult::Error(err) => {
+                    // If any processor errors, handle according to error strategy
+                    return Ok(ProcessResult::Error(err));
+                }
+                other_result => {
+                    // For terminate, multiple outputs, etc., stop processing and return
+                    return Ok(other_result);
+                }
             }
         }
 
@@ -326,21 +339,36 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         name: String,
         default: Option<starlark::values::Value<'v>>,
     ) -> anyhow::Result<starlark::values::Value<'v>> {
-        let result = SIMPLE_GLOBALS.with(|globals| globals.borrow().get(&name).cloned());
-
-        if let Some(value_str) = result {
-            // Try to parse as different types
-            if let Ok(i) = value_str.parse::<i32>() {
-                Ok(heap.alloc(i))
-            } else if value_str == "true" {
-                Ok(starlark::values::Value::new_bool(true))
-            } else if value_str == "false" {
-                Ok(starlark::values::Value::new_bool(false))
+        // Try to get from actual GlobalVariables if available
+        let result = CURRENT_CONTEXT.with(|ctx| {
+            if let Some((globals_ptr, _, _)) = *ctx.borrow() {
+                let globals = unsafe { &*globals_ptr };
+                Some(globals.get(heap, &name, default))
             } else {
-                Ok(heap.alloc(value_str))
+                None
             }
+        });
+
+        if let Some(value) = result {
+            Ok(value)
         } else {
-            Ok(default.unwrap_or_else(|| starlark::values::Value::new_none()))
+            // Fallback to simple globals
+            let result = SIMPLE_GLOBALS.with(|globals| globals.borrow().get(&name).cloned());
+
+            if let Some(value_str) = result {
+                // Try to parse as different types
+                if let Ok(i) = value_str.parse::<i32>() {
+                    Ok(heap.alloc(i))
+                } else if value_str == "true" {
+                    Ok(starlark::values::Value::new_bool(true))
+                } else if value_str == "false" {
+                    Ok(starlark::values::Value::new_bool(false))
+                } else {
+                    Ok(heap.alloc(value_str))
+                }
+            } else {
+                Ok(default.unwrap_or_else(|| starlark::values::Value::new_none()))
+            }
         }
     }
 
@@ -348,22 +376,65 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         name: String,
         value: starlark::values::Value<'v>,
     ) -> anyhow::Result<starlark::values::Value<'v>> {
-        let value_str = if value.is_none() {
-            "None".to_string()
-        } else {
-            // Convert the value to string, removing quotes if it's a string
-            let s = value.to_string();
-            if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                s[1..s.len() - 1].to_string()
+        // Try to set in actual GlobalVariables if available
+        let set_in_real_globals = CURRENT_CONTEXT.with(|ctx| {
+            if let Some((globals_ptr, _, _)) = *ctx.borrow() {
+                let globals = unsafe { &*globals_ptr };
+                globals.set(name.clone(), value);
+                true
             } else {
-                s
+                false
             }
-        };
-        SIMPLE_GLOBALS.with(|globals| {
-            globals.borrow_mut().insert(name, value_str);
         });
+
+        if !set_in_real_globals {
+            // Fallback to simple globals
+            let value_str = if value.is_none() {
+                "None".to_string()
+            } else {
+                // Convert the value to string, removing quotes if it's a string
+                let s = value.to_string();
+                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                    s[1..s.len() - 1].to_string()
+                } else {
+                    s
+                }
+            };
+            SIMPLE_GLOBALS.with(|globals| {
+                globals.borrow_mut().insert(name, value_str);
+            });
+        }
+        
         Ok(value)
     }
+
+    fn line_number() -> anyhow::Result<i32> {
+        let line_num = CURRENT_CONTEXT.with(|ctx| {
+            if let Some((_, line_number, _)) = *ctx.borrow() {
+                line_number as i32
+            } else {
+                0
+            }
+        });
+        Ok(line_num)
+    }
+
+    fn file_name<'v>(heap: &'v starlark::values::Heap) -> anyhow::Result<starlark::values::Value<'v>> {
+        let filename = CURRENT_CONTEXT.with(|ctx| {
+            if let Some((_, _, ref filename)) = *ctx.borrow() {
+                filename.clone()
+            } else {
+                None
+            }
+        });
+        
+        if let Some(name) = filename {
+            Ok(heap.alloc(name))
+        } else {
+            Ok(starlark::values::Value::new_none())
+        }
+    }
+
     fn regex_match(pattern: String, text: String) -> anyhow::Result<bool> {
         match regex::Regex::new(&pattern) {
             Ok(regex) => Ok(regex.is_match(&text)),
@@ -381,6 +452,20 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         value: starlark::values::Value<'v>,
     ) -> anyhow::Result<starlark::values::Value<'v>> {
         Ok(heap.alloc(value.to_string()))
+    }
+
+    fn len<'v>(value: starlark::values::Value<'v>) -> anyhow::Result<i32> {
+        use starlark::values::{list::ListRef, dict::DictRef};
+        
+        if let Some(s) = value.unpack_str() {
+            Ok(s.len() as i32)
+        } else if let Some(list) = ListRef::from_value(value) {
+            Ok(list.len() as i32)
+        } else if let Some(dict) = DictRef::from_value(value) {
+            Ok(dict.len() as i32)
+        } else {
+            Err(anyhow::anyhow!("object of type '{}' has no len()", value.get_type()))
+        }
     }
 }
 
@@ -413,6 +498,15 @@ impl StarlarkProcessor {
 
     /// Execute script with fresh module per line
     fn execute_with_context(&self, line: &str, ctx: &LineContext) -> Result<String, anyhow::Error> {
+        // Set up context for global functions
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = Some((
+                ctx.global_vars as *const GlobalVariables,
+                ctx.line_number,
+                ctx.file_name.map(|s| s.to_string()),
+            ));
+        });
+
         // Create fresh module for each line (local variables)
         let module = Module::new();
 
@@ -453,7 +547,7 @@ impl StarlarkProcessor {
         TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
         // Execute script
-        match self.execute_with_context(line, ctx) {
+        let result = match self.execute_with_context(line, ctx) {
             Ok(result_str) => {
                 if line.contains("STOP") || line.contains("123") {
                     eprintln!(
@@ -515,7 +609,14 @@ impl StarlarkProcessor {
                 line: ctx.line_number,
                 source: starlark_error,
             }),
-        }
+        };
+
+        // Clear context to avoid dangling pointers
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = None;
+        });
+
+        result
     }
 }
 
@@ -539,7 +640,7 @@ pub struct FilterProcessor {
 impl FilterProcessor {
     /// Create from filter expression
     pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
-        // Create globals with built-ins
+        // Create globals with built-ins - use same globals as StarlarkProcessor
         let globals = GlobalsBuilder::new().with(simple_globals).build();
 
         // Use the expression directly without wrapping in bool()
@@ -562,25 +663,25 @@ impl FilterProcessor {
 
     /// Execute filter expression with context
     fn should_filter(&self, line: &str, ctx: &LineContext) -> Result<bool, anyhow::Error> {
-        // Clear thread-local state first
-        crate::builtins::EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
-        crate::builtins::SKIP_FLAG.with(|flag| flag.set(false));
-        crate::builtins::TERMINATE_FLAG.with(|flag| flag.set(false));
-
-        // Set up global variables reference
-        crate::builtins::GLOBAL_VARS_REF.with(|global_ref| {
-            *global_ref.borrow_mut() = Some(ctx.global_vars as *const GlobalVariables);
+        // Set up context for global functions
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = Some((
+                ctx.global_vars as *const GlobalVariables,
+                ctx.line_number,
+                ctx.file_name.map(|s| s.to_string()),
+            ));
         });
 
-        // Set up line context
-        crate::builtins::LINE_CONTEXT.with(|line_ctx| {
-            *line_ctx.borrow_mut() = Some((ctx.line_number, ctx.file_name.map(|s| s.to_string())));
-        });
+        // Clear thread-local state first (same as StarlarkProcessor)
+        EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
+        SKIP_FLAG.with(|flag| flag.set(false));
+        TERMINATE_FLAG.with(|flag| flag.set(false));
+        TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
         // Create fresh module for each line
         let module = Module::new();
 
-        // Set built-in variables
+        // Set built-in variables (same as StarlarkProcessor)
         module.set("line", module.heap().alloc(line.to_string()));
         module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
         if let Some(filename) = ctx.file_name {
@@ -599,7 +700,7 @@ impl FilterProcessor {
         let ast = AstModule::parse("filter", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
 
-        // Execute AST with globals available
+        // Execute AST with globals available (same as StarlarkProcessor)
         let mut eval = Evaluator::new(&module);
         let result = eval
             .eval_module(ast, &self.globals)
@@ -612,7 +713,7 @@ impl FilterProcessor {
 
 impl LineProcessor for FilterProcessor {
     fn process(&mut self, line: &str, ctx: &LineContext) -> ProcessResult {
-        match self.should_filter(line, ctx) {
+        let result = match self.should_filter(line, ctx) {
             Ok(should_filter) => {
                 if should_filter {
                     ProcessResult::Skip
@@ -625,7 +726,14 @@ impl LineProcessor for FilterProcessor {
                 line: ctx.line_number,
                 source: error,
             }),
-        }
+        };
+
+        // Clear context to avoid dangling pointers
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = None;
+        });
+
+        result
     }
 
     fn name(&self) -> &str {
