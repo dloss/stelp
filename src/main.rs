@@ -11,7 +11,7 @@ use stelp::{
 #[derive(Parser)]
 #[command(name = "stelp")]
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
-#[command(version = "0.3.0")]
+#[command(version = "0.4.0")]
 struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]
@@ -29,6 +29,10 @@ struct Args {
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
 
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long = "output")]
+    output_file: Option<PathBuf>,
+
     /// Debug mode - show processing details
     #[arg(long)]
     debug: bool,
@@ -36,22 +40,6 @@ struct Args {
     /// Fail on first error instead of skipping lines
     #[arg(long)]
     fail_fast: bool,
-
-    /// Show progress every N lines
-    #[arg(long, value_name = "N")]
-    progress: Option<usize>,
-
-    /// Maximum line length
-    #[arg(long, default_value = "1048576")] // 1MB
-    max_line_length: usize,
-
-    /// Buffer size for I/O
-    #[arg(long, default_value = "65536")] // 64KB
-    buffer_size: usize,
-
-    /// Output file (default: stdout)
-    #[arg(short = 'o', long = "output")]
-    output_file: Option<PathBuf>,
 }
 
 impl Args {
@@ -85,10 +73,8 @@ fn main() {
     }
 }
 
-// Replace the run function in src/main.rs
-
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    // Create pipeline configuration
+    // Create pipeline configuration with hardcoded sensible defaults
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
             ErrorStrategy::FailFast
@@ -96,9 +82,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        buffer_size: args.buffer_size,
-        max_line_length: args.max_line_length,
-        progress_interval: args.progress.unwrap_or(0),
+        buffer_size: 65536,       // 64KB - good default
+        max_line_length: 1048576, // 1MB - reasonable limit
+        progress_interval: 0,     // Disabled - no progress reporting
     };
 
     // Create pipeline
@@ -142,7 +128,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Set up output
+    // Set up output with hardcoded buffer size
     let mut output: Box<dyn Write> = if let Some(output_path) = &args.output_file {
         let file = File::create(output_path).map_err(|e| {
             format!(
@@ -151,9 +137,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 e
             )
         })?;
-        Box::new(io::BufWriter::with_capacity(args.buffer_size, file))
+        Box::new(io::BufWriter::with_capacity(65536, file))
     } else {
-        Box::new(io::BufWriter::with_capacity(args.buffer_size, io::stdout()))
+        Box::new(io::BufWriter::with_capacity(65536, io::stdout()))
     };
 
     // Process input files or stdin
@@ -164,7 +150,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         if args.debug {
             eprintln!("Reading from stdin...");
         }
-        let input = BufReader::with_capacity(args.buffer_size, io::stdin());
+        let input = BufReader::with_capacity(65536, io::stdin());
         let stats = pipeline
             .process_stream(input, &mut output, Some("<stdin>"))
             .map_err(|e| format!("Processing stdin failed: {}", e))?;
@@ -183,7 +169,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                     e
                 )
             })?;
-            let input = BufReader::with_capacity(args.buffer_size, file);
+            let input = BufReader::with_capacity(65536, file);
 
             let filename = input_path.to_string_lossy();
             let stats = pipeline

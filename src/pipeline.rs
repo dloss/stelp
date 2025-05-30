@@ -69,9 +69,9 @@ impl Default for PipelineConfig {
         PipelineConfig {
             error_strategy: ErrorStrategy::Skip,
             debug: false,
-            buffer_size: 65536,
-            max_line_length: 1048576,
-            progress_interval: 10000,
+            buffer_size: 65536,       // 64KB
+            max_line_length: 1048576, // 1MB
+            progress_interval: 0,     // Disabled
         }
     }
 }
@@ -171,7 +171,7 @@ impl StreamPipeline {
             self.context.line_number += 1;
             self.stats.lines_processed += 1; // Count every line processed
 
-            // Check line length
+            // Check line length using hardcoded limit
             if line.len() > self.config.max_line_length {
                 let error = ProcessingError::LineTooLong {
                     length: line.len(),
@@ -235,13 +235,6 @@ impl StreamPipeline {
             }
 
             self.context.total_processed += 1;
-
-            // Progress reporting
-            if self.config.progress_interval > 0
-                && self.stats.lines_processed % self.config.progress_interval == 0
-            {
-                eprintln!("Processed {} lines", self.stats.lines_processed);
-            }
         }
 
         self.stats.processing_time = start_time.elapsed();
@@ -404,7 +397,7 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
                 globals.borrow_mut().insert(name, value_str);
             });
         }
-        
+
         Ok(value)
     }
 
@@ -419,7 +412,9 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(line_num)
     }
 
-    fn file_name<'v>(heap: &'v starlark::values::Heap) -> anyhow::Result<starlark::values::Value<'v>> {
+    fn file_name<'v>(
+        heap: &'v starlark::values::Heap,
+    ) -> anyhow::Result<starlark::values::Value<'v>> {
         let filename = CURRENT_CONTEXT.with(|ctx| {
             if let Some((_, _, ref filename)) = *ctx.borrow() {
                 filename.clone()
@@ -427,7 +422,7 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
                 None
             }
         });
-        
+
         if let Some(name) = filename {
             Ok(heap.alloc(name))
         } else {
@@ -455,8 +450,8 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
     }
 
     fn len<'v>(value: starlark::values::Value<'v>) -> anyhow::Result<i32> {
-        use starlark::values::{list::ListRef, dict::DictRef};
-        
+        use starlark::values::{dict::DictRef, list::ListRef};
+
         if let Some(s) = value.unpack_str() {
             Ok(s.len() as i32)
         } else if let Some(list) = ListRef::from_value(value) {
@@ -464,7 +459,10 @@ fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder) {
         } else if let Some(dict) = DictRef::from_value(value) {
             Ok(dict.len() as i32)
         } else {
-            Err(anyhow::anyhow!("object of type '{}' has no len()", value.get_type()))
+            Err(anyhow::anyhow!(
+                "object of type '{}' has no len()",
+                value.get_type()
+            ))
         }
     }
 }
@@ -549,14 +547,6 @@ impl StarlarkProcessor {
         // Execute script
         let result = match self.execute_with_context(line, ctx) {
             Ok(result_str) => {
-                if line.contains("STOP") || line.contains("123") {
-                    eprintln!(
-                        "DEBUG: line='{}', result_str='{}', terminate_flag={}",
-                        line,
-                        result_str,
-                        TERMINATE_FLAG.with(|f| f.get())
-                    );
-                }
                 // Collect emitted lines
                 let emissions: Vec<String> = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
 
@@ -716,9 +706,9 @@ impl LineProcessor for FilterProcessor {
         let result = match self.should_filter(line, ctx) {
             Ok(should_filter) => {
                 if should_filter {
-                    ProcessResult::Transform(Cow::Owned(line.to_string()))
-                } else {
                     ProcessResult::Skip
+                } else {
+                    ProcessResult::Transform(Cow::Owned(line.to_string()))
                 }
             }
             Err(error) => ProcessResult::Error(ProcessingError::ScriptError {
