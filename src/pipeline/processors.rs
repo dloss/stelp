@@ -1,7 +1,8 @@
 use crate::error::{CompilationError, ProcessingError};
 use crate::pipeline::context::{LineContext, ProcessResult};
 use crate::pipeline::simple_globals::{
-    simple_globals, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG, TERMINATE_FLAG, TERMINATE_MESSAGE,
+    preprocess_st_namespace, simple_globals, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG,
+    TERMINATE_FLAG, TERMINATE_MESSAGE,
 };
 use crate::pipeline::stream::LineProcessor;
 use crate::variables::GlobalVariables;
@@ -23,16 +24,19 @@ impl StarlarkProcessor {
         // Create globals with built-ins
         let globals = GlobalsBuilder::new().with(simple_globals).build();
 
+        // Preprocess st.* calls to st_* function names
+        let script_source = preprocess_st_namespace(script);
+
         // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
-        let _ast = AstModule::parse("script", script.to_string(), &dialect)?;
+        let _ast = AstModule::parse("script", script_source.clone(), &dialect)?;
 
         Ok(StarlarkProcessor {
             globals,
-            script_source: script.to_string(),
+            script_source, // Use preprocessed script
             name: name.to_string(),
         })
     }
@@ -176,9 +180,8 @@ impl FilterProcessor {
         // Create globals with built-ins - use same globals as StarlarkProcessor
         let globals = GlobalsBuilder::new().with(simple_globals).build();
 
-        // Use the expression directly without wrapping in bool()
-        // Starlark will automatically convert the result to boolean when needed
-        let script = expression.to_string();
+        // Preprocess st.* calls to st_* function names
+        let script = preprocess_st_namespace(expression);
 
         // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
@@ -189,7 +192,7 @@ impl FilterProcessor {
 
         Ok(FilterProcessor {
             globals,
-            script_source: script,
+            script_source: script, // Use preprocessed script
             name: name.to_string(),
         })
     }

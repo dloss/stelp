@@ -7,7 +7,6 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
 
-
 #[derive(Parser)]
 #[command(name = "stelp")]
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
