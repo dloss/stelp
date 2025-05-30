@@ -48,8 +48,8 @@ stelp -f script.star input1.txt input2.txt
 #### Global Variables and Counting
 ```bash
 stelp --eval '
-count = get_global("total", 0) + 1
-set_global("total", count)
+count = st.get_global("total", 0) + 1
+st.set_global("total", count)
 f"Line {count}: {line}"
 ' data.txt
 ```
@@ -69,36 +69,39 @@ else:
 #### CSV Processing
 ```bash
 stelp --eval '
-fields = parse_csv(line)
+fields = st.parse_csv(line)
+result = ""
 if len(fields) >= 3:
-    to_csv([fields[0].upper(), fields[2], "processed"])
+    result = st.to_csv([fields[0].upper(), fields[2], "processed"])
 else:
     skip()
+
+result
 ' data.csv
 ```
 
 #### JSON Processing
 ```bash
 stelp --eval '
-try:
-    data = parse_json(line)
-    data["timestamp"] + " | " + data["event"]
-except:
-    skip()
+data = st.parse_json(line)
+data["timestamp"] + " | " + data["event"]
 ' events.json
 ```
 
 #### Log Processing with Termination
 ```bash
 stelp --eval '
+result = ""
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
     terminate("Processing stopped due to fatal error")
 
-if regex_match(r"\[ERROR\]", line):
-    regex_replace(r"\[ERROR\]", "[🔴 ERROR]", line)
+if st.regex_match(r"\[ERROR\]", line):
+    result = st.regex_replace(r"\[ERROR\]", "[🔴 ERROR]", line)
 else:
-    line
+    result = line
+
+result
 ' server.log
 ```
 
@@ -106,24 +109,24 @@ else:
 
 ### String Operations
 - Standard Starlark string methods: `upper()`, `lower()`, `strip()`, `split()`, `replace()`, etc.
-- `regex_match(pattern, text)` - Check if text matches regex
-- `regex_replace(pattern, replacement, text)` - Replace using regex
-- `regex_find_all(pattern, text)` - Find all matches
+- `st.regex_match(pattern, text)` - Check if text matches regex
+- `st.regex_replace(pattern, replacement, text)` - Replace using regex
+- `st.regex_find_all(pattern, text)` - Find all matches
 
 ### Data Processing
-- `parse_json(text)` - Parse JSON string to dict/list
-- `to_json(value)` - Convert value to JSON string
-- `parse_csv(line, delimiter=",")` - Parse CSV line to list
-- `to_csv(values, delimiter=",")` - Convert list to CSV line
-- `parse_kv(line, sep="=", delim=" ")` - Parse key-value pairs
+- `st.parse_json(text)` - Parse JSON string to dict/list
+- `st.to_json(value)` - Convert value to JSON string
+- `st.parse_csv(line, delimiter=",")` - Parse CSV line to list
+- `st.to_csv(values, delimiter=",")` - Convert list to CSV line
+- `st.parse_kv(line, sep="=", delim=" ")` - Parse key-value pairs
 
 ### Global Variables
-- `get_global(name, default=None)` - Get global variable
-- `set_global(name, value)` - Set global variable
+- `st.get_global(name, default=None)` - Get global variable
+- `st.set_global(name, value)` - Set global variable
 
 ### Context Information
-- `line_number()` - Current line number
-- `file_name()` - Current file name (if processing files)
+- `st.line_number()` - Current line number
+- `st.file_name()` - Current file name (if processing files)
 
 ### Output Control
 - `emit(text)` - Output an additional line
@@ -143,8 +146,8 @@ name = parts[0].strip()
 ### Global Variables (Pipeline-Wide)
 ```python
 # These persist across all lines
-total = get_global("total", 0) + 1
-set_global("total", total)
+total = st.get_global("total", 0) + 1
+st.set_global("total", total)
 
 if total > 1000:
     terminate("Processed enough lines")
@@ -180,7 +183,7 @@ Create reusable processing scripts:
 
 # Helper function
 def format_timestamp(line):
-    return regex_replace(r'(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})', r'\1T\2Z', line)
+    return st.regex_replace(r'(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})', r'\1T\2Z', line)
 
 # Processing logic
 line = line.strip()
@@ -189,19 +192,22 @@ if len(line) == 0:
     skip()
 
 # Track lines
-count = get_global("total", 0) + 1
-set_global("total", count)
+count = st.get_global("total", 0) + 1
+st.set_global("total", count)
 
 # Process errors specially  
+result = ""
 if "ERROR" in line:
-    error_count = get_global("errors", 0) + 1
-    set_global("errors", error_count)
+    error_count = st.get_global("errors", 0) + 1
+    st.set_global("errors", error_count)
     emit(f"[{count}] Error #{error_count}: {line}")
     skip()
+else:
+    # Format and output
+    formatted = format_timestamp(line)
+    result = f"[{count}] {formatted}"
 
-# Format and output
-formatted = format_timestamp(line)
-f"[{count}] {formatted}"
+result
 ```
 
 Run with:
@@ -220,13 +226,39 @@ stelp -f process_logs.star logs.txt
 
 ### Skip Strategy (Default)
 ```bash
-stelp --eval 'parse_json(line)["field"]' data.json  # Skips invalid JSON lines
+stelp --eval 'st.parse_json(line)["field"]' data.json  # Skips invalid JSON lines
 ```
 
 ### Fail-Fast Strategy
 ```bash
-stelp --fail-fast --eval 'parse_json(line)["field"]' data.json  # Stops on first error
+stelp --fail-fast --eval 'st.parse_json(line)["field"]' data.json  # Stops on first error
 ```
+
+## Best Practices
+
+### Conditional Transformations
+When using `if/else` statements for transformations, always use explicit result variables:
+
+```python
+# ✅ Good - Use explicit result variable
+result = ""
+if condition:
+    result = some_transformation(line)
+else:
+    result = line
+
+result
+```
+
+```python
+# ❌ Avoid - Direct if/else as final expression
+if condition:
+    some_transformation(line)
+else:
+    line
+```
+
+This ensures your transformations are properly applied and returned.
 
 ## Examples Repository
 
@@ -248,25 +280,28 @@ cargo test
 Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | stelp --eval 'f"Item {line}: {line_number()}"'
+seq 1 1000 | stelp --eval 'f"Item {line}: {st.line_number()}"'
 
 # Process CSV
 echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp --eval '
-if line_number() == 1:
-    line  # Keep header
+result = ""
+if st.line_number() == 1:
+    result = line  # Keep header
 else:
-    fields = parse_csv(line)
+    fields = st.parse_csv(line)
     if int(fields[1]) >= 30:
-        to_csv([fields[0], fields[1], fields[2], "senior"])
+        result = st.to_csv([fields[0], fields[1], fields[2], "senior"])
     else:
         skip()
+
+result
 '
 
 # Process multiple files
 stelp --eval 'line.upper()' file1.txt file2.txt file3.txt
 
 # Use with shell globbing
-stelp --eval 'f"[{file_name()}] {line}"' *.log
+stelp --eval 'f"[{st.file_name()}] {line}"' *.log
 ```
 
 ## License

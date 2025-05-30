@@ -198,6 +198,7 @@ fn test_st_namespace_regex_functions() {
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
+result = ""
 if st.regex_match("\\d+", line):
     result = st.regex_replace("\\d+", "NUMBER", line)
 else:
@@ -265,12 +266,14 @@ fn test_st_namespace_csv_functions() {
         r#"
 # Parse CSV and reconstruct with modified data
 fields = st.parse_csv(line)
+result = ""
 if len(fields) >= 2:
     new_fields = [fields[0].upper(), fields[1] + "_modified"]
     result = st.to_csv(new_fields)
-    result
 else:
-    line
+    result = line
+
+result
         "#,
     )
     .unwrap();

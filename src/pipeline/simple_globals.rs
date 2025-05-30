@@ -82,10 +82,7 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         }
     }
 
-    fn st_set_global<'v>(
-        name: String,
-        value: Value<'v>,
-    ) -> anyhow::Result<Value<'v>> {
+    fn st_set_global<'v>(name: String, value: Value<'v>) -> anyhow::Result<Value<'v>> {
         // Try to set in actual GlobalVariables if available
         let set_in_real_globals = CURRENT_CONTEXT.with(|ctx| {
             if let Some((globals_ptr, _, _)) = *ctx.borrow() {
@@ -152,7 +149,11 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         }
     }
 
-    fn st_regex_replace(pattern: String, replacement: String, text: String) -> anyhow::Result<String> {
+    fn st_regex_replace(
+        pattern: String,
+        replacement: String,
+        text: String,
+    ) -> anyhow::Result<String> {
         let regex = regex::Regex::new(&pattern)?;
         Ok(regex.replace_all(&text, replacement.as_str()).into_owned())
     }
@@ -207,7 +208,7 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
 
     fn st_to_csv(values: Value, delimiter: Option<String>) -> anyhow::Result<String> {
         use starlark::values::list::ListRef;
-        
+
         let delim = delimiter.unwrap_or_else(|| ",".to_string());
         let delim_char = delim.chars().next().unwrap_or(',');
 
@@ -217,19 +218,22 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         let mut writer = csv::WriterBuilder::new()
             .delimiter(delim_char as u8)
             .has_headers(false)
-            .quote_style(csv::QuoteStyle::Never)  // Don't quote fields automatically
+            .quote_style(csv::QuoteStyle::Never) // Don't quote fields automatically
             .from_writer(Vec::new());
 
-        let fields: Vec<String> = list.iter().map(|v| {
-            let s = v.to_string();
-            // Remove quotes if they exist
-            if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                s[1..s.len() - 1].to_string()
-            } else {
-                s
-            }
-        }).collect();
-        
+        let fields: Vec<String> = list
+            .iter()
+            .map(|v| {
+                let s = v.to_string();
+                // Remove quotes if they exist
+                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                    s[1..s.len() - 1].to_string()
+                } else {
+                    s
+                }
+            })
+            .collect();
+
         writer.write_record(&fields)?;
 
         let data = writer.into_inner()?;
@@ -262,10 +266,7 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
     }
 
     // Keep the standard Starlark built-ins
-    fn str<'v>(
-        heap: &'v Heap,
-        value: Value<'v>,
-    ) -> anyhow::Result<Value<'v>> {
+    fn str<'v>(heap: &'v Heap, value: Value<'v>) -> anyhow::Result<Value<'v>> {
         Ok(heap.alloc(value.to_string()))
     }
 
