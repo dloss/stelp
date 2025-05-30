@@ -7,5 +7,5 @@ pub use error::*;
 pub use pipeline::*;
 pub use variables::*;
 
-// Re-export key types for convenience
-pub use pipeline::{FilterProcessor, LineProcessor, StarlarkProcessor, StreamPipeline};
+pub use pipeline::processors::{FilterProcessor, StarlarkProcessor};
+pub use pipeline::stream::{LineProcessor, StreamPipeline};

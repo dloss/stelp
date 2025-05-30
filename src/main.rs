@@ -3,10 +3,10 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
-use stelp::{
-    ErrorStrategy, FilterProcessor, PipelineConfig, ProcessingStats, StarlarkProcessor,
-    StreamPipeline,
-};
+use stelp::config::{ErrorStrategy, PipelineConfig};
+use stelp::context::ProcessingStats;
+use stelp::processors::{FilterProcessor, StarlarkProcessor};
+
 
 #[derive(Parser)]
 #[command(name = "stelp")]
@@ -88,7 +88,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create pipeline
-    let mut pipeline = StreamPipeline::new(config);
+    let mut pipeline = stelp::StreamPipeline::new(config);
 
     // Add processors based on input
     if let Some(script_path) = args.script_file {

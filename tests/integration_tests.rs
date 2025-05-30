@@ -1,8 +1,9 @@
 use std::io::Cursor;
-use stelp::{
-    ErrorStrategy, FilterProcessor, GlobalVariables, LineContext, LineProcessor, PipelineConfig,
-    StarlarkProcessor, StreamPipeline,
-};
+use stelp::processors::{FilterProcessor, StarlarkProcessor};
+use stelp::config::{ErrorStrategy, PipelineConfig};
+use stelp::variables::GlobalVariables;
+use stelp::context::LineContext;
+use stelp::StreamPipeline;
 
 #[test]
 fn test_terminate_working() {
