@@ -1,17 +1,17 @@
+// src/pipeline/processors.rs
 use crate::error::{CompilationError, ProcessingError};
-use crate::pipeline::context::{LineContext, ProcessResult};
+use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::simple_globals::{
     preprocess_st_namespace, simple_globals, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG,
     TERMINATE_FLAG, TERMINATE_MESSAGE,
 };
-use crate::pipeline::stream::LineProcessor;
+use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
 use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
-use std::borrow::Cow;
 
-/// Starlark-based line processor
+/// Starlark-based record processor (adapted from LineProcessor)
 pub struct StarlarkProcessor {
     globals: Globals,
     script_source: String,
@@ -36,14 +36,18 @@ impl StarlarkProcessor {
 
         Ok(StarlarkProcessor {
             globals,
-            script_source, // Use preprocessed script
+            script_source,
             name: name.to_string(),
         })
     }
 
-    /// Execute script with fresh module per line
-    fn execute_with_context(&self, line: &str, ctx: &LineContext) -> Result<String, anyhow::Error> {
-        // Set up context for global functions
+    /// Execute script with fresh module per record
+    fn execute_with_context(
+        &self,
+        text: &str,
+        ctx: &RecordContext,
+    ) -> Result<String, anyhow::Error> {
+        // Set up context for global functions (keep same signature as original)
         CURRENT_CONTEXT.with(|ctx_cell| {
             *ctx_cell.borrow_mut() = Some((
                 ctx.global_vars as *const GlobalVariables,
@@ -52,11 +56,11 @@ impl StarlarkProcessor {
             ));
         });
 
-        // Create fresh module for each line (local variables)
+        // Create fresh module for each record (local variables)
         let module = Module::new();
 
-        // Set built-in variables
-        module.set("line", module.heap().alloc(line.to_string()));
+        // Set built-in variables (same as before)
+        module.set("line", module.heap().alloc(text.to_string()));
         module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
         if let Some(filename) = ctx.file_name {
             module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
@@ -84,37 +88,47 @@ impl StarlarkProcessor {
         Ok(result.to_string())
     }
 
-    pub fn process_standalone(&self, line: &str, ctx: &LineContext) -> ProcessResult {
+    pub fn process_standalone(&self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        // For Commit 1: only handle text records, structured records are pass-through
+        let text = match record {
+            RecordData::Text(text) => text,
+            RecordData::Structured(_) => {
+                // Pass structured records through unchanged for now
+                return ProcessResult::Transform(record.clone());
+            }
+        };
+
         // Clear emit buffer and flags
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
         TERMINATE_FLAG.with(|flag| flag.set(false));
         TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
-        // Execute script
-        let result = match self.execute_with_context(line, ctx) {
+        // Execute script (same logic as before)
+        let result = match self.execute_with_context(text, ctx) {
             Ok(result_str) => {
                 // Collect emitted lines
-                let emissions: Vec<String> = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
+                let emissions: Vec<RecordData> = EMIT_BUFFER.with(|buffer| {
+                    buffer
+                        .borrow()
+                        .iter()
+                        .map(|s| RecordData::text(s.clone()))
+                        .collect()
+                });
 
                 // Check for special control values
                 if SKIP_FLAG.with(|flag| flag.get()) {
                     if emissions.is_empty() {
                         ProcessResult::Skip
                     } else {
-                        ProcessResult::MultipleOutputs(emissions)
+                        ProcessResult::FanOut(emissions)
                     }
                 } else if TERMINATE_FLAG.with(|flag| flag.get()) {
-                    let final_output = TERMINATE_MESSAGE.with(|msg| {
-                        if let Some(message) = msg.borrow().clone() {
-                            Some(Cow::Owned(message))
-                        } else {
-                            None
-                        }
-                    });
+                    let final_output = TERMINATE_MESSAGE
+                        .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     ProcessResult::Terminate(final_output)
                 } else {
-                    // Normal processing
+                    // Normal processing (same logic as before)
                     let is_none = result_str == "None" || result_str.is_empty();
                     let clean_result = if is_none {
                         String::new()
@@ -130,12 +144,16 @@ impl StarlarkProcessor {
                         }
                     };
 
-                    match (is_none || clean_result.is_empty(), emissions.is_empty()) {
-                        (true, true) => ProcessResult::Transform(Cow::Owned(line.to_string())), // No change
-                        (true, false) => ProcessResult::MultipleOutputs(emissions),
-                        (false, true) => ProcessResult::Transform(Cow::Owned(clean_result)),
-                        (false, false) => ProcessResult::TransformWithEmissions {
-                            primary: Some(Cow::Owned(clean_result)),
+                    let output_record = if is_none || clean_result.is_empty() {
+                        RecordData::text(text.to_string()) // No change
+                    } else {
+                        RecordData::text(clean_result)
+                    };
+
+                    match emissions.is_empty() {
+                        true => ProcessResult::Transform(output_record),
+                        false => ProcessResult::TransformWithEmissions {
+                            primary: Some(output_record),
                             emissions,
                         },
                     }
@@ -157,9 +175,9 @@ impl StarlarkProcessor {
     }
 }
 
-impl LineProcessor for StarlarkProcessor {
-    fn process(&mut self, line: &str, ctx: &LineContext) -> ProcessResult {
-        self.process_standalone(line, ctx)
+impl RecordProcessor for StarlarkProcessor {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        self.process_standalone(record, ctx)
     }
 
     fn name(&self) -> &str {
@@ -167,17 +185,17 @@ impl LineProcessor for StarlarkProcessor {
     }
 }
 
-/// Simple filter processor that skips lines based on a boolean expression
+/// Simple filter processor that skips records based on a boolean expression
 pub struct FilterProcessor {
     globals: Globals,
-    pub script_source: String, // Make this public for debugging
+    pub script_source: String,
     name: String,
 }
 
 impl FilterProcessor {
     /// Create from filter expression
     pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
-        // Create globals with built-ins - use same globals as StarlarkProcessor
+        // Create globals with built-ins
         let globals = GlobalsBuilder::new().with(simple_globals).build();
 
         // Preprocess st.* calls to st_* function names
@@ -192,14 +210,14 @@ impl FilterProcessor {
 
         Ok(FilterProcessor {
             globals,
-            script_source: script, // Use preprocessed script
+            script_source: script,
             name: name.to_string(),
         })
     }
 
     /// Execute filter expression with context
-    fn should_filter(&self, line: &str, ctx: &LineContext) -> Result<bool, anyhow::Error> {
-        // Set up context for global functions
+    fn should_filter(&self, text: &str, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
+        // Set up context for global functions (same signature as StarlarkProcessor)
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = Some((
                 ctx.global_vars as *const GlobalVariables,
@@ -208,17 +226,17 @@ impl FilterProcessor {
             ));
         });
 
-        // Clear thread-local state first (same as StarlarkProcessor)
+        // Clear thread-local state
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
         TERMINATE_FLAG.with(|flag| flag.set(false));
         TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
-        // Create fresh module for each line
+        // Create fresh module for each record
         let module = Module::new();
 
         // Set built-in variables (same as StarlarkProcessor)
-        module.set("line", module.heap().alloc(line.to_string()));
+        module.set("line", module.heap().alloc(text.to_string()));
         module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
         if let Some(filename) = ctx.file_name {
             module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
@@ -236,7 +254,6 @@ impl FilterProcessor {
         let ast = AstModule::parse("filter", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
 
-        // Execute AST with globals available (same as StarlarkProcessor)
         let mut eval = Evaluator::new(&module);
         let result = eval
             .eval_module(ast, &self.globals)
@@ -247,14 +264,23 @@ impl FilterProcessor {
     }
 }
 
-impl LineProcessor for FilterProcessor {
-    fn process(&mut self, line: &str, ctx: &LineContext) -> ProcessResult {
-        let result = match self.should_filter(line, ctx) {
+impl RecordProcessor for FilterProcessor {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        // For Commit 1: only handle text records, structured records are pass-through
+        let text = match record {
+            RecordData::Text(text) => text,
+            RecordData::Structured(_) => {
+                // Pass structured records through unchanged for now
+                return ProcessResult::Transform(record.clone());
+            }
+        };
+
+        let result = match self.should_filter(text, ctx) {
             Ok(should_filter) => {
                 if should_filter {
                     ProcessResult::Skip
                 } else {
-                    ProcessResult::Transform(Cow::Owned(line.to_string()))
+                    ProcessResult::Transform(record.clone())
                 }
             }
             Err(error) => ProcessResult::Error(ProcessingError::ScriptError {

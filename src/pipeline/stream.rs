@@ -1,22 +1,24 @@
+// src/pipeline/stream.rs
 use crate::variables::GlobalVariables;
-use std::borrow::Cow;
 use std::io::{BufRead, Write};
 use std::time::Instant;
 
 use crate::error::ProcessingError;
 use crate::pipeline::config::{ErrorStrategy, PipelineConfig};
-use crate::pipeline::context::{LineContext, PipelineContext, ProcessResult, ProcessingStats};
+use crate::pipeline::context::{
+    PipelineContext, ProcessResult, ProcessingStats, RecordContext, RecordData,
+};
 
-/// Main trait for line processing steps
-pub trait LineProcessor: Send + Sync {
-    fn process(&mut self, line: &str, ctx: &LineContext) -> ProcessResult;
+/// Main trait for record processing steps
+pub trait RecordProcessor: Send + Sync {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult;
     fn name(&self) -> &str;
     fn reset(&mut self) {} // Called between files/streams
 }
 
 /// Main pipeline orchestrator
 pub struct StreamPipeline {
-    processors: Vec<Box<dyn LineProcessor>>,
+    processors: Vec<Box<dyn RecordProcessor>>,
     context: PipelineContext,
     config: PipelineConfig,
     stats: ProcessingStats,
@@ -32,7 +34,7 @@ impl StreamPipeline {
         }
     }
 
-    pub fn add_processor(&mut self, processor: Box<dyn LineProcessor>) {
+    pub fn add_processor(&mut self, processor: Box<dyn RecordProcessor>) {
         self.processors.push(processor);
     }
 
@@ -59,19 +61,21 @@ impl StreamPipeline {
         // Update context for new file
         self.context.file_name = filename.map(|s| s.to_string());
         self.context.line_number = 0;
+        self.context.record_count = 0;
 
         // Reset processor state (not global variables)
         for processor in &mut self.processors {
             processor.reset();
         }
 
-        // Process the file
+        // Process the file line by line (for now, will become record by record later)
         for line_result in input.lines() {
             let line = line_result?;
             self.context.line_number += 1;
-            self.stats.lines_processed += 1; // Count every line processed
+            self.context.record_count += 1;
+            self.stats.records_processed += 1;
 
-            // Check line length using hardcoded limit
+            // Check line length
             if line.len() > self.config.max_line_length {
                 let error = ProcessingError::LineTooLong {
                     length: line.len(),
@@ -86,37 +90,40 @@ impl StreamPipeline {
                 }
             }
 
-            match self.process_line(&line)? {
-                ProcessResult::Transform(output_line) => {
-                    writeln!(output, "{}", output_line)?;
-                    self.stats.lines_output += 1;
+            // Create initial record from line
+            let record = RecordData::text(line);
+
+            match self.process_record(&record)? {
+                ProcessResult::Transform(output_record) => {
+                    self.write_record(output, &output_record)?;
+                    self.stats.records_output += 1;
                 }
-                ProcessResult::MultipleOutputs(outputs) => {
-                    for output_line in outputs {
-                        writeln!(output, "{}", output_line)?;
-                        self.stats.lines_output += 1;
+                ProcessResult::FanOut(output_records) => {
+                    for output_record in output_records {
+                        self.write_record(output, &output_record)?;
+                        self.stats.records_output += 1;
                     }
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
-                    if let Some(output_line) = primary {
-                        writeln!(output, "{}", output_line)?;
-                        self.stats.lines_output += 1;
+                    if let Some(output_record) = primary {
+                        self.write_record(output, &output_record)?;
+                        self.stats.records_output += 1;
                     }
                     for emission in emissions {
-                        writeln!(output, "{}", emission)?;
-                        self.stats.lines_output += 1;
+                        self.write_record(output, &emission)?;
+                        self.stats.records_output += 1;
                     }
                 }
                 ProcessResult::Skip => {
-                    self.stats.lines_skipped += 1;
+                    self.stats.records_skipped += 1;
                 }
                 ProcessResult::Terminate(final_output) => {
-                    // Output the final line if provided
-                    if let Some(output_line) = final_output {
-                        writeln!(output, "{}", output_line)?;
-                        self.stats.lines_output += 1;
+                    // Output the final record if provided
+                    if let Some(output_record) = final_output {
+                        self.write_record(output, &output_record)?;
+                        self.stats.records_output += 1;
                     }
-                    // Then stop processing - this is the key fix!
+                    // Stop processing
                     break;
                 }
                 ProcessResult::Error(err) => match self.config.error_strategy {
@@ -125,8 +132,8 @@ impl StreamPipeline {
                         self.stats.errors += 1;
                         if self.config.debug {
                             eprintln!(
-                                "Error processing line {}: {}",
-                                self.context.line_number, err
+                                "Error processing record {}: {}",
+                                self.context.record_count, err
                             );
                         }
                         continue;
@@ -141,10 +148,10 @@ impl StreamPipeline {
 
         if self.config.debug {
             eprintln!(
-                "Processing complete: {} lines processed, {} output, {} skipped, {} errors in {:?}",
-                self.stats.lines_processed,
-                self.stats.lines_output,
-                self.stats.lines_skipped,
+                "Processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+                self.stats.records_processed,
+                self.stats.records_output,
+                self.stats.records_skipped,
                 self.stats.errors,
                 self.stats.processing_time
             );
@@ -153,24 +160,25 @@ impl StreamPipeline {
         Ok(self.stats.clone())
     }
 
-    fn process_line(&mut self, line: &str) -> Result<ProcessResult, ProcessingError> {
-        let mut current_line = line.to_string();
+    fn process_record(&mut self, record: &RecordData) -> Result<ProcessResult, ProcessingError> {
+        let mut current_record = record.clone();
 
-        let ctx = LineContext {
+        let ctx = RecordContext {
             line_number: self.context.line_number,
+            record_count: self.context.record_count,
             file_name: self.context.file_name.as_deref(),
             global_vars: &self.context.global_vars,
         };
 
         // Process through all processors in sequence
         for processor in &mut self.processors {
-            match processor.process(&current_line, &ctx) {
-                ProcessResult::Transform(new_line) => {
-                    current_line = new_line.into_owned();
+            match processor.process(&current_record, &ctx) {
+                ProcessResult::Transform(new_record) => {
+                    current_record = new_record;
                     // Continue to next processor
                 }
                 ProcessResult::Skip => {
-                    // If any processor skips, the whole line is skipped
+                    // If any processor skips, the whole record is skipped
                     return Ok(ProcessResult::Skip);
                 }
                 ProcessResult::Error(err) => {
@@ -178,19 +186,41 @@ impl StreamPipeline {
                     return Ok(ProcessResult::Error(err));
                 }
                 other_result => {
-                    // For terminate, multiple outputs, etc., stop processing and return
+                    // For terminate, fan-out, etc., stop processing and return
                     return Ok(other_result);
                 }
             }
         }
 
-        Ok(ProcessResult::Transform(Cow::Owned(current_line)))
+        Ok(ProcessResult::Transform(current_record))
+    }
+
+    fn write_record<W: Write>(
+        &self,
+        output: &mut W,
+        record: &RecordData,
+    ) -> Result<(), ProcessingError> {
+        match record {
+            RecordData::Text(text) => {
+                writeln!(output, "{}", text)?;
+            }
+            RecordData::Structured(data) => {
+                // For now, write structured data as JSON
+                writeln!(
+                    output,
+                    "{}",
+                    serde_json::to_string(data).unwrap_or_else(|_| "null".to_string())
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Completely reset everything (for reusing pipeline)
     pub fn hard_reset(&mut self) {
         self.context.global_vars.clear();
         self.context.line_number = 0;
+        self.context.record_count = 0;
         self.context.total_processed = 0;
         self.context.file_name = None;
 

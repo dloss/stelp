@@ -179,9 +179,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             if file_index == 0 {
                 total_stats = stats;
             } else {
-                total_stats.lines_processed += stats.lines_processed;
-                total_stats.lines_output += stats.lines_output;
-                total_stats.lines_skipped += stats.lines_skipped;
+                total_stats.records_processed += stats.records_processed;
+                total_stats.records_output += stats.records_output;
+                total_stats.records_skipped += stats.records_skipped;
                 total_stats.errors += stats.errors;
                 total_stats.processing_time += stats.processing_time;
             }
@@ -205,16 +205,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 args.input_files.len()
             }
         );
-        eprintln!("  Lines processed: {}", total_stats.lines_processed);
-        eprintln!("  Lines output: {}", total_stats.lines_output);
-        eprintln!("  Lines skipped: {}", total_stats.lines_skipped);
+        eprintln!("  Records processed: {}", total_stats.records_processed);
+        eprintln!("  Records output: {}", total_stats.records_output);
+        eprintln!("  Records skipped: {}", total_stats.records_skipped);
         eprintln!("  Errors: {}", total_stats.errors);
         eprintln!("  Processing time: {:?}", total_stats.processing_time);
 
-        if total_stats.lines_processed > 0 {
+        if total_stats.records_processed > 0 {
             let rate =
-                total_stats.lines_processed as f64 / total_stats.processing_time.as_secs_f64();
-            eprintln!("  Processing rate: {:.0} lines/second", rate);
+                total_stats.records_processed as f64 / total_stats.processing_time.as_secs_f64();
+            eprintln!("  Processing rate: {:.0} records/second", rate);
         }
     }
 
