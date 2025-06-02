@@ -95,10 +95,15 @@ f"Line {count}: {line}"
 }
 
 #[test]
-fn test_commit1_control_flow() {
-    println!("=== Testing Commit 1: Control flow (emit, skip, terminate) ===");
+fn debug_emit_and_skip() {
+    use std::io::Cursor;
+    use stelp::config::PipelineConfig;
+    use stelp::context::{RecordContext, RecordData};
+    use stelp::processors::StarlarkProcessor;
+    use stelp::variables::GlobalVariables;
+    use stelp::StreamPipeline;
+    println!("=== Debug: What's actually happening ===");
 
-    // Test emit and skip
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
@@ -122,10 +127,85 @@ else:
         .process_stream(input, &mut output, Some("test.txt"))
         .unwrap();
 
+    println!("Stats: {:?}", stats);
+    let output_str = String::from_utf8(output).unwrap();
+    println!("Raw output bytes: {:?}", output_str.as_bytes());
+    println!("Output string: '{}'", output_str);
+    println!("Output lines:");
+    for (i, line) in output_str.lines().enumerate() {
+        println!("  {}: '{}'", i, line);
+    }
+
+    // Let's test the processor directly too
+    println!("\n=== Direct processor test ===");
+    let globals = GlobalVariables::new();
+    let ctx = RecordContext {
+        line_number: 1,
+        record_count: 1,
+        file_name: None,
+        global_vars: &globals,
+    };
+
+    let processor = StarlarkProcessor::from_script(
+        "test",
+        r#"
+if "emit" in line:
+    emit("Found: " + line)
+    skip()
+else:
+    line.upper()
+        "#,
+    )
+    .unwrap();
+
+    // Test normal line
+    let record1 = RecordData::text("normal line".to_string());
+    let result1 = processor.process_standalone(&record1, &ctx);
+    println!("Normal line result: {:?}", result1);
+
+    // Test emit line
+    let record2 = RecordData::text("emit this".to_string());
+    let result2 = processor.process_standalone(&record2, &ctx);
+    println!("Emit line result: {:?}", result2);
+}
+
+#[test]
+fn test_commit1_control_flow_fixed() {
+    println!("=== Testing Commit 1: Control flow (emit, skip, terminate) - FIXED ===");
+
+    // Test emit and skip
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    let processor = StarlarkProcessor::from_script(
+        "test",
+        r#"
+result = line  # Default to original line
+if "emit" in line:
+    emit("Found: " + line)
+    skip()
+else:
+    result = line.upper()
+
+result
+        "#,
+    )
+    .unwrap();
+    pipeline.add_processor(Box::new(processor));
+
+    let input = Cursor::new("normal line\nemit this\nanother line\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, Some("test.txt"))
+        .unwrap();
+
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 3); // 2 transforms + 1 emit
 
     let output_str = String::from_utf8(output).unwrap();
+    println!("Output: '{}'", output_str);
+
     assert!(output_str.contains("NORMAL LINE"));
     assert!(output_str.contains("Found: emit this"));
     assert!(output_str.contains("ANOTHER LINE"));
@@ -138,10 +218,13 @@ else:
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
+result = line  # Default to original line
 if "STOP" in line:
     terminate("Stopped at: " + line)
 else:
-    line.upper()
+    result = line.upper()
+
+result
         "#,
     )
     .unwrap();
@@ -157,6 +240,8 @@ else:
     assert_eq!(stats.records_processed, 2); // Only processes until STOP
 
     let output_str = String::from_utf8(output).unwrap();
+    println!("Terminate test output: '{}'", output_str);
+
     assert!(output_str.contains("HELLO"));
     assert!(output_str.contains("Stopped at: STOP here"));
     assert!(!output_str.contains("WORLD")); // Should not process this

@@ -66,9 +66,10 @@ impl StarlarkProcessor {
             module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
         }
 
-        // Add True/False constants
+        // Add True/False/None constants
         module.set("True", starlark::values::Value::new_bool(true));
         module.set("False", starlark::values::Value::new_bool(false));
+        module.set("None", starlark::values::Value::new_none());
 
         // Parse and execute script with f-strings enabled
         let dialect = Dialect {
@@ -98,6 +99,8 @@ impl StarlarkProcessor {
             }
         };
 
+        println!("DEBUG: Processing text: '{}'", text);
+
         // Clear emit buffer and flags
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
@@ -107,31 +110,46 @@ impl StarlarkProcessor {
         // Execute script (same logic as before)
         let result = match self.execute_with_context(text, ctx) {
             Ok(result_str) => {
+                println!("DEBUG: Script result: '{}'", result_str);
+
                 // Collect emitted lines
                 let emissions: Vec<RecordData> = EMIT_BUFFER.with(|buffer| {
-                    buffer
+                    let emissions: Vec<_> = buffer
                         .borrow()
                         .iter()
                         .map(|s| RecordData::text(s.clone()))
-                        .collect()
+                        .collect();
+                    println!("DEBUG: Emissions: {:?}", emissions);
+                    emissions
                 });
 
+                let skip_flag = SKIP_FLAG.with(|flag| flag.get());
+                let terminate_flag = TERMINATE_FLAG.with(|flag| flag.get());
+
+                println!(
+                    "DEBUG: skip_flag: {}, terminate_flag: {}",
+                    skip_flag, terminate_flag
+                );
+
                 // Check for special control values
-                if SKIP_FLAG.with(|flag| flag.get()) {
+                if skip_flag {
                     if emissions.is_empty() {
+                        println!("DEBUG: Returning Skip");
                         ProcessResult::Skip
                     } else {
+                        println!("DEBUG: Returning FanOut with emissions");
                         ProcessResult::FanOut(emissions)
                     }
-                } else if TERMINATE_FLAG.with(|flag| flag.get()) {
+                } else if terminate_flag {
                     let final_output = TERMINATE_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
+                    println!("DEBUG: Returning Terminate");
                     ProcessResult::Terminate(final_output)
                 } else {
-                    // Normal processing (same logic as before)
-                    let is_none = result_str == "None" || result_str.is_empty();
-                    let clean_result = if is_none {
-                        String::new()
+                    // Normal processing - FIXED: Handle the script result properly
+                    let clean_result = if result_str == "None" {
+                        // If script returns None, pass through original line unchanged
+                        text.to_string()
                     } else {
                         // Remove surrounding quotes if they exist
                         if result_str.starts_with('"')
@@ -144,26 +162,33 @@ impl StarlarkProcessor {
                         }
                     };
 
-                    let output_record = if is_none || clean_result.is_empty() {
-                        RecordData::text(text.to_string()) // No change
-                    } else {
-                        RecordData::text(clean_result)
-                    };
+                    println!("DEBUG: Clean result: '{}'", clean_result);
+                    let output_record = RecordData::text(clean_result);
 
-                    match emissions.is_empty() {
-                        true => ProcessResult::Transform(output_record),
-                        false => ProcessResult::TransformWithEmissions {
-                            primary: Some(output_record),
-                            emissions,
-                        },
-                    }
+                    let final_result = match emissions.is_empty() {
+                        true => {
+                            println!("DEBUG: Returning Transform");
+                            ProcessResult::Transform(output_record)
+                        }
+                        false => {
+                            println!("DEBUG: Returning TransformWithEmissions");
+                            ProcessResult::TransformWithEmissions {
+                                primary: Some(output_record),
+                                emissions,
+                            }
+                        }
+                    };
+                    final_result
                 }
             }
-            Err(starlark_error) => ProcessResult::Error(ProcessingError::ScriptError {
-                step: self.name.clone(),
-                line: ctx.line_number,
-                source: starlark_error,
-            }),
+            Err(starlark_error) => {
+                println!("DEBUG: Script error: {}", starlark_error);
+                ProcessResult::Error(ProcessingError::ScriptError {
+                    step: self.name.clone(),
+                    line: ctx.line_number,
+                    source: starlark_error,
+                })
+            }
         };
 
         // Clear context to avoid dangling pointers
@@ -171,6 +196,7 @@ impl StarlarkProcessor {
             *current_ctx.borrow_mut() = None;
         });
 
+        println!("DEBUG: Final result: {:?}", result);
         result
     }
 }
@@ -242,9 +268,10 @@ impl FilterProcessor {
             module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
         }
 
-        // Add True/False constants
+        // Add True/False/None constants
         module.set("True", starlark::values::Value::new_bool(true));
         module.set("False", starlark::values::Value::new_bool(false));
+        module.set("None", starlark::values::Value::new_none());
 
         // Parse and execute script with f-strings enabled
         let dialect = Dialect {
