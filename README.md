@@ -5,6 +5,7 @@ A high-performance CLI tool that processes stdin line-by-line using Starlark (Py
 ## Features
 
 - **Line-by-line processing** with Starlark transformation scripts
+- **Code reuse with --include** - share functions and constants across invocations
 - **Multi-step pipelines** with global state management
 - **Rich built-in functions** for text processing, regex, JSON, CSV
 - **Flexible output control** - transform, emit multiple lines, filter, or exit
@@ -43,6 +44,33 @@ stelp --eval 'line.split(",")[0]' --eval 'line.upper()' data.csv
 stelp -f script.star input1.txt input2.txt
 ```
 
+### Code Reuse with --include
+
+Share functions and constants across invocations:
+
+```bash
+# Create reusable helpers
+cat > helpers.star << 'EOF'
+def clean_line(text):
+    return text.strip().replace('\t', ' ')
+
+def is_error_line(text):
+    return "ERROR" in text.upper()
+
+MAX_LINE_LENGTH = 1000
+EOF
+
+# Use shared functions
+stelp --include helpers.star --eval 'clean_line(line)' messy.txt
+
+# Multiple includes (processed in order)
+stelp --include constants.star --include utils.star --eval 'process(line)' data.txt
+
+# Works with filters and script files too
+stelp --include validators.star --filter 'is_valid(line)' --eval 'transform(line)' input.txt
+stelp --include shared.star -f main_script.star input.txt
+```
+
 ### Advanced Examples
 
 #### Global Variables and Counting
@@ -64,6 +92,34 @@ if "ERROR" in line:
 else:
     line.upper()
 ' logs.txt
+```
+
+#### Shared Log Processing
+```bash
+# Create log_utils.star
+cat > log_utils.star << 'EOF'
+def parse_log_level(line):
+    if "[ERROR]" in line:
+        return "ERROR"
+    elif "[WARN]" in line:
+        return "WARN"
+    elif "[INFO]" in line:
+        return "INFO"
+    return "DEBUG"
+
+def colorize_level(level):
+    colors = {"ERROR": "\033[31m", "WARN": "\033[33m", "INFO": "\033[32m"}
+    reset = "\033[0m"
+    color = colors.get(level, "")
+    return f"{color}{level}{reset}"
+EOF
+
+# Use shared functions
+stelp --include log_utils.star --eval '
+level = parse_log_level(line)
+colored_level = colorize_level(level)
+line.replace(f"[{level}]", f"[{colored_level}]")
+' server.log
 ```
 
 #### CSV Processing
@@ -153,6 +209,16 @@ if total > 1000:
     exit("Processed enough lines")
 ```
 
+### Shared Functions (Via --include)
+```python
+# In helpers.star
+def validate_email(email):
+    return st.regex_match(r"[^@]+@[^@]+", email)
+
+# In your script
+stelp --include helpers.star --eval 'validate_email(line)'
+```
+
 ## Command-Line Options
 
 ```
@@ -162,16 +228,74 @@ Arguments:
   [FILE]...                Input files to process (default: stdin if none provided)
 
 Options:
+      --include <FILE>     Include Starlark files (processed in order)
   -e, --eval <EXPRESSION>  Pipeline evaluation expressions (executed in order)
   -f, --file <FILE>        Script file containing pipeline definition
+      --filter <EXPR>      Filter expressions - remove lines where expression is true
   -o, --output <FILE>      Output file (default: stdout)
       --debug              Debug mode - show processing details
       --fail-fast          Fail on first error instead of skipping
-      --progress <N>       Show progress every N lines
-      --max-line-length <N> Maximum line length [default: 1048576]
-      --buffer-size <N>    Buffer size for I/O [default: 65536]
   -h, --help               Print help
   -V, --version            Print version
+```
+
+## Include Files
+
+Create reusable libraries for common tasks:
+
+### Constants and Configuration
+```python
+# config.star
+MAX_RETRIES = 3
+API_BASE_URL = "https://api.example.com"
+VALID_STATUSES = ["active", "pending", "disabled"]
+```
+
+### Utility Functions
+```python
+# text_utils.star
+def normalize_whitespace(text):
+    return st.regex_replace(r'\s+', ' ', text.strip())
+
+def extract_email(text):
+    matches = st.regex_find_all(r'[^@\s]+@[^@\s]+\.[^@\s]+', text)
+    return matches[0] if matches else None
+
+def is_valid_json(text):
+    try:
+        st.parse_json(text)
+        return True
+    except:
+        return False
+```
+
+### Domain-Specific Processing
+```python
+# log_processor.star
+def parse_apache_log(line):
+    # Custom Apache log parser
+    return st.regex_replace(
+        r'(\S+) \S+ \S+ \[(.*?)\] "(.*?)" (\d+) (\d+|-)', 
+        r'{"ip":"\1","time":"\2","request":"\3","status":\4,"size":\5}', 
+        line
+    )
+
+def categorize_http_status(status):
+    status_int = int(status)
+    if status_int < 300:
+        return "success"
+    elif status_int < 400:
+        return "redirect"
+    elif status_int < 500:
+        return "client_error"
+    else:
+        return "server_error"
+```
+
+Usage:
+```bash
+stelp --include config.star --include text_utils.star --include log_processor.star \
+      --eval 'parse_apache_log(normalize_whitespace(line))' access.log
 ```
 
 ## Script Files
@@ -213,6 +337,7 @@ result
 Run with:
 ```bash
 stelp -f process_logs.star logs.txt
+stelp --include helpers.star -f process_logs.star logs.txt  # With includes
 ```
 
 ## Performance
@@ -235,6 +360,24 @@ stelp --fail-fast --eval 'st.parse_json(line)["field"]' data.json  # Stops on fi
 ```
 
 ## Best Practices
+
+### Organize Include Files
+```
+includes/
+├── constants.star      # Shared configuration
+├── validators.star     # Data validation functions  
+├── formatters.star     # Output formatting helpers
+├── parsers.star        # Input parsing utilities
+└── domain/
+    ├── logs.star       # Log-specific functions
+    └── api.star        # API-specific functions
+```
+
+### Use Include Order for Overrides
+```bash
+# Base functionality first, then specializations
+stelp --include base.star --include company_overrides.star --eval 'process(line)'
+```
 
 ### Conditional Transformations
 When using `if/else` statements for transformations, always use explicit result variables:
@@ -259,16 +402,6 @@ else:
 ```
 
 This ensures your transformations are properly applied and returned.
-
-## Examples Repository
-
-See the `examples/` directory for more complex use cases:
-
-- Log file processing and analysis
-- CSV data transformation
-- JSON event stream processing
-- Text report generation
-- Data validation pipelines
 
 ## Testing
 
@@ -297,11 +430,9 @@ else:
 result
 '
 
-# Process multiple files
-stelp --eval 'line.upper()' file1.txt file2.txt file3.txt
-
-# Use with shell globbing
-stelp --eval 'f"[{st.file_name()}] {line}"' *.log
+# Test include functionality
+echo "def greet(name): return 'Hello, ' + name" > greet.star
+echo "World" | stelp --include greet.star --eval 'greet(line)'
 ```
 
 ## License

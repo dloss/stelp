@@ -16,6 +16,10 @@ struct Args {
     #[arg(value_name = "FILE")]
     input_files: Vec<PathBuf>,
 
+    /// Include Starlark files (processed in order)
+    #[arg(long = "include", action = ArgAction::Append)]
+    includes: Vec<PathBuf>,
+
     /// Pipeline evaluation expressions (executed in order)
     #[arg(short = 'e', long = "eval", action = ArgAction::Append)]
     evals: Vec<String>,
@@ -56,6 +60,27 @@ impl Args {
             }
         }
     }
+}
+
+/// Build the final script by concatenating includes and user script
+fn build_final_script(
+    includes: &[PathBuf],
+    user_script: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut final_script = String::new();
+
+    // Add includes in order
+    for include_path in includes {
+        let include_content = std::fs::read_to_string(include_path)
+            .map_err(|e| format!("Include file '{}' not found: {}", include_path.display(), e))?;
+        final_script.push_str(&include_content);
+        final_script.push_str("\n\n");
+    }
+
+    // Add user script
+    final_script.push_str(user_script);
+
+    Ok(final_script)
 }
 
 fn main() {
@@ -100,9 +125,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             )
         })?;
 
+        // Build final script with includes
+        let final_script = build_final_script(&args.includes, &script_content)?;
+
         let processor = StarlarkProcessor::from_script(
             &format!("file:{}", script_path.display()),
-            &script_content,
+            &final_script,
         )
         .map_err(|e| format!("Failed to compile script file: {}", e))?;
 
@@ -110,8 +138,11 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // Add filter processors first (they run before eval processors)
         for (i, filter_expr) in args.filters.iter().enumerate() {
+            // Build final script with includes
+            let final_script = build_final_script(&args.includes, filter_expr)?;
+
             let processor =
-                FilterProcessor::from_expression(&format!("filter_{}", i + 1), filter_expr)
+                FilterProcessor::from_expression(&format!("filter_{}", i + 1), &final_script)
                     .map_err(|e| format!("Failed to compile filter expression {}: {}", i + 1, e))?;
 
             pipeline.add_processor(Box::new(processor));
@@ -119,8 +150,11 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
         // Add processors from --eval arguments
         for (i, eval_expr) in args.evals.iter().enumerate() {
+            // Build final script with includes
+            let final_script = build_final_script(&args.includes, eval_expr)?;
+
             let processor =
-                StarlarkProcessor::from_script(&format!("eval_{}", i + 1), eval_expr)
+                StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
                     .map_err(|e| format!("Failed to compile eval expression {}: {}", i + 1, e))?;
 
             pipeline.add_processor(Box::new(processor));
