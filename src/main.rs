@@ -17,7 +17,7 @@ enum PipelineStep {
 #[derive(Parser)]
 #[command(name = "stelp")]
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
-#[command(version)] // Remove hardcoded version - will use Cargo.toml version automatically
+#[command(version)]
 struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]
@@ -143,23 +143,26 @@ fn main() {
     let args = match Args::from_arg_matches(&matches) {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("Error parsing arguments: {}", e);
+            eprintln!("stelp: {}", e);
             std::process::exit(1);
         }
     };
 
     if let Err(e) = args.validate() {
-        eprintln!("Error: {}", e);
+        eprintln!("stelp: {}", e);
         std::process::exit(1);
     }
 
-    if let Err(e) = run(args, &matches) {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
+    match run(args, &matches) {
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(e) => {
+            eprintln!("stelp: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
-fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+fn run(args: Args, matches: &ArgMatches) -> Result<i32, Box<dyn std::error::Error>> {
     // Create pipeline configuration
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
@@ -200,7 +203,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
                 let processor =
                     StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
                         .map_err(|e| {
-                            format!("Failed to compile eval expression {}: {}", i + 1, e)
+                            format!("failed to compile eval expression {}: {}", i + 1, e)
                         })?;
                 pipeline.add_processor(Box::new(processor));
             }
@@ -210,13 +213,13 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
                     &format!("filter_{}", i + 1),
                     &final_script,
                 )
-                .map_err(|e| format!("Failed to compile filter expression {}: {}", i + 1, e))?;
+                .map_err(|e| format!("failed to compile filter expression {}: {}", i + 1, e))?;
                 pipeline.add_processor(Box::new(processor));
             }
             PipelineStep::ScriptFile(script_path) => {
                 let script_content = std::fs::read_to_string(script_path).map_err(|e| {
                     format!(
-                        "Failed to read script file '{}': {}",
+                        "failed to read script file '{}': {}",
                         script_path.display(),
                         e
                     )
@@ -226,7 +229,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
                     &format!("script:{}", script_path.display()),
                     &final_script,
                 )
-                .map_err(|e| format!("Failed to compile script file: {}", e))?;
+                .map_err(|e| format!("failed to compile script file: {}", e))?;
                 pipeline.add_processor(Box::new(processor));
             }
         }
@@ -236,7 +239,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
     let mut output: Box<dyn Write> = if let Some(output_path) = &args.output_file {
         let file = File::create(output_path).map_err(|e| {
             format!(
-                "Failed to create output file '{}': {}",
+                "failed to create output file '{}': {}",
                 output_path.display(),
                 e
             )
@@ -252,23 +255,23 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
     if args.input_files.is_empty() {
         // No input files specified, read from stdin
         if args.debug {
-            eprintln!("Reading from stdin...");
+            eprintln!("stelp: reading from stdin");
         }
         let input = BufReader::with_capacity(65536, io::stdin());
         let stats = pipeline
             .process_stream(input, &mut output, Some("<stdin>"))
-            .map_err(|e| format!("Processing stdin failed: {}", e))?;
+            .map_err(|e| format!("processing stdin failed: {}", e))?;
         total_stats = stats;
     } else {
         // Process each input file
         for (file_index, input_path) in args.input_files.iter().enumerate() {
             if args.debug {
-                eprintln!("Processing file: {}", input_path.display());
+                eprintln!("stelp: processing file: {}", input_path.display());
             }
 
             let file = File::open(input_path).map_err(|e| {
                 format!(
-                    "Failed to open input file '{}': {}",
+                    "failed to open input file '{}': {}",
                     input_path.display(),
                     e
                 )
@@ -278,7 +281,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
             let filename = input_path.to_string_lossy();
             let stats = pipeline
                 .process_stream(input, &mut output, Some(&filename))
-                .map_err(|e| format!("Processing file '{}' failed: {}", input_path.display(), e))?;
+                .map_err(|e| format!("processing file '{}' failed: {}", input_path.display(), e))?;
 
             // Accumulate statistics
             if file_index == 0 {
@@ -301,27 +304,24 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
 
     // Print final stats if debug mode
     if args.debug {
-        eprintln!("Final statistics:");
         eprintln!(
-            "  Files processed: {}",
-            if args.input_files.is_empty() {
-                1
-            } else {
-                args.input_files.len()
-            }
+            "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+            total_stats.records_processed,
+            total_stats.records_output,
+            total_stats.records_skipped,
+            total_stats.errors,
+            total_stats.processing_time
         );
-        eprintln!("  Records processed: {}", total_stats.records_processed);
-        eprintln!("  Records output: {}", total_stats.records_output);
-        eprintln!("  Records skipped: {}", total_stats.records_skipped);
-        eprintln!("  Errors: {}", total_stats.errors);
-        eprintln!("  Processing time: {:?}", total_stats.processing_time);
-
-        if total_stats.records_processed > 0 {
-            let rate =
-                total_stats.records_processed as f64 / total_stats.processing_time.as_secs_f64();
-            eprintln!("  Processing rate: {:.0} records/second", rate);
-        }
     }
 
-    Ok(())
+    // Determine exit code based on results
+    let exit_code = if total_stats.errors > 0 {
+        1 // Processing errors occurred
+    } else if total_stats.records_output == 0 {
+        2 // No output produced
+    } else {
+        0 // Success
+    };
+
+    Ok(exit_code)
 }

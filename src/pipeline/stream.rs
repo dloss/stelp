@@ -63,6 +63,9 @@ impl StreamPipeline {
         self.context.line_number = 0;
         self.context.record_count = 0;
 
+        // Reset local stats for this file
+        let mut file_stats = ProcessingStats::default();
+
         // Reset processor state (not global variables)
         for processor in &mut self.processors {
             processor.reset();
@@ -83,7 +86,7 @@ impl StreamPipeline {
 
             self.context.line_number += 1;
             self.context.record_count += 1;
-            self.stats.records_processed += 1;
+            file_stats.records_processed += 1;
 
             // Check line length
             if line.len() > self.config.max_line_length {
@@ -94,7 +97,7 @@ impl StreamPipeline {
                 match self.config.error_strategy {
                     ErrorStrategy::FailFast => return Err(error),
                     ErrorStrategy::Skip => {
-                        self.stats.errors += 1;
+                        file_stats.errors += 1;
                         if self.config.debug {
                             eprintln!("stelp: line {}: line too long, skipping", self.context.line_number);
                         }
@@ -115,7 +118,7 @@ impl StreamPipeline {
                         }
                         return Err(e);
                     }
-                    self.stats.records_output += 1;
+                    file_stats.records_output += 1;
                 }
                 ProcessResult::FanOut(output_records) => {
                     for output_record in output_records {
@@ -125,7 +128,7 @@ impl StreamPipeline {
                             }
                             return Err(e);
                         }
-                        self.stats.records_output += 1;
+                        file_stats.records_output += 1;
                     }
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
@@ -136,7 +139,7 @@ impl StreamPipeline {
                             }
                             return Err(e);
                         }
-                        self.stats.records_output += 1;
+                        file_stats.records_output += 1;
                     }
                     for emission in emissions {
                         if let Err(e) = self.write_record(output, &emission) {
@@ -145,11 +148,11 @@ impl StreamPipeline {
                             }
                             return Err(e);
                         }
-                        self.stats.records_output += 1;
+                        file_stats.records_output += 1;
                     }
                 }
                 ProcessResult::Skip => {
-                    self.stats.records_skipped += 1;
+                    file_stats.records_skipped += 1;
                 }
                 ProcessResult::Exit(final_output) => {
                     // Output the final record if provided
@@ -159,7 +162,7 @@ impl StreamPipeline {
                                 return Err(e);
                             }
                         } else {
-                            self.stats.records_output += 1;
+                            file_stats.records_output += 1;
                         }
                     }
                     // Stop processing
@@ -168,7 +171,7 @@ impl StreamPipeline {
                 ProcessResult::Error(err) => match self.config.error_strategy {
                     ErrorStrategy::FailFast => return Err(err),
                     ErrorStrategy::Skip => {
-                        self.stats.errors += 1;
+                        file_stats.errors += 1;
                         if self.config.debug {
                             eprintln!(
                                 "stelp: line {}: {}",
@@ -183,20 +186,27 @@ impl StreamPipeline {
             self.context.total_processed += 1;
         }
 
-        self.stats.processing_time = start_time.elapsed();
+        file_stats.processing_time = start_time.elapsed();
+
+        // Update global stats
+        self.stats.records_processed += file_stats.records_processed;
+        self.stats.records_output += file_stats.records_output;
+        self.stats.records_skipped += file_stats.records_skipped;
+        self.stats.errors += file_stats.errors;
+        self.stats.processing_time += file_stats.processing_time;
 
         if self.config.debug {
             eprintln!(
-                "stelp: file processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
-                self.stats.records_processed,
-                self.stats.records_output,
-                self.stats.records_skipped,
-                self.stats.errors,
-                self.stats.processing_time
+                "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+                file_stats.records_processed,
+                file_stats.records_output,
+                file_stats.records_skipped,
+                file_stats.errors,
+                file_stats.processing_time
             );
         }
 
-        Ok(self.stats.clone())
+        Ok(file_stats)
     }
 
     fn process_record(&mut self, record: &RecordData) -> Result<ProcessResult, ProcessingError> {
@@ -253,6 +263,11 @@ impl StreamPipeline {
             }
         }
         Ok(())
+    }
+
+    /// Get current accumulated stats
+    pub fn get_stats(&self) -> &ProcessingStats {
+        &self.stats
     }
 
     /// Completely reset everything (for reusing pipeline)
