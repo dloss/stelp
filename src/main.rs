@@ -1,4 +1,4 @@
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser};
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
@@ -6,6 +6,13 @@ use std::path::PathBuf;
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
+
+#[derive(Debug, Clone)]
+enum PipelineStep {
+    Eval(String),
+    Filter(String),
+    ScriptFile(PathBuf),
+}
 
 #[derive(Parser)]
 #[command(name = "stelp")]
@@ -60,6 +67,53 @@ impl Args {
             }
         }
     }
+
+    /// Extract pipeline steps in the order they appeared on the command line
+    fn get_pipeline_steps(&self, matches: &ArgMatches) -> Result<Vec<PipelineStep>, String> {
+        let mut steps_with_indices = Vec::new();
+
+        // Get eval steps with their indices
+        if let Some(eval_indices) = matches.indices_of("evals") {
+            let eval_values: Vec<&String> = matches
+                .get_many::<String>("evals")
+                .unwrap_or_default()
+                .collect();
+
+            for (i, index) in eval_indices.enumerate() {
+                if i < eval_values.len() {
+                    steps_with_indices.push((index, PipelineStep::Eval(eval_values[i].clone())));
+                }
+            }
+        }
+
+        // Get filter steps with their indices
+        if let Some(filter_indices) = matches.indices_of("filters") {
+            let filter_values: Vec<&String> = matches
+                .get_many::<String>("filters")
+                .unwrap_or_default()
+                .collect();
+
+            for (i, index) in filter_indices.enumerate() {
+                if i < filter_values.len() {
+                    steps_with_indices
+                        .push((index, PipelineStep::Filter(filter_values[i].clone())));
+                }
+            }
+        }
+
+        // Add script file if present (it doesn't have a specific position, so put it first)
+        if let Some(ref script_path) = self.script_file {
+            steps_with_indices.push((0, PipelineStep::ScriptFile(script_path.clone())));
+        }
+
+        // Sort by command line position to get correct order
+        steps_with_indices.sort_by_key(|(index, _)| *index);
+
+        Ok(steps_with_indices
+            .into_iter()
+            .map(|(_, step)| step)
+            .collect())
+    }
 }
 
 /// Build the final script by concatenating includes and user script
@@ -84,21 +138,29 @@ fn build_final_script(
 }
 
 fn main() {
-    let args = Args::parse();
+    // Parse args using both derive API and manual matching for indices
+    let matches = Args::command().get_matches();
+    let args = match Args::from_arg_matches(&matches) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("Error parsing arguments: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     if let Err(e) = args.validate() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 
-    if let Err(e) = run(args) {
+    if let Err(e) = run(args, &matches) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 }
 
-fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    // Create pipeline configuration with hardcoded sensible defaults
+fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    // Create pipeline configuration
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
             ErrorStrategy::FailFast
@@ -106,62 +168,71 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        buffer_size: 65536,       // 64KB - good default
-        max_line_length: 1048576, // 1MB - reasonable limit
-        progress_interval: 0,     // Disabled - no progress reporting
+        buffer_size: 65536,
+        max_line_length: 1048576,
+        progress_interval: 0,
     };
 
     // Create pipeline
     let mut pipeline = stelp::StreamPipeline::new(config);
 
-    // Add processors based on input
-    if let Some(script_path) = args.script_file {
-        // Load from script file
-        let script_content = std::fs::read_to_string(&script_path).map_err(|e| {
-            format!(
-                "Failed to read script file '{}': {}",
-                script_path.display(),
-                e
-            )
-        })?;
+    // Get pipeline steps in command-line order
+    let pipeline_steps = args.get_pipeline_steps(matches)?;
 
-        // Build final script with includes
-        let final_script = build_final_script(&args.includes, &script_content)?;
-
-        let processor = StarlarkProcessor::from_script(
-            &format!("file:{}", script_path.display()),
-            &final_script,
-        )
-        .map_err(|e| format!("Failed to compile script file: {}", e))?;
-
-        pipeline.add_processor(Box::new(processor));
-    } else {
-        // Add filter processors first (they run before eval processors)
-        for (i, filter_expr) in args.filters.iter().enumerate() {
-            // Build final script with includes
-            let final_script = build_final_script(&args.includes, filter_expr)?;
-
-            let processor =
-                FilterProcessor::from_expression(&format!("filter_{}", i + 1), &final_script)
-                    .map_err(|e| format!("Failed to compile filter expression {}: {}", i + 1, e))?;
-
-            pipeline.add_processor(Box::new(processor));
-        }
-
-        // Add processors from --eval arguments
-        for (i, eval_expr) in args.evals.iter().enumerate() {
-            // Build final script with includes
-            let final_script = build_final_script(&args.includes, eval_expr)?;
-
-            let processor =
-                StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
-                    .map_err(|e| format!("Failed to compile eval expression {}: {}", i + 1, e))?;
-
-            pipeline.add_processor(Box::new(processor));
+    if args.debug {
+        eprintln!("Pipeline steps (in order):");
+        for (i, step) in pipeline_steps.iter().enumerate() {
+            match step {
+                PipelineStep::Eval(expr) => eprintln!("  {}: eval: {}", i + 1, expr),
+                PipelineStep::Filter(expr) => eprintln!("  {}: filter: {}", i + 1, expr),
+                PipelineStep::ScriptFile(path) => {
+                    eprintln!("  {}: script: {}", i + 1, path.display())
+                }
+            }
         }
     }
 
-    // Set up output with hardcoded buffer size
+    // Add processors based on ordered steps
+    for (i, step) in pipeline_steps.iter().enumerate() {
+        match step {
+            PipelineStep::Eval(eval_expr) => {
+                let final_script = build_final_script(&args.includes, eval_expr)?;
+                let processor =
+                    StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
+                        .map_err(|e| {
+                            format!("Failed to compile eval expression {}: {}", i + 1, e)
+                        })?;
+                pipeline.add_processor(Box::new(processor));
+            }
+            PipelineStep::Filter(filter_expr) => {
+                let final_script = build_final_script(&args.includes, filter_expr)?;
+                let processor = FilterProcessor::from_expression(
+                    &format!("filter_{}", i + 1),
+                    &final_script,
+                )
+                .map_err(|e| format!("Failed to compile filter expression {}: {}", i + 1, e))?;
+                pipeline.add_processor(Box::new(processor));
+            }
+            PipelineStep::ScriptFile(script_path) => {
+                let script_content = std::fs::read_to_string(script_path).map_err(|e| {
+                    format!(
+                        "Failed to read script file '{}': {}",
+                        script_path.display(),
+                        e
+                    )
+                })?;
+                let final_script = build_final_script(&args.includes, &script_content)?;
+                let processor = StarlarkProcessor::from_script(
+                    &format!("file:{}", script_path.display()),
+                    &final_script,
+                )
+                .map_err(|e| format!("Failed to compile script file: {}", e))?;
+                pipeline.add_processor(Box::new(processor));
+            }
+        }
+    }
+
+    // Set up output
     let mut output: Box<dyn Write> = if let Some(output_path) = &args.output_file {
         let file = File::create(output_path).map_err(|e| {
             format!(
