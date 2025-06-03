@@ -43,6 +43,13 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         Ok(starlark::values::none::NoneType)
     }
 
+    // NEW: Print function for debugging - single string argument
+    fn print(message: String) -> anyhow::Result<starlark::values::none::NoneType> {
+        // Print to stderr to avoid cluttering stdout
+        eprintln!("{}", message);
+        Ok(starlark::values::none::NoneType)
+    }
+
     // All st.* functions now prefixed with st_
     fn st_get_global<'v>(
         heap: &'v Heap,

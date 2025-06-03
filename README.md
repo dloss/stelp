@@ -190,6 +190,7 @@ result
 - `emit(text)` - Output an additional line
 - `skip()` - Skip outputting the current line
 - `exit()` - Stop processing entirely
+- `print(*args, sep=" ")` - Print debug information to stderr
 
 ## Variable Scopes
 
