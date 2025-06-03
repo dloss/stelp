@@ -13,7 +13,6 @@ A CLI tool that processes stdin line-by-line using Starlark (Python-like) script
 - **Rich built-in functions** for text processing, regex, JSON, CSV
 - **Flexible output control** - transform, emit multiple lines, filter, or exit
 - **Error handling** with skip or fail-fast strategies
-- **Performance focused** - 10K-50K lines/second for simple transformations
 - **Multi-file processing** - process multiple files with accumulated statistics
 
 ## Installation
@@ -342,13 +341,6 @@ Run with:
 stelp -f process_logs.star logs.txt
 stelp --include helpers.star -f process_logs.star logs.txt  # With includes
 ```
-
-## Performance
-
-- **Simple transformations**: 10K-50K lines/second
-- **Complex scripts with globals**: 1K-10K lines/second  
-- **Memory usage**: Scales with pipeline complexity, not input size
-- **Streaming**: Processes data without buffering entire input
 
 ## Error Handling
 
