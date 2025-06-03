@@ -1,10 +1,8 @@
 // tests/commit1_test.rs
 use std::io::Cursor;
 use stelp::{
-    config::{ErrorStrategy, PipelineConfig},
-    context::{ProcessResult, RecordContext, RecordData},
+    config::PipelineConfig,
     processors::{FilterProcessor, StarlarkProcessor},
-    variables::GlobalVariables,
     StreamPipeline,
 };
 
