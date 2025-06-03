@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Manual test script for --include feature
+# Manual test script for -I/--include feature
 
 set -e
 
-echo "=== Testing --include feature manually ==="
+echo "=== Testing -I/--include feature manually ==="
 
 # Create test files
 echo "Creating test files..."
@@ -32,7 +32,7 @@ echo "=== Test 1: Basic include ==="
 echo "Input: Alice"
 echo "Expected: Hello, Alice!"
 echo "Actual:"
-echo "Alice" | cargo run -q -- --include test_helpers.star --eval 'greet(line)'
+echo "Alice" | cargo run -q -- -I test_helpers.star -e 'greet(line)'
 
 # Test 2: Multiple includes (override)
 echo ""
@@ -40,7 +40,7 @@ echo "=== Test 2: Multiple includes with override ==="
 echo "Input: Alice"
 echo "Expected: Howdy, Alice!"
 echo "Actual:"
-echo "Alice" | cargo run -q -- --include test_helpers.star --include test_overrides.star --eval 'greet(line)'
+echo "Alice" | cargo run -q -- -I test_helpers.star -I test_overrides.star -e 'greet(line)'
 
 # Test 3: Include with constants
 echo ""
@@ -48,7 +48,7 @@ echo "=== Test 3: Include with constants ==="
 echo "Input: Alice"
 echo "Expected: >>> Hello, Alice! (10)"
 echo "Actual:"
-echo "Alice" | cargo run -q -- --include test_helpers.star --eval 'PREFIX + greet(line) + " (" + str(double_length(line)) + ")"'
+echo "Alice" | cargo run -q -- -I test_helpers.star -e 'PREFIX + greet(line) + " (" + str(double_length(line)) + ")"'
 
 # Test 4: Include with filter
 echo ""
@@ -61,18 +61,30 @@ def is_valid(text):
     return len(text) > 3
 EOF
 
-echo -e "hi\nhello\nbye\nworld" | cargo run -q -- --include test_validators.star --filter 'is_valid(line)' --eval 'line.upper()'
+echo -e "hi\nhello\nbye\nworld" | cargo run -q -- -I test_validators.star --filter 'is_valid(line)' -e 'line.upper()'
 
-# Test 5: Error case - missing file
+# Test 5: Include with script file
 echo ""
-echo "=== Test 5: Error case - missing file ==="
+echo "=== Test 5: Include with script file ==="
+echo "Input: Alice"
+echo "Expected: >>> Hello, Alice!"
+
+cat > test_script.star << 'EOF'
+PREFIX + greet(line)
+EOF
+
+echo "Alice" | cargo run -q -- -I test_helpers.star -s test_script.star
+
+# Test 6: Error case - missing file
+echo ""
+echo "=== Test 6: Error case - missing file ==="
 echo "Expected: Error message about missing file"
 echo "Actual:"
-echo "test" | cargo run -- --include missing_file.star --eval 'line' 2>&1 || echo "(Error caught as expected)"
+echo "test" | cargo run -- -I missing_file.star -e 'line' 2>&1 || echo "(Error caught as expected)"
 
 # Cleanup
 echo ""
 echo "Cleaning up test files..."
-rm -f test_helpers.star test_overrides.star test_validators.star
+rm -f test_helpers.star test_overrides.star test_validators.star test_script.star
 
 echo "=== Manual tests complete ==="

@@ -24,7 +24,7 @@ struct Args {
     input_files: Vec<PathBuf>,
 
     /// Include Starlark files (processed in order)
-    #[arg(long = "include", action = ArgAction::Append)]
+    #[arg(short = 'I', long = "include", action = ArgAction::Append)]
     includes: Vec<PathBuf>,
 
     /// Pipeline evaluation expressions (executed in order)
@@ -32,10 +32,10 @@ struct Args {
     evals: Vec<String>,
 
     /// Script file containing pipeline definition
-    #[arg(short = 'f', long = "file")]
+    #[arg(short = 's', long = "script")]
     script_file: Option<PathBuf>,
 
-    /// Filter expressions - Only keep lines expression is true
+    /// Filter expressions - Only keep lines where expression is true
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
 
@@ -59,11 +59,11 @@ impl Args {
         let has_filters = !self.filters.is_empty();
 
         match (has_script_file, has_evals || has_filters) {
-            (true, true) => Err("Cannot use --file with --eval or --filter arguments".to_string()),
+            (true, true) => Err("Cannot use --script with --eval or --filter arguments".to_string()),
             (true, false) => Ok(()), // Script file only
             (false, true) => Ok(()), // Eval/filter arguments only
             (false, false) => {
-                Err("Must provide either --file or --eval/--filter arguments".to_string())
+                Err("Must provide either --script or --eval/--filter arguments".to_string())
             }
         }
     }
@@ -223,7 +223,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
                 })?;
                 let final_script = build_final_script(&args.includes, &script_content)?;
                 let processor = StarlarkProcessor::from_script(
-                    &format!("file:{}", script_path.display()),
+                    &format!("script:{}", script_path.display()),
                     &final_script,
                 )
                 .map_err(|e| format!("Failed to compile script file: {}", e))?;

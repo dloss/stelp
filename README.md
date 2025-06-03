@@ -8,7 +8,7 @@ A CLI tool that processes stdin line-by-line using Starlark (Python-like) script
 ## Features
 
 - **Line-by-line processing** with Starlark transformation scripts
-- **Code reuse with --include** - share functions and constants across invocations
+- **Code reuse with -I/--include** - share functions and constants across invocations
 - **Multi-step pipelines** with global state management
 - **Rich built-in functions** for text processing, regex, JSON, CSV
 - **Flexible output control** - transform, emit multiple lines, filter, or exit
@@ -30,23 +30,23 @@ cargo build --release
 
 ```bash
 # Simple transformation
-echo "hello world" | stelp --eval 'line.upper()'
+echo "hello world" | stelp -e 'line.upper()'
 # Output: HELLO WORLD
 
 # Process files directly
-stelp --eval 'line.upper()' input.txt
+stelp -e 'line.upper()' input.txt
 
 # Multiple files
-stelp --eval 'line.upper()' file1.txt file2.txt file3.txt
+stelp -e 'line.upper()' file1.txt file2.txt file3.txt
 
 # Multiple evaluation expressions
-stelp --eval 'line.split(",")[0]' --eval 'line.upper()' data.csv
+stelp -e 'line.split(",")[0]' -e 'line.upper()' data.csv
 
 # Using script files
-stelp -f script.star input1.txt input2.txt
+stelp -s script.star input1.txt input2.txt
 ```
 
-### Code Reuse with --include
+### Code Reuse with -I/--include
 
 Share functions and constants across invocations:
 
@@ -63,21 +63,21 @@ MAX_LINE_LENGTH = 1000
 EOF
 
 # Use shared functions
-stelp --include helpers.star --eval 'clean_line(line)' messy.txt
+stelp -I helpers.star -e 'clean_line(line)' messy.txt
 
 # Multiple includes (processed in order)
-stelp --include constants.star --include utils.star --eval 'process(line)' data.txt
+stelp -I constants.star -I utils.star -e 'process(line)' data.txt
 
 # Works with filters and script files too
-stelp --include validators.star --filter 'is_valid(line)' --eval 'transform(line)' input.txt
-stelp --include shared.star -f main_script.star input.txt
+stelp -I validators.star --filter 'is_valid(line)' -e 'transform(line)' input.txt
+stelp -I shared.star -s main_script.star input.txt
 ```
 
 ### Advanced Examples
 
 #### Global Variables and Counting
 ```bash
-stelp --eval '
+stelp -e '
 count = st.get_global("total", 0) + 1
 st.set_global("total", count)
 f"Line {count}: {line}"
@@ -86,7 +86,7 @@ f"Line {count}: {line}"
 
 #### Filtering and Multi-line Output
 ```bash
-stelp --eval '
+stelp -e '
 if "ERROR" in line:
     emit(f"🚨 {line}")
     emit("---")
@@ -117,7 +117,7 @@ def colorize_level(level):
 EOF
 
 # Use shared functions
-stelp --include log_utils.star --eval '
+stelp -I log_utils.star -e '
 level = parse_log_level(line)
 colored_level = colorize_level(level)
 line.replace(f"[{level}]", f"[{colored_level}]")
@@ -126,7 +126,7 @@ line.replace(f"[{level}]", f"[{colored_level}]")
 
 #### CSV Processing
 ```bash
-stelp --eval '
+stelp -e '
 fields = st.parse_csv(line)
 result = ""
 if len(fields) >= 3:
@@ -140,7 +140,7 @@ result
 
 #### JSON Processing
 ```bash
-stelp --eval '
+stelp -e '
 data = st.parse_json(line)
 data["timestamp"] + " | " + data["event"]
 ' events.json
@@ -148,7 +148,7 @@ data["timestamp"] + " | " + data["event"]
 
 #### Log Processing with Termination
 ```bash
-stelp --eval '
+stelp -e '
 result = ""
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
@@ -211,14 +211,14 @@ if total > 1000:
     exit("Processed enough lines")
 ```
 
-### Shared Functions (Via --include)
+### Shared Functions (Via -I/--include)
 ```python
 # In helpers.star
 def validate_email(email):
     return st.regex_match(r"[^@]+@[^@]+", email)
 
 # In your script
-stelp --include helpers.star --eval 'validate_email(line)'
+stelp -I helpers.star -e 'validate_email(line)'
 ```
 
 ## Command-Line Options
@@ -230,9 +230,9 @@ Arguments:
   [FILE]...                Input files to process (default: stdin if none provided)
 
 Options:
-      --include <FILE>     Include Starlark files (processed in order)
+  -I, --include <FILE>     Include Starlark files (processed in order)
   -e, --eval <EXPRESSION>  Pipeline evaluation expressions (executed in order)
-  -f, --file <FILE>        Script file containing pipeline definition
+  -s, --script <FILE>      Script file containing pipeline definition
       --filter <EXPR>      Only keep lines where expression is true
   -o, --output <FILE>      Output file (default: stdout)
       --debug              Debug mode - show processing details
@@ -296,8 +296,8 @@ def categorize_http_status(status):
 
 Usage:
 ```bash
-stelp --include config.star --include text_utils.star --include log_processor.star \
-      --eval 'parse_apache_log(normalize_whitespace(line))' access.log
+stelp -I config.star -I text_utils.star -I log_processor.star \
+      -e 'parse_apache_log(normalize_whitespace(line))' access.log
 ```
 
 ## Script Files
@@ -338,20 +338,20 @@ result
 
 Run with:
 ```bash
-stelp -f process_logs.star logs.txt
-stelp --include helpers.star -f process_logs.star logs.txt  # With includes
+stelp -s process_logs.star logs.txt
+stelp -I helpers.star -s process_logs.star logs.txt  # With includes
 ```
 
 ## Error Handling
 
 ### Skip Strategy (Default)
 ```bash
-stelp --eval 'st.parse_json(line)["field"]' data.json  # Skips invalid JSON lines
+stelp -e 'st.parse_json(line)["field"]' data.json  # Skips invalid JSON lines
 ```
 
 ### Fail-Fast Strategy
 ```bash
-stelp --fail-fast --eval 'st.parse_json(line)["field"]' data.json  # Stops on first error
+stelp --fail-fast -e 'st.parse_json(line)["field"]' data.json  # Stops on first error
 ```
 
 ## Best Practices
@@ -371,7 +371,7 @@ includes/
 ### Use Include Order for Overrides
 ```bash
 # Base functionality first, then specializations
-stelp --include base.star --include company_overrides.star --eval 'process(line)'
+stelp -I base.star -I company_overrides.star -e 'process(line)'
 ```
 
 ### Conditional Transformations
@@ -408,10 +408,10 @@ cargo test
 Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | stelp --eval 'f"Item {line}: {st.line_number()}"'
+seq 1 1000 | stelp -e 'f"Item {line}: {st.line_number()}"'
 
 # Process CSV
-echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp --eval '
+echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp -e '
 result = ""
 if st.line_number() == 1:
     result = line  # Keep header
@@ -427,7 +427,7 @@ result
 
 # Test include functionality
 echo "def greet(name): return 'Hello, ' + name" > greet.star
-echo "World" | stelp --include greet.star --eval 'greet(line)'
+echo "World" | stelp -I greet.star -e 'greet(line)'
 ```
 
 ## License

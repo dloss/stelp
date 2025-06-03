@@ -1,4 +1,4 @@
-# Stelp --include Feature Usage Examples
+# Stelp -I/--include Feature Usage Examples
 
 ## Basic Usage
 
@@ -17,7 +17,7 @@ def format_with_timestamp(text):
 
 Use it:
 ```bash
-stelp --include helpers.star --eval 'format_with_timestamp(clean_line(line))' data.txt
+stelp -I helpers.star -e 'format_with_timestamp(clean_line(line))' data.txt
 ```
 
 ### Shared Constants
@@ -30,7 +30,7 @@ OUTPUT_FORMAT = "json"
 
 Use it:
 ```bash
-stelp --include config.star --filter 'len(line) <= MAX_LINE_LENGTH' --eval 'process(line)' logs.txt
+stelp -I config.star --filter 'len(line) <= MAX_LINE_LENGTH' -e 'process(line)' logs.txt
 ```
 
 ## Advanced Examples
@@ -79,7 +79,7 @@ def track_error_count():
 
 Process logs:
 ```bash
-stelp --include log_utils.star --eval '
+stelp -I log_utils.star -e '
 log_data = parse_log_line(line)
 if log_data:
     error_count = track_error_count()
@@ -110,7 +110,7 @@ def extra_function(text):
 
 Use both (later overrides earlier):
 ```bash
-stelp --include base_functions.star --include enhanced_functions.star --eval '
+stelp -I base_functions.star -I enhanced_functions.star -e '
 result = process_line(line)
 if "special" in line:
     result = extra_function(result)
@@ -137,7 +137,7 @@ REQUIRED_FIELDS = 4
 
 Process CSV:
 ```bash
-stelp --include csv_helpers.star --eval '
+stelp -I csv_helpers.star -e '
 fields = st_parse_csv(line)
 valid, message = validate_csv_row(fields, REQUIRED_FIELDS)
 
@@ -184,7 +184,7 @@ REQUIRED_FIELDS = ["id", "timestamp", "event"]
 
 Process JSON logs:
 ```bash
-stelp --include json_utils.star --eval '
+stelp -I json_utils.star -e '
 data, error = safe_parse_json(line)
 
 if error:
@@ -216,174 +216,4 @@ def detect_log_format(line):
     if st_regex_match(r'\[(DEBUG|INFO|WARN|ERROR)\]', line):
         return "standard"
     elif st_regex_match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', line):
-        return "iso_timestamp"
-    elif line.startswith('{') and line.endswith('}'):
-        return "json"
-    else:
-        return "unknown"
-
-def parse_standard_log(line):
-    """Parse [LEVEL] timestamp message format"""
-    match = st_regex_find_all(r'\[([^\]]+)\]\s+(\S+)\s+(.*)', line)
-    if match:
-        return {"level": match[0], "timestamp": match[1], "message": match[2]}
-    return None
-
-def parse_iso_log(line):
-    """Parse ISO timestamp format logs"""
-    parts = line.split(' ', 2)
-    if len(parts) >= 3:
-        return {"timestamp": parts[0], "level": parts[1], "message": parts[2]}
-    return None
-```
-
-Process mixed format logs:
-```bash
-stelp --include format_detector.star --eval '
-format = detect_log_format(line)
-result = ""
-
-if format == "standard":
-    data = parse_standard_log(line)
-    if data:
-        result = f"STD | {data[\"level\"]} | {data[\"message\"]}"
-elif format == "iso_timestamp":
-    data = parse_iso_log(line)
-    if data:
-        result = f"ISO | {data[\"level\"]} | {data[\"message\"]}"
-elif format == "json":
-    json_data, error = safe_parse_json(line)
-    if json_data and "message" in json_data:
-        result = f"JSON | {json_data.get(\"level\", \"INFO\")} | {json_data[\"message\"]}"
-else:
-    result = f"UNK | {line}"
-
-result
-' mixed_logs.txt
-```
-
-### Error Aggregation and Reporting
-Create `error_tracker.star`:
-```python
-def track_error(error_type, message):
-    """Track errors by type with counts and examples"""
-    # Increment counter for this error type
-    count_key = f"error_{error_type}_count"
-    count = st_get_global(count_key, 0) + 1
-    st_set_global(count_key, count)
-    
-    # Store first few examples
-    examples_key = f"error_{error_type}_examples"
-    examples = st_get_global(examples_key, [])
-    if len(examples) < 3:  # Keep only first 3 examples
-        examples.append(message)
-        st_set_global(examples_key, examples)
-    
-    return count
-
-def generate_error_report():
-    """Generate summary of all tracked errors"""
-    total_errors = st_get_global("total_errors", 0)
-    if total_errors == 0:
-        return "No errors found"
-    
-    report = [f"ERROR REPORT: {total_errors} total errors"]
-    
-    # This is simplified - in practice you'd iterate through known error types
-    for error_type in ["parse", "validation", "network"]:
-        count = st_get_global(f"error_{error_type}_count", 0)
-        if count > 0:
-            report.append(f"  {error_type}: {count} occurrences")
-    
-    return "\n".join(report)
-
-def increment_total_errors():
-    count = st_get_global("total_errors", 0) + 1
-    st_set_global("total_errors", count)
-    return count
-```
-
-Track and report errors:
-```bash
-stelp --include error_tracker.star --eval '
-result = line
-
-if "ERROR" in line:
-    increment_total_errors()
-    
-    if "ParseError" in line:
-        count = track_error("parse", line)
-        result = f"PARSE_ERROR #{count}: {line}"
-    elif "ValidationError" in line:
-        count = track_error("validation", line)
-        result = f"VALIDATION_ERROR #{count}: {line}"
-    else:
-        result = f"OTHER_ERROR: {line}"
-
-# Generate report at end
-if st_line_number() > 1000:  # After processing many lines
-    emit("=" * 50)
-    emit(generate_error_report())
-    exit()
-
-result
-' application.log
-```
-
-## Best Practices
-
-### 1. Organize by Functionality
-```
-includes/
-├── constants.star       # Shared constants and configuration
-├── text_utils.star     # String manipulation functions
-├── json_utils.star     # JSON parsing and validation
-├── csv_utils.star      # CSV processing helpers
-├── log_utils.star      # Log parsing and formatting
-└── validators.star     # Data validation functions
-```
-
-### 2. Use Descriptive Function Names
-```python
-# Good
-def extract_email_from_log_line(line):
-    return st_regex_find_all(PATTERNS["email"], line)
-
-# Less clear
-def extract(line):
-    return st_regex_find_all(r"[^@]+@[^@]+", line)
-```
-
-### 3. Handle Errors Gracefully
-```python
-def safe_parse_json(text):
-    try:
-        return st_parse_json(text), None
-    except Exception as e:
-        return None, f"JSON parse error: {str(e)}"
-
-def safe_extract_field(data, field, default=""):
-    if data and field in data:
-        return data[field]
-    return default
-```
-
-### 4. Use Include Order for Overrides
-```bash
-# Base functionality first, then specializations
-stelp --include base_processors.star \
-      --include company_specific.star \
-      --include project_overrides.star \
-      --eval 'process_line(line)' data.txt
-```
-
-### 5. Document Include Dependencies
-```python
-# log_enhanced.star
-# Requires: constants.star (for LOG_LEVELS)
-# Requires: text_utils.star (for clean_line function)
-
-def enhanced_log_processor(line):
-    cleaned = clean_line(line)  # from text_utils.star
-    # ... rest of processing
-```
+        return "iso
