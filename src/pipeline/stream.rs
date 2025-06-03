@@ -68,9 +68,19 @@ impl StreamPipeline {
             processor.reset();
         }
 
-        // Process the file line by line (for now, will become record by record later)
+        // Process the file line by line
         for line_result in input.lines() {
-            let line = line_result?;
+            let line = match line_result {
+                Ok(line) => line,
+                Err(e) => {
+                    // Handle broken pipe gracefully
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        break;
+                    }
+                    return Err(ProcessingError::IoError(e));
+                }
+            };
+
             self.context.line_number += 1;
             self.context.record_count += 1;
             self.stats.records_processed += 1;
@@ -85,6 +95,9 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(error),
                     ErrorStrategy::Skip => {
                         self.stats.errors += 1;
+                        if self.config.debug {
+                            eprintln!("stelp: line {}: line too long, skipping", self.context.line_number);
+                        }
                         continue;
                     }
                 }
@@ -95,22 +108,43 @@ impl StreamPipeline {
 
             match self.process_record(&record)? {
                 ProcessResult::Transform(output_record) => {
-                    self.write_record(output, &output_record)?;
+                    if let Err(e) = self.write_record(output, &output_record) {
+                        // Handle broken pipe gracefully
+                        if e.to_string().contains("Broken pipe") {
+                            break;
+                        }
+                        return Err(e);
+                    }
                     self.stats.records_output += 1;
                 }
                 ProcessResult::FanOut(output_records) => {
                     for output_record in output_records {
-                        self.write_record(output, &output_record)?;
+                        if let Err(e) = self.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e);
+                        }
                         self.stats.records_output += 1;
                     }
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(output_record) = primary {
-                        self.write_record(output, &output_record)?;
+                        if let Err(e) = self.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e);
+                        }
                         self.stats.records_output += 1;
                     }
                     for emission in emissions {
-                        self.write_record(output, &emission)?;
+                        if let Err(e) = self.write_record(output, &emission) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e);
+                        }
                         self.stats.records_output += 1;
                     }
                 }
@@ -120,8 +154,13 @@ impl StreamPipeline {
                 ProcessResult::Exit(final_output) => {
                     // Output the final record if provided
                     if let Some(output_record) = final_output {
-                        self.write_record(output, &output_record)?;
-                        self.stats.records_output += 1;
+                        if let Err(e) = self.write_record(output, &output_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e);
+                            }
+                        } else {
+                            self.stats.records_output += 1;
+                        }
                     }
                     // Stop processing
                     break;
@@ -132,8 +171,8 @@ impl StreamPipeline {
                         self.stats.errors += 1;
                         if self.config.debug {
                             eprintln!(
-                                "Error processing record {}: {}",
-                                self.context.record_count, err
+                                "stelp: line {}: {}",
+                                self.context.line_number, err
                             );
                         }
                         continue;
@@ -148,7 +187,7 @@ impl StreamPipeline {
 
         if self.config.debug {
             eprintln!(
-                "Processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+                "stelp: file processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
                 self.stats.records_processed,
                 self.stats.records_output,
                 self.stats.records_skipped,
@@ -186,7 +225,7 @@ impl StreamPipeline {
                     return Ok(ProcessResult::Error(err));
                 }
                 other_result => {
-                    // For exit, fan-out, etc., stop processing and return
+                    // For terminate, fan-out, etc., stop processing and return
                     return Ok(other_result);
                 }
             }

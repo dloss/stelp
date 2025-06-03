@@ -1,6 +1,6 @@
 [package]
 name = "stelp"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "A high-performance CLI tool that processes stdin line-by-line using Starlark scripts (Starlark Event and Line Processor)"
 authors = ["Dirk Loss <mail@dirk-loss.de>"]

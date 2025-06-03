@@ -17,7 +17,7 @@ enum PipelineStep {
 #[derive(Parser)]
 #[command(name = "stelp")]
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
-#[command(version = "0.5.0")]
+#[command(version)] // Remove hardcoded version - will use Cargo.toml version automatically
 struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]

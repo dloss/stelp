@@ -69,7 +69,7 @@ pub enum ProcessResult {
         primary: Option<RecordData>,
         emissions: Vec<RecordData>,
     },
-    /// Skip this record
+    /// Skip this record (filter out)
     Skip,
     /// Stop processing entirely, with optional final output
     Exit(Option<RecordData>),
