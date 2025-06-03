@@ -1,4 +1,4 @@
-// tests/commit1_test.rs
+// tests/basic_pipeline_tests.rs
 use std::io::Cursor;
 use stelp::{
     config::PipelineConfig,
@@ -7,10 +7,9 @@ use stelp::{
 };
 
 #[test]
-fn test_commit1_basic_functionality() {
-    println!("=== Testing Commit 1: Basic record architecture ===");
+fn test_basic_text_transformation() {
+    println!("=== Testing Basic Pipeline: Text transformation ===");
 
-    // Test 1: Simple text transformation works
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
@@ -31,8 +30,8 @@ fn test_commit1_basic_functionality() {
 }
 
 #[test]
-fn test_commit1_filter_functionality() {
-    println!("=== Testing Commit 1: Filter functionality ===");
+fn test_basic_filter_functionality() {
+    println!("=== Testing Basic Pipeline: Filter functionality ===");
 
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
@@ -59,8 +58,8 @@ fn test_commit1_filter_functionality() {
 }
 
 #[test]
-fn test_commit1_global_variables() {
-    println!("=== Testing Commit 1: Global variables ===");
+fn test_basic_global_variables() {
+    println!("=== Testing Basic Pipeline: Global variables ===");
 
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
@@ -168,8 +167,8 @@ else:
 }
 
 #[test]
-fn test_commit1_control_flow_fixed() {
-    println!("=== Testing Commit 1: Control flow (emit, skip, terminate) - FIXED ===");
+fn test_basic_control_flow() {
+    println!("=== Testing Basic Pipeline: Control flow (emit, skip, terminate) ===");
 
     // Test emit and skip
     let config = PipelineConfig::default();
@@ -245,5 +244,5 @@ result
     assert!(!output_str.contains("WORLD")); // Should not process this
     println!("✓ Terminate works");
 
-    println!("✅ All Commit 1 tests pass!");
+    println!("✅ All basic pipeline tests pass!");
 }
