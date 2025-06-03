@@ -143,8 +143,8 @@ impl StarlarkProcessor {
                 } else if terminate_flag {
                     let final_output = TERMINATE_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
-                    println!("DEBUG: Returning Terminate");
-                    ProcessResult::Terminate(final_output)
+                    println!("DEBUG: Returning Exit");
+                    ProcessResult::Exit(final_output)
                 } else {
                     // Normal processing - FIXED: Handle the script result properly
                     let clean_result = if result_str == "None" {

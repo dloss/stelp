@@ -8,7 +8,7 @@ use stelp::StreamPipeline;
 
 #[test]
 fn test_terminate_working() {
-    println!("=== Testing working terminate ===");
+    println!("=== Testing working exit ===");
 
     let globals = GlobalVariables::new();
     let ctx = RecordContext {
@@ -24,9 +24,9 @@ fn test_terminate_working() {
 # First transform the line
 result = line.upper()
 
-# Then check if we should terminate
+# Then check if we should exit
 if "STOP" in line:
-    terminate("Stopped at: " + line)
+    exit("Stopped at: " + line)
 
 # Return the transformed result
 result
@@ -39,10 +39,10 @@ result
     let result1 = processor.process_standalone(&record1, &ctx);
     println!("Normal line result: {:?}", result1);
 
-    // Test terminate line
+    // Test exit line
     let record2 = RecordData::text("STOP here".to_string());
     let result2 = processor.process_standalone(&record2, &ctx);
-    println!("Terminate line result: {:?}", result2);
+    println!("Exit line result: {:?}", result2);
 
     // Now test in pipeline
     let config = PipelineConfig::default();
@@ -68,7 +68,7 @@ result
 
 #[test]
 fn test_terminate_bypass() {
-    println!("=== Testing without terminate function ===");
+    println!("=== Testing without exit function ===");
 
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);

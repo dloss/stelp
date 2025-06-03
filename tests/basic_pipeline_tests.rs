@@ -168,7 +168,7 @@ else:
 
 #[test]
 fn test_basic_control_flow() {
-    println!("=== Testing Basic Pipeline: Control flow (emit, skip, terminate) ===");
+    println!("=== Testing Basic Pipeline: Control flow (emit, skip, exit) ===");
 
     // Test emit and skip
     let config = PipelineConfig::default();
@@ -208,7 +208,7 @@ result
     assert!(output_str.contains("ANOTHER LINE"));
     println!("✓ Emit and skip work");
 
-    // Test terminate
+    // Test exit
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
@@ -217,7 +217,7 @@ result
         r#"
 result = line  # Default to original line
 if "STOP" in line:
-    terminate("Stopped at: " + line)
+    exit("Stopped at: " + line)
 else:
     result = line.upper()
 
@@ -237,12 +237,12 @@ result
     assert_eq!(stats.records_processed, 2); // Only processes until STOP
 
     let output_str = String::from_utf8(output).unwrap();
-    println!("Terminate test output: '{}'", output_str);
+    println!("Exit test output: '{}'", output_str);
 
     assert!(output_str.contains("HELLO"));
     assert!(output_str.contains("Stopped at: STOP here"));
     assert!(!output_str.contains("WORLD")); // Should not process this
-    println!("✓ Terminate works");
+    println!("✓ Exit works");
 
     println!("✅ All basic pipeline tests pass!");
 }

@@ -72,7 +72,7 @@ pub enum ProcessResult {
     /// Skip this record (filter out)
     Skip,
     /// Stop processing entirely, with optional final output
-    Terminate(Option<RecordData>),
+    Exit(Option<RecordData>),
     /// Processing error
     Error(ProcessingError),
 }

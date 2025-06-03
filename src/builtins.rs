@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-// Thread-local storage for emit/skip/terminate functions
+// Thread-local storage for emit/skip/exit functions
 thread_local! {
     pub static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
     pub static SKIP_FLAG: Cell<bool> = Cell::new(false);
@@ -48,7 +48,7 @@ pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
     }
 
     /// Stop processing entirely
-    fn terminate<'v>(heap: &'v Heap, message: Option<String>) -> anyhow::Result<Value<'v>> {
+    fn exit<'v>(heap: &'v Heap, message: Option<String>) -> anyhow::Result<Value<'v>> {
         TERMINATE_FLAG.with(|flag| flag.set(true));
         if let Some(msg) = message {
             Ok(heap.alloc(msg))

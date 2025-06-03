@@ -35,7 +35,7 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         Ok(starlark::values::none::NoneType)
     }
 
-    fn terminate(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn exit(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
         TERMINATE_FLAG.with(|flag| flag.set(true));
         TERMINATE_MESSAGE.with(|msg| {
             *msg.borrow_mut() = message;

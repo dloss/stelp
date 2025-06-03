@@ -117,7 +117,7 @@ impl StreamPipeline {
                 ProcessResult::Skip => {
                     self.stats.records_skipped += 1;
                 }
-                ProcessResult::Terminate(final_output) => {
+                ProcessResult::Exit(final_output) => {
                     // Output the final record if provided
                     if let Some(output_record) = final_output {
                         self.write_record(output, &output_record)?;
@@ -186,7 +186,7 @@ impl StreamPipeline {
                     return Ok(ProcessResult::Error(err));
                 }
                 other_result => {
-                    // For terminate, fan-out, etc., stop processing and return
+                    // For exit, fan-out, etc., stop processing and return
                     return Ok(other_result);
                 }
             }

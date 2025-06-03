@@ -51,13 +51,13 @@ else:
     line.upper()
 ```
 
-#### `terminate(message: string = None) -> None`
+#### `exit(message: string = None) -> None`
 Stops processing the entire stream, optionally outputting a final message.
 
 ```python
 # Stop processing after encountering an error
 if "FATAL" in line:
-    terminate("Processing stopped due to fatal error")
+    exit("Processing stopped due to fatal error")
 ```
 
 ### Global State Management
@@ -155,7 +155,7 @@ processed = get_global("processed", 0) + 1
 set_global("processed", processed)
 
 if processed > 1000:
-    terminate(f"Stopped after {processed} lines")
+    exit(f"Stopped after {processed} lines")
 else:
     line.upper()
 ```
@@ -208,7 +208,7 @@ Extension functions should be used judiciously:
 
 - Use `get_global`/`set_global` only when state must persist across lines
 - Prefer standard transformations over `emit`/`skip` when possible
-- Use `terminate` only for exceptional conditions, not normal end-of-input
+- Use `exit` only for exceptional conditions, not normal end-of-input
 
 ### Error Handling
 - Syntax errors fail at compile time

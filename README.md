@@ -7,7 +7,7 @@ A high-performance CLI tool that processes stdin line-by-line using Starlark (Py
 - **Line-by-line processing** with Starlark transformation scripts
 - **Multi-step pipelines** with global state management
 - **Rich built-in functions** for text processing, regex, JSON, CSV
-- **Flexible output control** - transform, emit multiple lines, filter, or terminate
+- **Flexible output control** - transform, emit multiple lines, filter, or exit
 - **Error handling** with skip or fail-fast strategies
 - **Performance focused** - 10K-50K lines/second for simple transformations
 - **Multi-file processing** - process multiple files with accumulated statistics
@@ -94,7 +94,7 @@ stelp --eval '
 result = ""
 if "FATAL" in line:
     emit(f"Fatal error found: {line}")
-    terminate("Processing stopped due to fatal error")
+    exit("Processing stopped due to fatal error")
 
 if st.regex_match(r"\[ERROR\]", line):
     result = st.regex_replace(r"\[ERROR\]", "[🔴 ERROR]", line)
@@ -131,7 +131,7 @@ result
 ### Output Control
 - `emit(text)` - Output an additional line
 - `skip()` - Skip outputting the current line
-- `terminate()` - Stop processing entirely
+- `exit()` - Stop processing entirely
 
 ## Variable Scopes
 
@@ -150,7 +150,7 @@ total = st.get_global("total", 0) + 1
 st.set_global("total", total)
 
 if total > 1000:
-    terminate("Processed enough lines")
+    exit("Processed enough lines")
 ```
 
 ## Command-Line Options
