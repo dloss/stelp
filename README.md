@@ -1,6 +1,9 @@
 # Stelp
 
-A high-performance CLI tool that processes stdin line-by-line using Starlark (Python-like) scripts.
+A CLI tool that processes stdin line-by-line using Starlark (Python-like) scripts.
+
+> [!WARNING]
+> Stelp is experimental software written almost entirely by LLMs. APIs and functionality may change without notice.
 
 ## Features
 
