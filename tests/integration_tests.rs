@@ -7,7 +7,7 @@ use stelp::variables::GlobalVariables;
 use stelp::StreamPipeline;
 
 #[test]
-fn test_terminate_working() {
+fn test_exit_working() {
     println!("=== Testing working exit ===");
 
     let globals = GlobalVariables::new();
@@ -67,7 +67,7 @@ result
 }
 
 #[test]
-fn test_terminate_bypass() {
+fn test_exit_bypass() {
     println!("=== Testing without exit function ===");
 
     let config = PipelineConfig::default();

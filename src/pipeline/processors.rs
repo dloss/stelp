@@ -3,7 +3,7 @@ use crate::error::{CompilationError, ProcessingError};
 use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::simple_globals::{
     preprocess_st_namespace, simple_globals, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG,
-    TERMINATE_FLAG, TERMINATE_MESSAGE,
+    EXIT_FLAG, EXIT_MESSAGE,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -102,8 +102,8 @@ impl StarlarkProcessor {
         // Clear emit buffer and flags
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
-        TERMINATE_FLAG.with(|flag| flag.set(false));
-        TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
+        EXIT_FLAG.with(|flag| flag.set(false));
+        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
         // Execute script (same logic as before)
         let result = match self.execute_with_context(text, ctx) {
@@ -118,7 +118,7 @@ impl StarlarkProcessor {
                 });
 
                 let skip_flag = SKIP_FLAG.with(|flag| flag.get());
-                let terminate_flag = TERMINATE_FLAG.with(|flag| flag.get());
+                let exit_flag = EXIT_FLAG.with(|flag| flag.get());
 
                 // Check for special control values
                 if skip_flag {
@@ -127,8 +127,8 @@ impl StarlarkProcessor {
                     } else {
                         ProcessResult::FanOut(emissions)
                     }
-                } else if terminate_flag {
-                    let final_output = TERMINATE_MESSAGE
+                } else if exit_flag {
+                    let final_output = EXIT_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     ProcessResult::Exit(final_output)
                 } else {
@@ -229,8 +229,8 @@ impl FilterProcessor {
         // Clear thread-local state
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
-        TERMINATE_FLAG.with(|flag| flag.set(false));
-        TERMINATE_MESSAGE.with(|msg| *msg.borrow_mut() = None);
+        EXIT_FLAG.with(|flag| flag.set(false));
+        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
         // Create fresh module for each record
         let module = Module::new();

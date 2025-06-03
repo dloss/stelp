@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 thread_local! {
     pub static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
     pub static SKIP_FLAG: Cell<bool> = Cell::new(false);
-    pub static TERMINATE_FLAG: Cell<bool> = Cell::new(false);
+    pub static EXIT_FLAG: Cell<bool> = Cell::new(false);
     pub static GLOBAL_VARS_REF: RefCell<Option<*const crate::GlobalVariables>> = RefCell::new(None);
     pub static LINE_CONTEXT: RefCell<Option<(usize, Option<String>)>> = RefCell::new(None);
 }
@@ -49,7 +49,7 @@ pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
 
     /// Stop processing entirely
     fn exit<'v>(heap: &'v Heap, message: Option<String>) -> anyhow::Result<Value<'v>> {
-        TERMINATE_FLAG.with(|flag| flag.set(true));
+        EXIT_FLAG.with(|flag| flag.set(true));
         if let Some(msg) = message {
             Ok(heap.alloc(msg))
         } else {

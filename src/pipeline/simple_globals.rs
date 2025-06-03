@@ -8,8 +8,8 @@ thread_local! {
     pub(crate) static SIMPLE_GLOBALS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
     pub(crate) static SKIP_FLAG: Cell<bool> = Cell::new(false);
-    pub(crate) static TERMINATE_FLAG: Cell<bool> = Cell::new(false);
-    pub(crate) static TERMINATE_MESSAGE: RefCell<Option<String>> = RefCell::new(None);
+    pub(crate) static EXIT_FLAG: Cell<bool> = Cell::new(false);
+    pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = RefCell::new(None);
     pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = RefCell::new(None);
 }
 
@@ -36,8 +36,8 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
     }
 
     fn exit(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
-        TERMINATE_FLAG.with(|flag| flag.set(true));
-        TERMINATE_MESSAGE.with(|msg| {
+        EXIT_FLAG.with(|flag| flag.set(true));
+        EXIT_MESSAGE.with(|msg| {
             *msg.borrow_mut() = message;
         });
         Ok(starlark::values::none::NoneType)
