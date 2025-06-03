@@ -331,7 +331,7 @@ fn test_simple_filter() {
     let mut pipeline = StreamPipeline::new(config);
 
     // Filter out lines containing "skip"
-    let filter = FilterProcessor::from_expression("test_filter", r#""skip" in line"#).unwrap();
+    let filter = FilterProcessor::from_expression("test_filter", r#""keep" in line"#).unwrap();
     pipeline.add_processor(Box::new(filter));
 
     let input = Cursor::new("keep this\nskip this line\nkeep this too\nskip me\nfinal line\n");
@@ -344,12 +344,12 @@ fn test_simple_filter() {
     let output_str = String::from_utf8(output).unwrap();
 
     assert_eq!(stats.records_processed, 5);
-    assert_eq!(stats.records_output, 3);
-    assert_eq!(stats.records_skipped, 2);
+    assert_eq!(stats.records_output, 2);
+    assert_eq!(stats.records_skipped, 3);
 
     assert!(output_str.contains("keep this\n"));
     assert!(output_str.contains("keep this too\n"));
-    assert!(output_str.contains("final line\n"));
+    assert!(!output_str.contains("final line\n"));
     assert!(!output_str.contains("skip this line"));
     assert!(!output_str.contains("skip me"));
 }
@@ -360,14 +360,14 @@ fn test_filter_combined_with_eval() {
     let mut pipeline = StreamPipeline::new(config);
 
     // First filter out lines containing "skip"
-    let filter = FilterProcessor::from_expression("skip_filter", r#""skip" in line"#).unwrap();
+    let filter = FilterProcessor::from_expression("keep_filter", r#""keep" in line"#).unwrap();
     pipeline.add_processor(Box::new(filter));
 
     // Then transform remaining lines to uppercase
     let processor = StarlarkProcessor::from_script("uppercase", "line.upper()").unwrap();
     pipeline.add_processor(Box::new(processor));
 
-    let input = Cursor::new("hello\nskip this\nworld\nskip me too\nend\n");
+    let input = Cursor::new("hello\nkeep this\nworld\nkeep me too\nend\n");
     let mut output = Vec::new();
 
     let stats = pipeline
@@ -377,9 +377,9 @@ fn test_filter_combined_with_eval() {
     let output_str = String::from_utf8(output).unwrap();
 
     assert_eq!(stats.records_processed, 5);
-    assert_eq!(stats.records_output, 3);
-    assert_eq!(stats.records_skipped, 2);
-    assert_eq!(output_str, "HELLO\nWORLD\nEND\n");
+    assert_eq!(stats.records_output, 2);
+    assert_eq!(stats.records_skipped, 3);
+    assert_eq!(output_str, "KEEP THIS\nKEEP ME TOO\n");
 }
 
 #[test]

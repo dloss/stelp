@@ -61,7 +61,7 @@ def is_valid(text):
     return len(text) > 3
 EOF
 
-echo -e "hi\nhello\nbye\nworld" | cargo run -q -- --include test_validators.star --filter 'not is_valid(line)' --eval 'line.upper()'
+echo -e "hi\nhello\nbye\nworld" | cargo run -q -- --include test_validators.star --filter 'is_valid(line)' --eval 'line.upper()'
 
 # Test 5: Error case - missing file
 echo ""

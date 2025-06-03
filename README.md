@@ -233,7 +233,7 @@ Options:
       --include <FILE>     Include Starlark files (processed in order)
   -e, --eval <EXPRESSION>  Pipeline evaluation expressions (executed in order)
   -f, --file <FILE>        Script file containing pipeline definition
-      --filter <EXPR>      Filter expressions - remove lines where expression is true
+      --filter <EXPR>      Only keep lines where expression is true
   -o, --output <FILE>      Output file (default: stdout)
       --debug              Debug mode - show processing details
       --fail-fast          Fail on first error instead of skipping

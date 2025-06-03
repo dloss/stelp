@@ -185,7 +185,7 @@ impl RecordProcessor for StarlarkProcessor {
     }
 }
 
-/// Simple filter processor that skips records based on a boolean expression
+/// Simple filter processor that only keeps records matching a boolean expression
 pub struct FilterProcessor {
     globals: Globals,
     pub script_source: String,
@@ -216,7 +216,7 @@ impl FilterProcessor {
     }
 
     /// Execute filter expression with context
-    fn should_filter(&self, text: &str, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
+    fn filter_matches(&self, text: &str, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
         // Set up context for global functions (same signature as StarlarkProcessor)
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = Some((
@@ -276,12 +276,12 @@ impl RecordProcessor for FilterProcessor {
             }
         };
 
-        let result = match self.should_filter(text, ctx) {
-            Ok(should_filter) => {
-                if should_filter {
-                    ProcessResult::Skip
-                } else {
+        let result = match self.filter_matches(text, ctx) {
+            Ok(filter_matches) => {
+                if filter_matches {
                     ProcessResult::Transform(record.clone())
+                } else {
+                    ProcessResult::Skip
                 }
             }
             Err(error) => ProcessResult::Error(ProcessingError::ScriptError {

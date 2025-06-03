@@ -36,7 +36,7 @@ fn test_basic_filter_functionality() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    let filter = FilterProcessor::from_expression("test_filter", r#""skip" in line"#).unwrap();
+    let filter = FilterProcessor::from_expression("test_filter", r#""keep" in line"#).unwrap();
     pipeline.add_processor(Box::new(filter));
 
     let input = Cursor::new("keep this\nskip this\nkeep this too\n");

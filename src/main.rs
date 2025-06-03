@@ -17,7 +17,7 @@ enum PipelineStep {
 #[derive(Parser)]
 #[command(name = "stelp")]
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
-#[command(version = "0.4.0")]
+#[command(version = "0.5.0")]
 struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]
@@ -35,7 +35,7 @@ struct Args {
     #[arg(short = 'f', long = "file")]
     script_file: Option<PathBuf>,
 
-    /// Filter expressions - remove lines where expression is true (executed before --eval)
+    /// Filter expressions - Only keep lines expression is true
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
 
