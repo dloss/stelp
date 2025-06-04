@@ -6,7 +6,6 @@ pub mod variables;
 
 pub use error::*;
 pub use pipeline::*;
-pub use variables::*;
 
 pub use pipeline::config::{ErrorStrategy, PipelineConfig};
 pub use pipeline::context::{ProcessResult, ProcessingStats, RecordContext, RecordData};

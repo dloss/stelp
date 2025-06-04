@@ -5,13 +5,14 @@ use starlark::values::{dict::DictRef, list::ListRef, Heap, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use crate::variables::GlobalVariables;
 
 // Thread-local storage for emit/skip/exit functions
 thread_local! {
     pub static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
     pub static SKIP_FLAG: Cell<bool> = Cell::new(false);
     pub static EXIT_FLAG: Cell<bool> = Cell::new(false);
-    pub static GLOBAL_VARS_REF: RefCell<Option<*const crate::GlobalVariables>> = RefCell::new(None);
+    pub static GLOBAL_VARS_REF: RefCell<Option<*const GlobalVariables>> = RefCell::new(None);
     pub static LINE_CONTEXT: RefCell<Option<(usize, Option<String>)>> = RefCell::new(None);
 }
 
