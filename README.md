@@ -1,434 +1,280 @@
 # Stelp
 
-A CLI tool that processes stdin line-by-line using Starlark (Python-like) scripts.
+A CLI tool for processing text streams with Starlark (Python-like) scripts.
 
 > [!WARNING]
-> Stelp is experimental software written almost entirely by LLMs. APIs and functionality may change without notice.
+> Experimental software. APIs may change without notice.
 
-## Features
+## Quick Start
 
-- **Line-by-line processing** with Starlark transformation scripts
-- **Code reuse with -I/--include** - share functions and constants across invocations
-- **Multi-step pipelines** with global state management
-- **Rich built-in functions** for text processing, regex, JSON, CSV
-- **Flexible output control** - transform, emit multiple lines, filter, or exit
-- **Error handling** with skip or fail-fast strategies
-- **Multi-file processing** - process multiple files with accumulated statistics
+```bash
+# Basic transformation
+echo "hello world" | stelp -e 'line.upper()'
+# Output: HELLO WORLD
+
+# Multiple transformations
+stelp -e 'line.split(",")[0]' -e 'line.upper()' data.csv
+
+# Filter and transform
+stelp --filter 'len(line) > 5' -e 'line.upper()' input.txt
+
+# Multi-file processing
+stelp -e 'f"[{meta.filename}:{meta.linenum}] {line.upper()}"' *.log
+```
+
+## Core Features
+
+- **Line-by-line processing** with Python-like syntax via Starlark
+- **Code reuse** via `-I/--include` for shared functions and constants
+- **Multi-step pipelines** with `--eval` and `--filter` chaining
+- **Rich built-ins** for regex, JSON, CSV, and text processing
+- **Context awareness** via `meta.linenum`, `meta.filename`, etc.
+- **Global state** that persists across lines and files
+- **Output control** - transform, emit multiple lines, filter, or exit early
+
+## Built-in Functions
+
+### Text Processing
+```python
+line.upper()                                    # Standard string methods
+st.regex_match(r'\d+', line)                   # Regex matching
+st.regex_replace(r'\d+', 'NUM', line)          # Regex replacement
+st.regex_find_all(r'\w+', line)                # Find all matches
+```
+
+### Data Formats
+```python
+data = st.parse_json(line)                     # Parse JSON
+st.to_json({"key": "value"})                   # Generate JSON
+fields = st.parse_csv(line, delimiter=",")     # Parse CSV
+st.to_csv(["a", "b", "c"])                     # Generate CSV
+```
+
+### Context & State
+```python
+meta.linenum                                   # Current line number  
+meta.filename                                  # Current file name
+st.get_global("counter", 0)                   # Get global variable
+st.set_global("counter", 42)                  # Set global variable
+```
+
+### Output Control
+```python
+emit("extra output line")                      # Output additional line
+skip()                                         # Skip current line
+exit("processing complete")                    # Stop processing
+print("debug info")                           # Debug to stderr
+```
+
+## Command Line
+
+```bash
+stelp [OPTIONS] [FILES...]
+
+# Core options
+-e, --eval <EXPR>        Evaluation expression (can be repeated)
+    --filter <EXPR>      Filter expression (can be repeated)  
+-I, --include <FILE>     Include Starlark file (can be repeated)
+-s, --script <FILE>      Script file
+-o, --output <FILE>      Output file (default: stdout)
+    --debug              Show processing details
+    --fail-fast          Stop on first error
+```
+
+## Advanced Usage
+
+### Shared Libraries
+Create reusable code with `-I/--include`:
+
+```python
+# utils.star
+def clean_line(text):
+    return st.regex_replace(r'\s+', ' ', text.strip())
+
+def parse_timestamp(line):
+    matches = st.regex_find_all(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', line)
+    return matches[0] if matches else None
+
+ERROR_THRESHOLD = 100
+```
+
+```bash
+# Use shared functions
+stelp -I utils.star -e 'clean_line(line)' messy.txt
+stelp -I utils.star -e 'parse_timestamp(line) or "no timestamp"' logs.txt
+```
+
+### Pipeline Processing
+```bash
+# Multi-step pipeline (processed in order)
+stelp --filter '"ERROR" in line' \
+      -e 'st.regex_replace(r"\[ERROR\]", "[🔴]", line)' \
+      -e 'f"[{meta.linenum}] {line}"' \
+      error.log
+```
+
+### Global State & Counting
+```bash
+stelp -e '
+count = st.get_global("total", 0) + 1
+st.set_global("total", count)
+if "ERROR" in line:
+    error_count = st.get_global("errors", 0) + 1  
+    st.set_global("errors", error_count)
+    emit(f"🚨 Error #{error_count}: {line}")
+f"[{count}] {line}"
+' server.log
+```
+
+### JSON Processing
+```bash
+# Extract and transform JSON fields
+echo '{"user": "alice", "action": "login"}' | \
+stelp -e '
+data = st.parse_json(line)
+f"{data[\"user\"]} performed {data[\"action\"]}"
+'
+```
+
+### CSV Processing  
+```bash
+# Process CSV with headers
+stelp -e '
+if meta.linenum == 1:
+    line  # Keep header
+else:
+    fields = st.parse_csv(line)
+    if int(fields[1]) >= 18:  # Age column
+        st.to_csv([fields[0], "adult"])
+    else:
+        skip()
+' users.csv
+```
+
+### Log Analysis with Early Exit
+```bash
+stelp -e '
+if "FATAL" in line:
+    emit(f"💀 Fatal error at line {meta.linenum}: {line}")
+    exit("Processing stopped due to fatal error")
+elif "ERROR" in line:
+    error_count = st.get_global("errors", 0) + 1
+    st.set_global("errors", error_count)
+    f"Error #{error_count}: {line}"
+else:
+    line
+' application.log
+```
+
+### Multi-file Processing
+```bash
+# Process multiple files with accumulated state
+stelp -e '
+file_lines = st.get_global(f"lines_{meta.filename}", 0) + 1
+st.set_global(f"lines_{meta.filename}", file_lines)
+
+total_lines = st.get_global("total_lines", 0) + 1
+st.set_global("total_lines", total_lines)
+
+f"[{meta.filename}:{meta.linenum}] (file: {file_lines}, total: {total_lines}) {line}"
+' file1.txt file2.txt file3.txt
+```
+
+## Script Files
+
+For complex processing, use script files:
+
+```python
+# process_logs.star
+def categorize_level(line):
+    if "ERROR" in line:
+        return "error"
+    elif "WARN" in line:
+        return "warning"  
+    else:
+        return "info"
+
+# Main processing
+category = categorize_level(line)
+count = st.get_global(f"{category}_count", 0) + 1
+st.set_global(f"{category}_count", count)
+
+if category == "error":
+    emit(f"🔴 Error #{count}: {line}")
+    
+f"[{category.upper()}:{count}] {line}"
+```
+
+```bash
+stelp -s process_logs.star server.log
+```
+
+## Context Variables
+
+The `meta` object provides context about the current processing state:
+
+```python
+meta.linenum           # Current line number (1-based)
+meta.filename          # Current filename or None for stdin
+meta.line_number       # Alias for linenum  
+meta.record_count      # Records processed in current file
+meta.file_name         # Alias for filename
+```
+
+Use in f-strings or regular expressions:
+```python
+f"Line {meta.linenum} in {meta.filename}: {line}"
+f"Processing record {meta.record_count}"
+```
+
+## Variable Scopes
+
+- **Local variables**: Reset for each line (`parts = line.split()`)
+- **Global variables**: Persist across lines (`st.get_global()`, `st.set_global()`)  
+- **Meta variables**: Context information (`meta.linenum`, `meta.filename`)
+- **Shared functions**: Defined in include files (`-I utils.star`)
+
+## Exit Codes
+
+- `0`: Success (some output produced)
+- `1`: Processing errors occurred  
+- `2`: No output produced
 
 ## Installation
 
 ```bash
 git clone <repository>
-cd stelp
+cd stelp  
 cargo build --release
-# Binary will be available at target/release/stelp
+# Binary: target/release/stelp
 ```
 
-## Quick Start
+## Examples
 
-### Basic Usage
-
-```bash
-# Simple transformation
-echo "hello world" | stelp -e 'line.upper()'
-# Output: HELLO WORLD
-
-# Process files directly
-stelp -e 'line.upper()' input.txt
-
-# Multiple files
-stelp -e 'line.upper()' file1.txt file2.txt file3.txt
-
-# Multiple evaluation expressions
-stelp -e 'line.split(",")[0]' -e 'line.upper()' data.csv
-
-# Using script files
-stelp -s script.star input1.txt input2.txt
-```
-
-### Code Reuse with -I/--include
-
-Share functions and constants across invocations:
-
-```bash
-# Create reusable helpers
-cat > helpers.star << 'EOF'
-def clean_line(text):
-    return text.strip().replace('\t', ' ')
-
-def is_error_line(text):
-    return "ERROR" in text.upper()
-
-MAX_LINE_LENGTH = 1000
-EOF
-
-# Use shared functions
-stelp -I helpers.star -e 'clean_line(line)' messy.txt
-
-# Multiple includes (processed in order)
-stelp -I constants.star -I utils.star -e 'process(line)' data.txt
-
-# Works with filters and script files too
-stelp -I validators.star --filter 'is_valid(line)' -e 'transform(line)' input.txt
-stelp -I shared.star -s main_script.star input.txt
-```
-
-### Advanced Examples
-
-#### Global Variables and Counting
-```bash
-stelp -e '
-count = st.get_global("total", 0) + 1
-st.set_global("total", count)
-f"Line {count}: {line}"
-' data.txt
-```
-
-#### Filtering and Multi-line Output
-```bash
-stelp -e '
-if "ERROR" in line:
-    emit(f"🚨 {line}")
-    emit("---")
-    skip()
-else:
-    line.upper()
-' logs.txt
-```
-
-#### Shared Log Processing
-```bash
-# Create log_utils.star
-cat > log_utils.star << 'EOF'
-def parse_log_level(line):
-    if "[ERROR]" in line:
-        return "ERROR"
-    elif "[WARN]" in line:
-        return "WARN"
-    elif "[INFO]" in line:
-        return "INFO"
-    return "DEBUG"
-
-def colorize_level(level):
-    colors = {"ERROR": "\033[31m", "WARN": "\033[33m", "INFO": "\033[32m"}
-    reset = "\033[0m"
-    color = colors.get(level, "")
-    return f"{color}{level}{reset}"
-EOF
-
-# Use shared functions
-stelp -I log_utils.star -e '
-level = parse_log_level(line)
-colored_level = colorize_level(level)
-line.replace(f"[{level}]", f"[{colored_level}]")
-' server.log
-```
-
-#### CSV Processing
-```bash
-stelp -e '
-fields = st.parse_csv(line)
-result = ""
-if len(fields) >= 3:
-    result = st.to_csv([fields[0].upper(), fields[2], "processed"])
-else:
-    skip()
-
-result
-' data.csv
-```
-
-#### JSON Processing
-```bash
-stelp -e '
-data = st.parse_json(line)
-data["timestamp"] + " | " + data["event"]
-' events.json
-```
-
-#### Log Processing with Termination
-```bash
-stelp -e '
-result = ""
-if "FATAL" in line:
-    emit(f"Fatal error found: {line}")
-    exit("Processing stopped due to fatal error")
-
-if st.regex_match(r"\[ERROR\]", line):
-    result = st.regex_replace(r"\[ERROR\]", "[🔴 ERROR]", line)
-else:
-    result = line
-
-result
-' server.log
-```
-
-## Built-in Functions
-
-### String Operations
-- Standard Starlark string methods: `upper()`, `lower()`, `strip()`, `split()`, `replace()`, etc.
-- `st.regex_match(pattern, text)` - Check if text matches regex
-- `st.regex_replace(pattern, replacement, text)` - Replace using regex
-- `st.regex_find_all(pattern, text)` - Find all matches
-
-### Data Processing
-- `st.parse_json(text)` - Parse JSON string to dict/list
-- `st.to_json(value)` - Convert value to JSON string
-- `st.parse_csv(line, delimiter=",")` - Parse CSV line to list
-- `st.to_csv(values, delimiter=",")` - Convert list to CSV line
-- `st.parse_kv(line, sep="=", delim=" ")` - Parse key-value pairs
-
-### Global Variables
-- `st.get_global(name, default=None)` - Get global variable
-- `st.set_global(name, value)` - Set global variable
-
-### Context Information
-- `st.line_number()` - Current line number
-- `st.file_name()` - Current file name (if processing files)
-
-### Output Control
-- `emit(text)` - Output an additional line
-- `skip()` - Skip outputting the current line
-- `exit()` - Stop processing entirely
-- `print(*args, sep=" ")` - Print debug information to stderr
-
-## Variable Scopes
-
-### Local Variables (Per-Line)
-```python
-# These reset for each line
-parts = line.split(",")
-name = parts[0].strip()
-# Process and return result
-```
-
-### Global Variables (Pipeline-Wide)
-```python
-# These persist across all lines
-total = st.get_global("total", 0) + 1
-st.set_global("total", total)
-
-if total > 1000:
-    exit("Processed enough lines")
-```
-
-### Shared Functions (Via -I/--include)
-```python
-# In helpers.star
-def validate_email(email):
-    return st.regex_match(r"[^@]+@[^@]+", email)
-
-# In your script
-stelp -I helpers.star -e 'validate_email(line)'
-```
-
-## Command-Line Options
-
-```
-stelp [OPTIONS] [FILE]...
-
-Arguments:
-  [FILE]...                Input files to process (default: stdin if none provided)
-
-Options:
-  -I, --include <FILE>     Include Starlark files (processed in order)
-  -e, --eval <EXPRESSION>  Pipeline evaluation expressions (executed in order)
-  -s, --script <FILE>      Script file containing pipeline definition
-      --filter <EXPR>      Only keep lines where expression is true
-  -o, --output <FILE>      Output file (default: stdout)
-      --debug              Debug mode - show processing details
-      --fail-fast          Fail on first error instead of skipping
-  -h, --help               Print help
-  -V, --version            Print version
-```
-
-## Include Files
-
-Create reusable libraries for common tasks:
-
-### Constants and Configuration
-```python
-# config.star
-MAX_RETRIES = 3
-API_BASE_URL = "https://api.example.com"
-VALID_STATUSES = ["active", "pending", "disabled"]
-```
-
-### Utility Functions
-```python
-# text_utils.star
-def normalize_whitespace(text):
-    return st.regex_replace(r'\s+', ' ', text.strip())
-
-def extract_email(text):
-    matches = st.regex_find_all(r'[^@\s]+@[^@\s]+\.[^@\s]+', text)
-    return matches[0] if matches else None
-
-def is_valid_json(text):
-    try:
-        st.parse_json(text)
-        return True
-    except:
-        return False
-```
-
-### Domain-Specific Processing
-```python
-# log_processor.star
-def parse_apache_log(line):
-    # Custom Apache log parser
-    return st.regex_replace(
-        r'(\S+) \S+ \S+ \[(.*?)\] "(.*?)" (\d+) (\d+|-)', 
-        r'{"ip":"\1","time":"\2","request":"\3","status":\4,"size":\5}', 
-        line
-    )
-
-def categorize_http_status(status):
-    status_int = int(status)
-    if status_int < 300:
-        return "success"
-    elif status_int < 400:
-        return "redirect"
-    elif status_int < 500:
-        return "client_error"
-    else:
-        return "server_error"
-```
-
-Usage:
-```bash
-stelp -I config.star -I text_utils.star -I log_processor.star \
-      -e 'parse_apache_log(normalize_whitespace(line))' access.log
-```
-
-## Script Files
-
-Create reusable processing scripts:
-
-```python
-# process_logs.star
-
-# Helper function
-def format_timestamp(line):
-    return st.regex_replace(r'(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})', r'\1T\2Z', line)
-
-# Processing logic
-line = line.strip()
-
-if len(line) == 0:
-    skip()
-
-# Track lines
-count = st.get_global("total", 0) + 1
-st.set_global("total", count)
-
-# Process errors specially  
-result = ""
-if "ERROR" in line:
-    error_count = st.get_global("errors", 0) + 1
-    st.set_global("errors", error_count)
-    emit(f"[{count}] Error #{error_count}: {line}")
-    skip()
-else:
-    # Format and output
-    formatted = format_timestamp(line)
-    result = f"[{count}] {formatted}"
-
-result
-```
-
-Run with:
-```bash
-stelp -s process_logs.star logs.txt
-stelp -I helpers.star -s process_logs.star logs.txt  # With includes
-```
-
-## Error Handling
-
-### Skip Strategy (Default)
-```bash
-stelp -e 'st.parse_json(line)["field"]' data.json  # Skips invalid JSON lines
-```
-
-### Fail-Fast Strategy
-```bash
-stelp --fail-fast -e 'st.parse_json(line)["field"]' data.json  # Stops on first error
-```
-
-## Best Practices
-
-### Organize Include Files
-```
-includes/
-├── constants.star      # Shared configuration
-├── validators.star     # Data validation functions  
-├── formatters.star     # Output formatting helpers
-├── parsers.star        # Input parsing utilities
-└── domain/
-    ├── logs.star       # Log-specific functions
-    └── api.star        # API-specific functions
-```
-
-### Use Include Order for Overrides
-```bash
-# Base functionality first, then specializations
-stelp -I base.star -I company_overrides.star -e 'process(line)'
-```
-
-### Conditional Transformations
-When using `if/else` statements for transformations, always use explicit result variables:
-
-```python
-# ✅ Good - Use explicit result variable
-result = ""
-if condition:
-    result = some_transformation(line)
-else:
-    result = line
-
-result
-```
-
-```python
-# ❌ Avoid - Direct if/else as final expression
-if condition:
-    some_transformation(line)
-else:
-    line
-```
-
-This ensures your transformations are properly applied and returned.
-
-## Testing
-
-Run the test suite:
-```bash
-cargo test
-```
-
-Run with sample data:
 ```bash
 # Generate test data
-seq 1 1000 | stelp -e 'f"Item {line}: {st.line_number()}"'
+seq 1 100 | stelp -e 'f"Item {line}: {st.line_number()}"'
 
-# Process CSV
-echo -e "name,age,city\nAlice,30,NYC\nBob,25,LA" | stelp -e '
-result = ""
-if st.line_number() == 1:
-    result = line  # Keep header
+# Parse Apache logs
+stelp -e 'st.regex_replace(r"(\d+\.\d+\.\d+\.\d+).*", r"IP: \1", line)' access.log
+
+# Count patterns across files  
+stelp -e '
+if st.regex_match(r"ERROR", line):
+    st.set_global("errors", st.get_global("errors", 0) + 1)
+    
+f"Total errors so far: {st.get_global(\"errors\", 0)}"
+' *.log
+
+# CSV transformation
+echo -e "name,age\nAlice,25\nBob,30" | stelp -e '
+if meta.linenum == 1:
+    line + ",category"
 else:
     fields = st.parse_csv(line)
-    if int(fields[1]) >= 30:
-        result = st.to_csv([fields[0], fields[1], fields[2], "senior"])
-    else:
-        skip()
-
-result
+    category = "senior" if int(fields[1]) >= 30 else "junior"
+    st.to_csv([fields[0], fields[1], category])
 '
-
-# Test include functionality
-echo "def greet(name): return 'Hello, ' + name" > greet.star
-echo "World" | stelp -I greet.star -e 'greet(line)'
 ```
 
 ## License
