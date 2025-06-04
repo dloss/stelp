@@ -1,5 +1,5 @@
 // tests/simple_order_test.rs
-use clap::{ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, ArgMatches, CommandFactory, Parser};
 
 #[derive(Parser)]
 #[command(name = "test")]
