@@ -28,7 +28,7 @@ fn test_basic_text_transformation() {
     }
 }
 
-#[test] 
+#[test]
 fn test_global_variables() {
     println!("=== Testing Global Variables ===");
 
@@ -38,8 +38,8 @@ fn test_global_variables() {
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = get_global("counter", 0) + 1
-set_global("counter", count)
+count = glob.get("counter", 0) + 1
+glob["counter"] = count
 f"Line {count}: {line}"
         "#,
     )

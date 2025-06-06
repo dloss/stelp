@@ -1,8 +1,10 @@
-// src/pipeline/processors.rs
+// src/pipeline/processors.rs - Updated to include glob dictionary
+
 use crate::error::{CompilationError, ProcessingError};
 use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
+use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
-    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG, EXIT_FLAG, EXIT_MESSAGE,
+    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -55,6 +57,10 @@ impl StarlarkProcessor {
         // Create fresh module for each record
         let module = Module::new();
 
+        // Create glob dictionary using the existing function
+        let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
+        module.set("glob", glob_dict);
+
         // Inject meta variables directly as ALLUPPERCASE globals
         module.set("LINENUM", module.heap().alloc(ctx.line_number as i32));
         module.set("RECNUM", module.heap().alloc(ctx.record_count as i32));
@@ -94,6 +100,11 @@ impl StarlarkProcessor {
         let result = eval
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Script execution error: {}", e))?;
+
+        // Sync the glob dictionary back to global variables using existing function
+        if let Some(updated_glob) = module.get("glob") {
+            sync_glob_dict_to_globals(updated_glob, ctx.global_vars);
+        }
 
         Ok(result.to_string())
     }
@@ -206,7 +217,11 @@ impl FilterProcessor {
         })
     }
 
-    fn filter_matches(&self, record: &RecordData, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
+    fn filter_matches(
+        &self,
+        record: &RecordData,
+        ctx: &RecordContext,
+    ) -> Result<bool, anyhow::Error> {
         // Set up context
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = Some((

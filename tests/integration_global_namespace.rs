@@ -5,7 +5,7 @@ use predicates::prelude::*;
 #[test]
 fn test_global_namespace_integration() {
     println!("=== Integration Test: Global Namespace ===");
-    
+
     // Test 1: Basic transformation
     println!("Testing basic transformation...");
     let mut cmd = Command::cargo_bin("stelp").unwrap();
@@ -16,8 +16,8 @@ fn test_global_namespace_integration() {
         .success()
         .stdout("HELLO WORLD\n");
     println!("✅ Basic transformation works");
-    
-    // Test 2: Meta variables in f-strings  
+
+    // Test 2: Meta variables in f-strings
     println!("Testing meta variables in f-strings...");
     let mut cmd2 = Command::cargo_bin("stelp").unwrap();
     cmd2.arg("-e")
@@ -27,22 +27,24 @@ fn test_global_namespace_integration() {
         .success()
         .stdout("Line 1: test line\n");
     println!("✅ Meta variables in f-strings work");
-    
+
     // Test 3: Global state functions
     println!("Testing global state functions...");
     let mut cmd3 = Command::cargo_bin("stelp").unwrap();
     cmd3.arg("-e")
-        .arg(r#"
-count = get_global("counter", 0) + 1
-set_global("counter", count)
+        .arg(
+            r#"
+count = glob.get("counter", 0) + 1
+glob["counter"] = count
 f"Count: {count}"
-        "#)
+        "#,
+        )
         .write_stdin("line1\nline2")
         .assert()
         .success()
         .stdout("Count: 1\nCount: 2\n");
     println!("✅ Global state functions work");
-    
+
     // Test 4: Regex functions without prefix
     println!("Testing regex functions without prefix...");
     let mut cmd4 = Command::cargo_bin("stelp").unwrap();
@@ -53,19 +55,21 @@ f"Count: {count}"
         .success()
         .stdout("testNUM\nhello\n");
     println!("✅ Regex functions work without prefix");
-    
+
     // Test 5: Emit and control flow - FIXED LOGIC
     println!("Testing emit and control flow...");
     let mut cmd5 = Command::cargo_bin("stelp").unwrap();
     cmd5.arg("-e")
-        .arg(r#"
+        .arg(
+            r#"
 result = line.upper()
 if "emit" in line:
     emit("Found: " + line)
 elif "skip" in line:
     skip()
 result
-        "#)
+        "#,
+        )
         .write_stdin("normal\nemit this\nskip this\nnormal2")
         .assert()
         .success()
@@ -75,23 +79,23 @@ result
         .stdout(predicate::str::contains("NORMAL2"))
         .stdout(predicate::str::contains("skip this").not());
     println!("✅ Emit and control flow work");
-    
+
     println!("✅ All global namespace integration tests pass!");
 }
 
 #[test]
 fn test_no_namespace_pollution() {
     println!("=== Testing No Namespace Pollution ===");
-    
+
     // Verify that global functions don't require st_ prefix
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-e")
-        .arg("get_global('test', 'default')")
+        .arg("glob.get('test', 'default')")
         .write_stdin("line")
         .assert()
         .success()
         .stdout("default\n");
-    
+
     // Verify that meta variables are directly accessible
     let mut cmd2 = Command::cargo_bin("stelp").unwrap();
     cmd2.arg("-e")
@@ -100,6 +104,6 @@ fn test_no_namespace_pollution() {
         .assert()
         .success()
         .stdout("1\n");
-    
+
     println!("✅ No namespace pollution - functions are in global scope");
 }

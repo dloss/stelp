@@ -99,7 +99,10 @@ impl StreamPipeline {
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
                         if self.config.debug {
-                            eprintln!("stelp: line {}: line too long, skipping", self.context.line_number);
+                            eprintln!(
+                                "stelp: line {}: line too long, skipping",
+                                self.context.line_number
+                            );
                         }
                         continue;
                     }
@@ -173,10 +176,7 @@ impl StreamPipeline {
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
                         if self.config.debug {
-                            eprintln!(
-                                "stelp: line {}: {}",
-                                self.context.line_number, err
-                            );
+                            eprintln!("stelp: line {}: {}", self.context.line_number, err);
                         }
                         continue;
                     }

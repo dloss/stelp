@@ -59,7 +59,9 @@ impl Args {
         let has_filters = !self.filters.is_empty();
 
         match (has_script_file, has_evals || has_filters) {
-            (true, true) => Err("Cannot use --script with --eval or --filter arguments".to_string()),
+            (true, true) => {
+                Err("Cannot use --script with --eval or --filter arguments".to_string())
+            }
             (true, false) => Ok(()), // Script file only
             (false, true) => Ok(()), // Eval/filter arguments only
             (false, false) => {

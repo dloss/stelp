@@ -1,3 +1,4 @@
+// src/variables.rs
 use starlark::values::{Heap, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -37,6 +38,27 @@ impl GlobalVariables {
 
     pub fn clear(&self) {
         self.store.borrow_mut().clear();
+    }
+
+    // Additional methods needed for glob dictionary
+    pub fn contains(&self, name: &str) -> bool {
+        self.store.borrow().contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.borrow().len()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.store.borrow().keys().cloned().collect()
+    }
+
+    pub fn remove(&self, name: &str) -> bool {
+        self.store.borrow_mut().remove(name).is_some()
+    }
+
+    pub fn get_raw(&self, name: &str) -> Option<String> {
+        self.store.borrow().get(name).cloned()
     }
 }
 

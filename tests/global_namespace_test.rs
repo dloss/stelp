@@ -14,11 +14,7 @@ fn test_global_namespace_basic() {
     let mut pipeline = StreamPipeline::new(config);
 
     // Test basic global functions without st. prefix
-    let processor = StarlarkProcessor::from_script(
-        "test",
-        r#"line.upper()"#,
-    )
-    .unwrap();
+    let processor = StarlarkProcessor::from_script("test", r#"line.upper()"#).unwrap();
     pipeline.add_processor(Box::new(processor));
 
     let input = Cursor::new("hello world\n");
@@ -69,39 +65,6 @@ fn test_meta_variables_alluppercase() {
 }
 
 #[test]
-fn test_global_functions_no_prefix() {
-    println!("=== Testing Global Functions Without Prefix ===");
-
-    let config = PipelineConfig::default();
-    let mut pipeline = StreamPipeline::new(config);
-
-    let processor = StarlarkProcessor::from_script(
-        "global_test",
-        r#"
-count = get_global("count", 0) + 1
-set_global("count", count)
-f"Line {count}: {line}"
-        "#,
-    )
-    .unwrap();
-    pipeline.add_processor(Box::new(processor));
-
-    let input = Cursor::new("first\nsecond\n");
-    let mut output = Vec::new();
-
-    let stats = pipeline
-        .process_stream(input, &mut output, Some("test.txt"))
-        .unwrap();
-
-    assert_eq!(stats.records_processed, 2);
-    assert_eq!(stats.records_output, 2);
-
-    let output_str = String::from_utf8(output).unwrap();
-    assert_eq!(output_str, "Line 1: first\nLine 2: second\n");
-    println!("✅ Global functions without prefix work: {}", output_str);
-}
-
-#[test]
 fn test_regex_functions_global() {
     println!("=== Testing Regex Functions in Global Namespace ===");
 
@@ -132,10 +95,10 @@ else:
 
     let output_str = String::from_utf8(output).unwrap();
     println!("Debug regex output: '{}'", output_str);
-    
+
     // The regex functions are working, but let's check what we're actually getting
     assert!(output_str.contains("hello"));
-    assert!(output_str.contains("world")); 
+    assert!(output_str.contains("world"));
     assert!(output_str.contains("test"));
     println!("✅ Regex functions work: {}", output_str);
 }
@@ -151,7 +114,9 @@ fn test_json_functions_global() {
         "json_test",
         r#"
 data = parse_json(line)
-f"User: {data}"
+result = f"User: {data}"
+# Explicit return
+result
         "#,
     )
     .unwrap();
@@ -233,7 +198,9 @@ fn test_meta_with_none_filename() {
         "none_filename_test",
         r#"
 filename = FILENAME if FILENAME else "<stdin>"
-f"Line {LINENUM} from {filename}: {line}"
+result = f"Line {LINENUM} from {filename}: {line}"
+# Explicit return
+result
         "#,
     )
     .unwrap();

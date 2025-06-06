@@ -13,8 +13,8 @@ def colorize_level(level):
     return f"\033[{color}m{level}\033[0m"
 
 def increment_counter(name):
-    count = get_global(name, 0) + 1
-    set_global(name, count)
+    count = glob.get(name, 0) + 1
+    glob[name] = count
     return count
 
 # Main processing logic
@@ -43,7 +43,7 @@ elif level == "WARN":
     increment_counter("warning_count")
 
 # Filter out debug messages in production
-if level == "DEBUG" and get_global("production_mode", False):
+if level == "DEBUG" and glob.get("production_mode", False):
     skip()
 
 # Format timestamp (2024-01-15 10:30:45 -> 2024-01-15T10:30:45Z)

@@ -35,7 +35,7 @@ line.upper()
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(output_str, "TEST\n");
-    
+
     println!("✓ Simple print function works");
 }
 
@@ -66,7 +66,7 @@ line.upper()
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(String::from_utf8(output).unwrap(), "HELLO WORLD\n");
-    
+
     // Note: print output goes to stderr, so we can't easily capture it in tests
     // but we can verify the pipeline still works correctly
     println!("✓ Print function works without breaking pipeline");
@@ -99,7 +99,7 @@ line.upper()
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(String::from_utf8(output).unwrap(), "TEST LINE\n");
-    
+
     println!("✓ Print function with string formatting works");
 }
 
@@ -142,9 +142,17 @@ result
     println!("Debug: output = {:?}", output_str);
 
     // Let's be more lenient with the assertions to see what's happening
-    assert!(stats.records_processed > 0, "No records were processed. Stats: {:?}", stats);
-    assert!(stats.records_output > 0, "No records were output. Stats: {:?}", stats);
-    
+    assert!(
+        stats.records_processed > 0,
+        "No records were processed. Stats: {:?}",
+        stats
+    );
+    assert!(
+        stats.records_output > 0,
+        "No records were output. Stats: {:?}",
+        stats
+    );
+
     println!("✓ Print function enables effective debugging");
 }
 
@@ -158,8 +166,8 @@ fn test_print_function_with_global_variables() {
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = get_global("count", 0) + 1
-set_global("count", count)
+count = glob.get("count", 0) + 1
+glob["count"] = count
 print("Processing item " + str(count) + ": " + line)
 line.upper()
         "#,
@@ -177,6 +185,6 @@ line.upper()
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 2);
     assert_eq!(String::from_utf8(output).unwrap(), "HELLO\nWORLD\n");
-    
+
     println!("✓ Print function with global variables works");
 }

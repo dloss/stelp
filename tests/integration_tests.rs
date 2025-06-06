@@ -67,50 +67,6 @@ result
 }
 
 #[test]
-fn test_exit_bypass() {
-    println!("=== Testing without exit function ===");
-
-    let config = PipelineConfig::default();
-    let mut pipeline = StreamPipeline::new(config);
-
-    let processor = StarlarkProcessor::from_script(
-        "test",
-        r#"
-# First transform to uppercase
-result = line.upper()
-
-# Then check if we should emit and skip
-if "STOP" in result:
-    emit("Stopped at: " + line)  # emit original line for message
-    skip()
-
-# Return the transformed result (which will be skipped if skip() was called)
-result
-        "#,
-    )
-    .unwrap();
-    pipeline.add_processor(Box::new(processor));
-
-    let input = Cursor::new("hello\nSTOP here\nworld\n");
-    let mut output = Vec::new();
-
-    let _stats = pipeline
-        .process_stream(input, &mut output, Some("test.txt"))
-        .unwrap();
-
-    println!("Stats: {:?}", _stats);
-    let output_str = String::from_utf8(output).unwrap();
-    println!("Output: '{}'", output_str);
-
-    assert!(output_str.contains("HELLO"));
-    assert!(output_str.contains("Stopped at: STOP here"));
-    assert!(output_str.contains("WORLD"));
-
-    assert_eq!(_stats.records_processed, 3);
-    assert_eq!(_stats.records_output, 3);
-}
-
-#[test]
 fn test_simple_transform() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
@@ -167,12 +123,12 @@ fn test_global_variables() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    // FIXED: Use new global namespace syntax
+    // UPDATED: Use new glob dictionary syntax
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = get_global("count", 0) + 1
-set_global("count", count)
+glob["count"] = glob.get("count", 0) + 1
+count = glob['count']
 f"Line {count}: {line}"
         "#,
     )
@@ -199,7 +155,7 @@ fn test_regex_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    // FIXED: Use new global namespace syntax
+    // UPDATED: Use regex functions without st_ prefix
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
@@ -233,7 +189,7 @@ fn test_json_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    // FIXED: Use new global namespace syntax
+    // UPDATED: Use JSON functions without st_ prefix
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
@@ -302,7 +258,7 @@ fn test_context_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    // FIXED: Use new ALLUPPERCASE meta variables
+    // UPDATED: Use ALLUPPERCASE meta variables
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"

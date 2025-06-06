@@ -128,8 +128,8 @@ fn test_include_with_starlark_functions() {
         include_file,
         r#"
 def count_lines():
-    count = get_global("line_count", 0) + 1
-    set_global("line_count", count)
+    count = glob.get("line_count", 0) + 1
+    glob["line_count"] = count
     return count
 
 def format_line(text):

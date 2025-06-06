@@ -18,11 +18,9 @@ fn test_meta_linenum_syntax() {
         global_vars: &globals,
     };
 
-    let processor = StarlarkProcessor::from_script(
-        "meta_test",
-        r#"f"Line {LINENUM} in {FILENAME}: {line}""#,
-    )
-    .unwrap();
+    let processor =
+        StarlarkProcessor::from_script("meta_test", r#"f"Line {LINENUM} in {FILENAME}: {line}""#)
+            .unwrap();
 
     let record = RecordData::text("hello world".to_string());
     let result = processor.process_standalone(&record, &ctx);
@@ -133,11 +131,9 @@ fn test_meta_in_pipeline() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    let processor = StarlarkProcessor::from_script(
-        "pipeline_meta",
-        r#"f"[{FILENAME}:{LINENUM}] {line}""#,
-    )
-    .unwrap();
+    let processor =
+        StarlarkProcessor::from_script("pipeline_meta", r#"f"[{FILENAME}:{LINENUM}] {line}""#)
+            .unwrap();
     pipeline.add_processor(Box::new(processor));
 
     let input = Cursor::new("first line\nsecond line\nthird line\n");
@@ -194,7 +190,11 @@ result
 
     match result {
         stelp::context::ProcessResult::Transform(output) => {
-            println!("Output type: text={}, structured={}", output.is_text(), output.is_structured());
+            println!(
+                "Output type: text={}, structured={}",
+                output.is_text(),
+                output.is_structured()
+            );
             if let Some(text) = output.as_text() {
                 assert_eq!(text, "Record 1: structured data from data.json");
                 println!("✅ Meta works with structured data: {}", text);

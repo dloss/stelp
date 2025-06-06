@@ -1,7 +1,7 @@
 // src/pipeline/global_functions.rs
 use crate::variables::GlobalVariables;
 use starlark::starlark_module;
-use starlark::values::{Heap, Value};
+use starlark::values::{dict::Dict, Heap, Value};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -40,34 +40,6 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(starlark::values::none::NoneType)
     }
 
-    // Global state functions
-    fn get_global<'v>(
-        heap: &'v Heap,
-        name: String,
-        default: Option<Value<'v>>,
-    ) -> anyhow::Result<Value<'v>> {
-        let result = CURRENT_CONTEXT.with(|ctx| {
-            if let Some((globals_ptr, _, _)) = *ctx.borrow() {
-                let globals = unsafe { &*globals_ptr };
-                Some(globals.get(heap, &name, default))
-            } else {
-                None
-            }
-        });
-
-        Ok(result.unwrap_or_else(|| default.unwrap_or_else(|| Value::new_none())))
-    }
-
-    fn set_global<'v>(name: String, value: Value<'v>) -> anyhow::Result<Value<'v>> {
-        CURRENT_CONTEXT.with(|ctx| {
-            if let Some((globals_ptr, _, _)) = *ctx.borrow() {
-                let globals = unsafe { &*globals_ptr };
-                globals.set(name, value);
-            }
-        });
-        Ok(value)
-    }
-
     // Text processing functions
     fn regex_match(pattern: String, text: String) -> anyhow::Result<bool> {
         match regex::Regex::new(&pattern) {
@@ -76,11 +48,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         }
     }
 
-    fn regex_replace(
-        pattern: String,
-        replacement: String,
-        text: String,
-    ) -> anyhow::Result<String> {
+    fn regex_replace(pattern: String, replacement: String, text: String) -> anyhow::Result<String> {
         let regex = regex::Regex::new(&pattern)?;
         Ok(regex.replace_all(&text, replacement.as_str()).into_owned())
     }

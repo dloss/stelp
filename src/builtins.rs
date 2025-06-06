@@ -58,33 +58,6 @@ pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
         }
     }
 
-    /// Get a global variable
-    fn get_global<'v>(
-        heap: &'v Heap,
-        name: String,
-        default: Option<Value<'v>>,
-    ) -> anyhow::Result<Value<'v>> {
-        GLOBAL_VARS_REF.with(|global_ref| {
-            if let Some(globals_ptr) = *global_ref.borrow() {
-                let globals = unsafe { &*globals_ptr };
-                Ok(globals.get(heap, &name, default))
-            } else {
-                Ok(default.unwrap_or(Value::new_none()))
-            }
-        })
-    }
-
-    /// Set a global variable
-    fn set_global<'v>(name: String, value: Value<'v>) -> anyhow::Result<Value<'v>> {
-        GLOBAL_VARS_REF.with(|global_ref| {
-            if let Some(globals_ptr) = *global_ref.borrow() {
-                let globals = unsafe { &*globals_ptr };
-                globals.set(name, value);
-            }
-            Ok(value)
-        })
-    }
-
     /// Get current line number
     fn line_number() -> anyhow::Result<i32> {
         LINE_CONTEXT.with(|ctx| {
