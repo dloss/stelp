@@ -122,14 +122,14 @@ VALUE = "overridden"
 
 #[test]
 fn test_include_with_starlark_functions() {
-    // Create include file that uses st.* functions
+    // Create include file that uses global functions (NEW API)
     let mut include_file = NamedTempFile::new().unwrap();
     writeln!(
         include_file,
         r#"
 def count_lines():
-    count = st_get_global("line_count", 0) + 1
-    st_set_global("line_count", count)
+    count = get_global("line_count", 0) + 1
+    set_global("line_count", count)
     return count
 
 def format_line(text):

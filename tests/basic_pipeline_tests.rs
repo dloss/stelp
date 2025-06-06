@@ -64,11 +64,12 @@ fn test_basic_global_variables() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
+    // FIXED: Use new global namespace syntax instead of st_ prefixes
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = st_get_global("count", 0) + 1
-st_set_global("count", count)
+count = get_global("count", 0) + 1
+set_global("count", count)
 f"Line {count}: {line}"
         "#,
     )

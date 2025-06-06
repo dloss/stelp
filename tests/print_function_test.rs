@@ -82,7 +82,7 @@ fn test_print_function_with_formatting() {
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-print("Line " + str(st_line_number()) + ": " + line)
+print("Line " + str(LINENUM) + ": " + line)
 line.upper()
         "#,
     )
@@ -158,8 +158,8 @@ fn test_print_function_with_global_variables() {
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = st_get_global("count", 0) + 1
-st_set_global("count", count)
+count = get_global("count", 0) + 1
+set_global("count", count)
 print("Processing item " + str(count) + ": " + line)
 line.upper()
         "#,

@@ -1,5 +1,4 @@
 // src/lib.rs
-pub mod builtins;
 pub mod error;
 pub mod pipeline;
 pub mod variables;

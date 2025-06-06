@@ -1,4 +1,4 @@
-// tests/test_meta_syntax.rs
+// tests/meta_syntax_tests.rs
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
 use stelp::context::{RecordContext, RecordData};
@@ -8,7 +8,7 @@ use stelp::StreamPipeline;
 
 #[test]
 fn test_meta_linenum_syntax() {
-    println!("=== Testing meta.linenum syntax ===");
+    println!("=== Testing LINENUM syntax ===");
 
     let globals = GlobalVariables::new();
     let ctx = RecordContext {
@@ -20,7 +20,7 @@ fn test_meta_linenum_syntax() {
 
     let processor = StarlarkProcessor::from_script(
         "meta_test",
-        r#"f"Line {meta_linenum} in {meta_filename}: {line}""#,
+        r#"f"Line {LINENUM} in {FILENAME}: {line}""#,
     )
     .unwrap();
 
@@ -33,7 +33,7 @@ fn test_meta_linenum_syntax() {
         stelp::context::ProcessResult::Transform(output) => {
             if let Some(text) = output.as_text() {
                 assert_eq!(text, "Line 42 in test.txt: hello world");
-                println!("✅ meta_linenum syntax works!");
+                println!("✅ LINENUM syntax works!");
             } else {
                 panic!("Expected text output");
             }
@@ -58,8 +58,8 @@ fn test_meta_dot_notation() {
         "meta_dot_test",
         r#"
 # Test simple variable access that works in f-strings
-line_num = meta_linenum
-filename = meta_filename
+line_num = LINENUM
+filename = FILENAME
 f"Line {line_num} in {filename}: {line}"
         "#,
     )
@@ -74,7 +74,7 @@ f"Line {line_num} in {filename}: {line}"
         stelp::context::ProcessResult::Transform(output) => {
             if let Some(text) = output.as_text() {
                 assert_eq!(text, "Line 42 in test.txt: hello world");
-                println!("✅ meta_linenum variables work in f-strings!");
+                println!("✅ LINENUM variables work in f-strings!");
             } else {
                 panic!("Expected text output");
             }
@@ -100,11 +100,9 @@ fn test_meta_properties() {
         r#"
 # Test all meta variables
 result = []
-result.append(f"linenum: {meta_linenum}")
-result.append(f"line_number: {meta_line_number}")
-result.append(f"record_count: {meta_record_count}")
-result.append(f"filename: {meta_filename}")
-result.append(f"file_name: {meta_file_name}")
+result.append(f"linenum: {LINENUM}")
+result.append(f"record_count: {RECNUM}")
+result.append(f"filename: {FILENAME}")
 " | ".join(result)
         "#,
     )
@@ -117,10 +115,8 @@ result.append(f"file_name: {meta_file_name}")
         stelp::context::ProcessResult::Transform(output) => {
             if let Some(text) = output.as_text() {
                 assert!(text.contains("linenum: 5"));
-                assert!(text.contains("line_number: 5"));
                 assert!(text.contains("record_count: 3"));
                 assert!(text.contains("filename: data.log"));
-                assert!(text.contains("file_name: data.log"));
                 println!("✅ All meta properties work: {}", text);
             } else {
                 panic!("Expected text output");
@@ -139,7 +135,7 @@ fn test_meta_in_pipeline() {
 
     let processor = StarlarkProcessor::from_script(
         "pipeline_meta",
-        r#"f"[{meta_filename}:{meta_linenum}] {line}""#,
+        r#"f"[{FILENAME}:{LINENUM}] {line}""#,
     )
     .unwrap();
     pipeline.add_processor(Box::new(processor));
@@ -182,9 +178,9 @@ fn test_meta_with_structured_data() {
 result = ""
 if data:
     # For now, just show that we have structured data
-    result = f"Record {meta_linenum}: structured data from {meta_filename}"
+    result = f"Record {LINENUM}: structured data from {FILENAME}"
 else:
-    result = f"Text {meta_linenum}: {line}"
+    result = f"Text {LINENUM}: {line}"
 
 result
         "#,
@@ -228,8 +224,8 @@ fn test_meta_none_filename() {
     let processor = StarlarkProcessor::from_script(
         "no_filename_test",
         r#"
-filename = meta_filename if meta_filename else "<stdin>"
-f"Line {meta_linenum} from {filename}: {line}"
+filename = FILENAME if FILENAME else "<stdin>"
+f"Line {LINENUM} from {filename}: {line}"
         "#,
     )
     .unwrap();

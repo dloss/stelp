@@ -1,10 +1,8 @@
 // src/pipeline/processors.rs
 use crate::error::{CompilationError, ProcessingError};
 use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
-use crate::pipeline::meta::{inject_meta_variables, preprocess_meta_namespace};
-use crate::pipeline::simple_globals::{
-    preprocess_st_namespace, simple_globals, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG,
-    EXIT_FLAG, EXIT_MESSAGE,
+use crate::pipeline::global_functions::{
+    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, SKIP_FLAG, EXIT_FLAG, EXIT_MESSAGE,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -12,7 +10,7 @@ use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
 
-/// Starlark-based record processor with meta object support
+/// Starlark-based record processor with global namespace
 pub struct StarlarkProcessor {
     globals: Globals,
     script_source: String,
@@ -22,22 +20,19 @@ pub struct StarlarkProcessor {
 impl StarlarkProcessor {
     /// Create from script source
     pub fn from_script(name: &str, script: &str) -> Result<Self, CompilationError> {
-        // Create globals with built-ins
-        let globals = GlobalsBuilder::new().with(simple_globals).build();
-
-        // Preprocess st.* calls to st_* function names AND meta.* to meta_* variables
-        let script_source = preprocess_meta_namespace(&preprocess_st_namespace(script));
+        // Create globals with built-in functions
+        let globals = GlobalsBuilder::new().with(global_functions).build();
 
         // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
-        let _ast = AstModule::parse("script", script_source.clone(), &dialect)?;
+        let _ast = AstModule::parse("script", script.to_string(), &dialect)?;
 
         Ok(StarlarkProcessor {
             globals,
-            script_source,
+            script_source: script.to_string(),
             name: name.to_string(),
         })
     }
@@ -57,11 +52,17 @@ impl StarlarkProcessor {
             ));
         });
 
-        // Create fresh module for each record (local variables)
+        // Create fresh module for each record
         let module = Module::new();
 
-        // Inject meta variables directly into the module
-        inject_meta_variables(&module, ctx);
+        // Inject meta variables directly as ALLUPPERCASE globals
+        module.set("LINENUM", module.heap().alloc(ctx.line_number as i32));
+        module.set("RECNUM", module.heap().alloc(ctx.record_count as i32));
+        if let Some(filename) = ctx.file_name {
+            module.set("FILENAME", module.heap().alloc(filename));
+        } else {
+            module.set("FILENAME", starlark::values::Value::new_none());
+        }
 
         // Set record-specific variables based on type
         match record {
@@ -71,24 +72,17 @@ impl StarlarkProcessor {
             }
             RecordData::Structured(data) => {
                 module.set("line", starlark::values::Value::new_none());
-                // Convert serde_json::Value to Starlark Value
                 let starlark_data = json_to_starlark_value(module.heap(), data.clone())?;
                 module.set("data", starlark_data);
             }
         }
 
-        // Set context variables for backward compatibility
-        module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
-        if let Some(filename) = ctx.file_name {
-            module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
-        }
-
-        // Add True/False/None constants
+        // Add constants
         module.set("True", starlark::values::Value::new_bool(true));
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
-        // Parse and execute script with f-strings enabled
+        // Parse and execute script
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
@@ -96,18 +90,16 @@ impl StarlarkProcessor {
         let ast = AstModule::parse("script", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Script parse error: {}", e))?;
 
-        // Execute AST with globals available
         let mut eval = Evaluator::new(&module);
         let result = eval
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Script execution error: {}", e))?;
 
-        // Convert result to string immediately to avoid lifetime issues
         Ok(result.to_string())
     }
 
     pub fn process_standalone(&self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
-        // Clear emit buffer and flags
+        // Clear thread-local state
         EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
         SKIP_FLAG.with(|flag| flag.set(false));
         EXIT_FLAG.with(|flag| flag.set(false));
@@ -128,7 +120,6 @@ impl StarlarkProcessor {
                 let skip_flag = SKIP_FLAG.with(|flag| flag.get());
                 let exit_flag = EXIT_FLAG.with(|flag| flag.get());
 
-                // Check for special control values
                 if skip_flag {
                     if emissions.is_empty() {
                         ProcessResult::Skip
@@ -140,12 +131,10 @@ impl StarlarkProcessor {
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     ProcessResult::Exit(final_output)
                 } else {
-                    // Normal processing - Handle the script result properly
+                    // Normal processing
                     let clean_result = if result_str == "None" {
-                        // If script returns None, pass through original record unchanged
                         record.clone()
                     } else {
-                        // Remove surrounding quotes if they exist and create appropriate record type
                         let processed_str = if result_str.starts_with('"')
                             && result_str.ends_with('"')
                             && result_str.len() > 1
@@ -154,8 +143,6 @@ impl StarlarkProcessor {
                         } else {
                             result_str
                         };
-                        
-                        // Always return text records from script processing
                         RecordData::text(processed_str)
                     };
 
@@ -175,7 +162,7 @@ impl StarlarkProcessor {
             }),
         };
 
-        // Clear context to avoid dangling pointers
+        // Clear context
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = None;
         });
@@ -194,39 +181,33 @@ impl RecordProcessor for StarlarkProcessor {
     }
 }
 
-/// Simple filter processor that only keeps records matching a boolean expression
+/// Simple filter processor
 pub struct FilterProcessor {
     globals: Globals,
-    pub script_source: String,
+    script_source: String,
     name: String,
 }
 
 impl FilterProcessor {
     /// Create from filter expression
     pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
-        // Create globals with built-ins
-        let globals = GlobalsBuilder::new().with(simple_globals).build();
+        let globals = GlobalsBuilder::new().with(global_functions).build();
 
-        // Preprocess st.* calls to st_* function names AND meta.* to meta_* variables
-        let script = preprocess_meta_namespace(&preprocess_st_namespace(expression));
-
-        // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
-        let _ast = AstModule::parse("filter", script.clone(), &dialect)?;
+        let _ast = AstModule::parse("filter", expression.to_string(), &dialect)?;
 
         Ok(FilterProcessor {
             globals,
-            script_source: script,
+            script_source: expression.to_string(),
             name: name.to_string(),
         })
     }
 
-    /// Execute filter expression with context
     fn filter_matches(&self, record: &RecordData, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
-        // Set up context for global functions
+        // Set up context
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = Some((
                 ctx.global_vars as *const GlobalVariables,
@@ -241,13 +222,19 @@ impl FilterProcessor {
         EXIT_FLAG.with(|flag| flag.set(false));
         EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
 
-        // Create fresh module for each record
+        // Create fresh module
         let module = Module::new();
 
-        // Inject meta variables directly into the module
-        inject_meta_variables(&module, ctx);
+        // Inject meta variables
+        module.set("LINENUM", module.heap().alloc(ctx.line_number as i32));
+        module.set("RECNUM", module.heap().alloc(ctx.record_count as i32));
+        if let Some(filename) = ctx.file_name {
+            module.set("FILENAME", module.heap().alloc(filename));
+        } else {
+            module.set("FILENAME", starlark::values::Value::new_none());
+        }
 
-        // Set record-specific variables based on type
+        // Set record-specific variables
         match record {
             RecordData::Text(text) => {
                 module.set("line", module.heap().alloc(text.clone()));
@@ -260,18 +247,12 @@ impl FilterProcessor {
             }
         }
 
-        // Set context variables for backward compatibility
-        module.set("LINE_NUMBER", module.heap().alloc(ctx.line_number as i32));
-        if let Some(filename) = ctx.file_name {
-            module.set("FILE_NAME", module.heap().alloc(filename.to_string()));
-        }
-
-        // Add True/False/None constants
+        // Add constants
         module.set("True", starlark::values::Value::new_bool(true));
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
-        // Parse and execute script with f-strings enabled
+        // Execute filter
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
@@ -284,7 +265,6 @@ impl FilterProcessor {
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Filter execution error: {}", e))?;
 
-        // Convert result to boolean
         Ok(result.to_bool())
     }
 }
@@ -306,7 +286,7 @@ impl RecordProcessor for FilterProcessor {
             }),
         };
 
-        // Clear context to avoid dangling pointers
+        // Clear context
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = None;
         });
@@ -319,13 +299,13 @@ impl RecordProcessor for FilterProcessor {
     }
 }
 
-// Helper function to convert serde_json::Value to Starlark Value
+// Helper function for JSON conversion
 fn json_to_starlark_value<'v>(
     heap: &'v starlark::values::Heap,
     json: serde_json::Value,
 ) -> anyhow::Result<starlark::values::Value<'v>> {
     use starlark::values::Value;
-    
+
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),
@@ -347,13 +327,10 @@ fn json_to_starlark_value<'v>(
             Ok(heap.alloc(values?))
         }
         serde_json::Value::Object(obj) => {
-            // For now, use the same approach as simple_globals - create string representation
-            // This avoids complex Starlark dictionary creation issues
             let mut items = Vec::new();
             for (k, v) in obj {
                 let value_repr = match json_to_starlark_value(heap, v) {
                     Ok(val) => {
-                        // Handle different value types properly
                         if val.is_none() {
                             "None".to_string()
                         } else if let Some(s) = val.unpack_str() {
@@ -361,7 +338,7 @@ fn json_to_starlark_value<'v>(
                         } else {
                             val.to_string()
                         }
-                    },
+                    }
                     Err(_) => "None".to_string(),
                 };
                 items.push(format!("\"{}\": {}", k, value_repr));

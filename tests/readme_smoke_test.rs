@@ -24,7 +24,7 @@ fn test_comprehensive_readme_smoke_test() {
     let mut cmd2 = Command::cargo_bin("stelp").unwrap();
     cmd2.arg("-e")
         .arg(r#"
-data = st_parse_json(line)
+data = parse_json(line)
 f"User: {data}, Action: processed"
         "#)
         .write_stdin(r#"{"user": "alice", "action": "login"}"#)
@@ -38,7 +38,7 @@ f"User: {data}, Action: processed"
     let mut cmd3 = Command::cargo_bin("stelp").unwrap();
     cmd3.arg("-e")
         .arg(r#"
-fields = st_parse_csv(line)
+fields = parse_csv(line)
 name = fields[0]
 age = fields[1]
 f"Name: {name}, Age: {age}"
@@ -53,8 +53,8 @@ f"Name: {name}, Age: {age}"
     let mut cmd4 = Command::cargo_bin("stelp").unwrap();
     cmd4.arg("-e")
         .arg(r#"
-count = st_get_global("counter", 0) + 1
-st_set_global("counter", count)
+count = get_global("counter", 0) + 1
+set_global("counter", count)
 f"Line {count}: {line}"
         "#)
         .write_stdin("first\nsecond\nthird")
@@ -67,28 +67,27 @@ f"Line {count}: {line}"
     let mut cmd5 = Command::cargo_bin("stelp").unwrap();
     cmd5.arg("-e")
         .arg(r#"
+result = line.upper()
 if "emit" in line:
     emit("Found emit line")
-    line.upper()
 elif "skip" in line:
     skip()
-else:
-    line.upper()
+result
         "#)
         .write_stdin("normal\nemit this\nskip this\nnormal again")
         .assert()
         .success()
-        .stdout(predicate::str::contains("normal"))
+        .stdout(predicate::str::contains("NORMAL"))
         .stdout(predicate::str::contains("Found emit line"))
-        .stdout(predicate::str::contains("emit this"))
-        .stdout(predicate::str::contains("normal again"))
+        .stdout(predicate::str::contains("EMIT THIS"))
+        .stdout(predicate::str::contains("NORMAL AGAIN"))
         .stdout(predicate::str::contains("skip this").not());
     
     // Test 6: Meta variables
     println!("Testing meta variables...");
     let mut cmd6 = Command::cargo_bin("stelp").unwrap();
     cmd6.arg("-e")
-        .arg("f\"Line {meta_linenum}: {line}\"")
+        .arg("f\"Line {LINENUM}: {line}\"")
         .write_stdin("first\nsecond")
         .assert()
         .success()

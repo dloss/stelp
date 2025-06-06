@@ -163,17 +163,17 @@ skip()
 }
 
 #[test]
-fn test_st_namespace_global_variables() {
+fn test_global_variables() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
-    // Use st_get_global and st_set_global (underscore versions)
+    // FIXED: Use new global namespace syntax
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-count = st_get_global("count", 0) + 1
-st_set_global("count", count)
-"Line " + str(count) + ": " + line
+count = get_global("count", 0) + 1
+set_global("count", count)
+f"Line {count}: {line}"
         "#,
     )
     .unwrap();
@@ -195,15 +195,16 @@ st_set_global("count", count)
 }
 
 #[test]
-fn test_st_namespace_regex_functions() {
+fn test_regex_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
+    // FIXED: Use new global namespace syntax
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-if st_regex_match("\\d+", line):
-    result = st_regex_replace("\\d+", "NUMBER", line)
+if regex_match(r"\d+", line):
+    result = regex_replace(r"\d+", "NUMBER", line)
 else:
     result = line
 
@@ -228,16 +229,17 @@ result
 }
 
 #[test]
-fn test_st_namespace_json_functions() {
+fn test_json_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
+    // FIXED: Use new global namespace syntax
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
 # Create a simple JSON object and convert it
 data = {"line": line, "length": len(line)}
-st_to_json(data)
+to_json(data)
         "#,
     )
     .unwrap();
@@ -260,7 +262,7 @@ st_to_json(data)
 }
 
 #[test]
-fn test_st_namespace_csv_functions() {
+fn test_csv_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
@@ -294,16 +296,18 @@ fn test_st_namespace_csv_functions() {
         output_str
     );
 }
+
 #[test]
-fn test_st_namespace_context_functions() {
+fn test_context_functions() {
     let config = PipelineConfig::default();
     let mut pipeline = StreamPipeline::new(config);
 
+    // FIXED: Use new ALLUPPERCASE meta variables
     let processor = StarlarkProcessor::from_script(
         "test",
         r#"
-# Use context functions from st namespace
-line_info = "Line " + str(st_line_number()) + " in " + st_file_name() + ": " + line
+# Use context variables from global namespace
+line_info = f"Line {LINENUM} in {FILENAME}: {line}"
 line_info
         "#,
     )
