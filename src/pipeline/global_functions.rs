@@ -183,10 +183,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
 }
 
 // Helper functions for JSON conversion
-fn json_to_starlark_value(
-    heap: &Heap,
-    json: serde_json::Value,
-) -> anyhow::Result<Value<'_>> {
+fn json_to_starlark_value(heap: &Heap, json: serde_json::Value) -> anyhow::Result<Value<'_>> {
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),
