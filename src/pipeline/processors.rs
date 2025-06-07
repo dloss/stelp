@@ -9,7 +9,6 @@ use crate::{CompilationError, ProcessingError};
 use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
-use starlark::values::list::ListRef;
 
 /// Starlark-based record processor with global namespace
 pub struct StarlarkProcessor {
