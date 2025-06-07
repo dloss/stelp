@@ -106,7 +106,17 @@ impl StarlarkProcessor {
             sync_glob_dict_to_globals(updated_glob, ctx.global_vars);
         }
 
-        Ok(result.to_string())
+        let result_string = if let Some(string_val) = result.unpack_str() {
+            // If it's a string, use the actual string content (not debug representation)
+            string_val.to_string()
+        } else if result.is_none() {
+            "None".to_string()
+        } else {
+            // For non-string values, use string representation
+            result.to_string()
+        };
+
+        Ok(result_string)
     }
 
     pub fn process_standalone(&self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
