@@ -1,115 +1,135 @@
-# Stelp
+# Stelp - Starlark Event and Line Processor
 
-A CLI tool for processing text streams with Starlark (Python-like) scripts.
-
-> [!WARNING]
-> Experimental software. APIs may change without notice.
+A command-line tool that processes text streams using [Starlark](https://github.com/bazelbuild/starlark) scripts (a Python-like configuration language). Transform, filter, and analyze data with familiar Python syntax in streaming pipelines.
 
 ## Quick Start
 
 ```bash
-# Basic transformation
+# Basic text transformation
 echo "hello world" | stelp -e 'line.upper()'
-# Output: HELLO WORLD
+# → HELLO WORLD
 
-# Multiple transformations
-stelp -e 'line.split(",")[0]' -e 'line.upper()' data.csv
+# Multi-step pipeline: filter then transform
+seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e '
+count = inc("even_numbers")
+f"Even #{count}: {line}"
+'
+# → Even #1: 2
+# → Even #2: 4
+# → Even #3: 6
+# → Even #4: 8
+# → Even #5: 10
 
-# Filter and transform
-stelp --filter 'len(line) > 5' -e 'line.upper()' input.txt
-
-# Multi-file processing
-stelp -e 'f"[{FILENAME}:{LINENUM}] {line.upper()}"' *.log
+# JSON processing with side effects
+echo '{"user": "alice", "action": "login"}' | stelp -e '
+data = parse_json(line)
+user = data["user"]
+action = data["action"]
+login_count = inc("logins")
+emit(f"Login #{login_count} detected: {user}")
+f"User {user} performed {action}"
+'
 ```
 
-## Core Features
+## Features
 
-- **Line-by-line processing** with Python-like syntax via Starlark
-- **Code reuse** via `-I/--include` for shared functions and constants
-- **Multi-step pipelines** with `--eval` and `--filter` chaining
-- **Rich built-ins** for regex, JSON, CSV, and text processing
-- **Context awareness** via `LINENUM`, `FILENAME`, `RECNUM` variables
-- **Global state** that persists across lines and files
-- **Output control** - transform, emit multiple lines, filter, or exit early
+- **Pipeline Processing**: Chain multiple transformation and filter steps
+- **Python-like Syntax**: Familiar Starlark (Python subset) scripting
+- **Data Format Support**: JSON, CSV, key-value, field splitting
+- **Global State**: Accumulate counters, track state across lines
+- **Side Effects**: Emit additional output, skip lines, early exit
+- **Meta Variables**: Access line numbers, filenames, record counts
 
-## Built-in Functions
-
-### Text Processing
-```python
-line.upper()                                    # Standard string methods
-regex_match(r'\d+', line)                      # Regex matching
-regex_replace(r'\d+', 'NUM', line)             # Regex replacement
-regex_find_all(r'\w+', line)                   # Find all matches
-```
-
-### Data Formats
-```python
-data = parse_json(line)                        # Parse JSON
-to_json({"key": "value"})                      # Generate JSON
-fields = parse_csv(line, delimiter=",")        # Parse CSV
-to_csv(["a", "b", "c"])                        # Generate CSV
-```
-
-### Context & State
-```python
-LINENUM                                        # Current line number  
-FILENAME                                       # Current file name
-RECNUM                                         # Record number in file
-get_global("counter", 0)                       # Get global variable
-set_global("counter", 42)                      # Set global variable
-```
-
-### Output Control
-```python
-emit("extra output line")                      # Output additional line
-skip()                                         # Skip current line
-exit("processing complete")                    # Stop processing
-print("debug info")                           # Debug to stderr
-```
-
-## Command Line
+## Usage
 
 ```bash
 stelp [OPTIONS] [FILES...]
 
-# Core options
--e, --eval <EXPR>        Evaluation expression (can be repeated)
-    --filter <EXPR>      Filter expression (can be repeated)  
--I, --include <FILE>     Include Starlark file (can be repeated)
--s, --script <FILE>      Script file
--o, --output <FILE>      Output file (default: stdout)
-    --debug              Show processing details
-    --fail-fast          Stop on first error
+Options:
+  -e, --eval <EXPRESSION>     Pipeline evaluation expressions (executed in order)
+      --filter <EXPRESSION>   Filter expressions (only keep lines where true)
+  -s, --script <FILE>         Script file containing pipeline definition
+  -I, --include <FILE>        Include Starlark files (processed in order)
+  -o, --output <FILE>         Output file (default: stdout)
+      --debug                 Debug mode - show processing details
+      --fail-fast             Fail on first error instead of skipping lines
 ```
 
-## Advanced Usage
+## Core Concepts
 
-### Shared Libraries
-Create reusable code with `-I/--include`:
+### Line-by-Line Processing
+Each line becomes the `line` variable in your script:
+```python
+line.upper()                    # Transform line
+len(line) > 10                  # Filter condition
+f"Processed: {line}"           # Format output
+```
+
+### Pipeline Stages
+Commands execute in the order specified:
+```bash
+stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
+# 1. Filter: keep lines longer than 3 chars
+# 2. Transform: convert to uppercase  
+# 3. Format: add prefix
+```
+
+### F-String Limitations
+**Important**: F-strings only work with atomic values (plain variable names). Complex expressions won't work.
+
+✅ **Correct f-string usage:**
+```python
+# Extract to variables first
+user = data["user"]
+count = glob.get("counter", 0)
+f"User: {user}, Count: {count}"
+
+# Use with atomic variables  
+f"Line {LINENUM}: {line}"
+f"File: {FILENAME}"
+```
+
+❌ **Incorrect f-string usage:**
+```python
+# Don't use complex expressions in f-strings
+f"User: {data['user']}"           # Won't work - dict access
+f"Count: {glob.get('counter')}"   # Won't work - function call
+f"Length: {len(line)}"            # Won't work - function call
+```
+
+**Workaround**: Always extract complex expressions to simple variables first:
+```python
+# Instead of: f"User: {data['user']} has {len(items)} items"
+user = data["user"]
+item_count = len(items)
+f"User: {user} has {item_count} items"
+```
+
+### Control Flow Functions
 
 ```python
-# utils.star
-def clean_line(text):
-    return regex_replace(r'\s+', ' ', text.strip())
-
-def parse_timestamp(line):
-    matches = regex_find_all(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', line)
-    return matches[0] if matches else None
-
-ERROR_THRESHOLD = 100
+emit("message")           # Output additional line (continues processing)
+skip()                    # Skip current line (no output)
+exit("reason")           # Stop processing with message
+inc("counter")           # Increment counter, returns new value
 ```
 
-```bash
-# Use shared functions
-stelp -I utils.star -e 'clean_line(line)' messy.txt
-stelp -I utils.star -e 'parse_timestamp(line) or "no timestamp"' logs.txt
-```
+## Examples
 
-### Pipeline Processing
+### Basic Text Processing
 ```bash
-# Multi-step pipeline (processed in order)
-stelp --filter '"ERROR" in line' \
-      -e 'regex_replace(r"\[ERROR\]", "[🔴]", line)' \
+# Transform case
+stelp -e 'line.upper()' input.txt
+
+# Filter and count
+stelp --filter 'len(line) > 50' -e '
+count = inc("long_lines")
+line_len = len(line)
+f"Long line #{count} ({line_len} chars): {line}"
+' input.txt
+
+# Regex processing
+stelp -e 'regex_replace(r"[ERROR]", "[🔴]", line)' \
       -e 'f"[{LINENUM}] {line}"' \
       error.log
 ```
@@ -117,11 +137,9 @@ stelp --filter '"ERROR" in line' \
 ### Global State & Counting
 ```bash
 stelp -e '
-count = get_global("total", 0) + 1
-set_global("total", count)
+count = inc("total")
 if "ERROR" in line:
-    error_count = get_global("errors", 0) + 1  
-    set_global("errors", error_count)
+    error_count = inc("errors")
     emit(f"🚨 Error #{error_count}: {line}")
 f"[{count}] {line}"
 ' server.log
@@ -133,7 +151,9 @@ f"[{count}] {line}"
 echo '{"user": "alice", "action": "login"}' | \
 stelp -e '
 data = parse_json(line)
-f"{data[\"user\"]} performed {data[\"action\"]}"
+user = data["user"]
+action = data["action"]
+f"{user} performed {action}"
 '
 ```
 
@@ -145,8 +165,10 @@ if LINENUM == 1:
     line  # Keep header
 else:
     fields = parse_csv(line)
-    if int(fields[1]) >= 18:  # Age column
-        to_csv([fields[0], "adult"])
+    age = int(fields[1])  # Age column
+    if age >= 18:
+        name = fields[0]
+        to_csv([name, "adult"])
     else:
         skip()
 ' users.csv
@@ -159,8 +181,7 @@ if "FATAL" in line:
     emit(f"💀 Fatal error at line {LINENUM}: {line}")
     exit("Processing stopped due to fatal error")
 elif "ERROR" in line:
-    error_count = get_global("errors", 0) + 1
-    set_global("errors", error_count)
+    error_count = inc("errors")
     f"Error #{error_count}: {line}"
 else:
     line
@@ -171,11 +192,8 @@ else:
 ```bash
 # Process multiple files with accumulated state
 stelp -e '
-file_lines = get_global(f"lines_{FILENAME}", 0) + 1
-set_global(f"lines_{FILENAME}", file_lines)
-
-total_lines = get_global("total_lines", 0) + 1
-set_global("total_lines", total_lines)
+file_lines = inc(f"lines_{FILENAME}")
+total_lines = inc("total_lines")
 
 f"[{FILENAME}:{LINENUM}] (file: {file_lines}, total: {total_lines}) {line}"
 ' file1.txt file2.txt file3.txt
@@ -197,13 +215,14 @@ def categorize_level(line):
 
 # Main processing
 category = categorize_level(line)
-count = get_global(f"{category}_count", 0) + 1
-set_global(f"{category}_count", count)
+category_count = inc(f"{category}_count")
 
 if category == "error":
-    emit(f"🔴 Error #{count}: {line}")
-    
-f"[{category.upper()}:{count}] {line}"
+    emit(f"🔴 Error #{category_count}: {line}")
+
+# Extract to variables for f-string
+category_upper = category.upper()
+f"[{category_upper}:{category_count}] {line}"
 ```
 
 ```bash
@@ -222,6 +241,7 @@ RECNUM            # Record number within current file (1-based)
 
 Use directly in f-strings or expressions:
 ```python
+# These work because they're atomic variables
 f"Line {LINENUM} in {FILENAME}: {line}"
 f"Processing record {RECNUM}"
 ```
@@ -229,7 +249,8 @@ f"Processing record {RECNUM}"
 ## Variable Scopes
 
 - **Local variables**: Reset for each line (`parts = line.split()`)
-- **Global variables**: Persist across lines (`get_global()`, `set_global()`)  
+- **Global variables**: Persist across lines using `glob` dictionary (`glob["key"] = value`)  
+- **Counters**: Increment with `inc("counter")` (returns new value)
 - **Meta variables**: Context information (`LINENUM`, `FILENAME`, `RECNUM`)
 - **Shared functions**: Defined in include files (`-I utils.star`)
 
@@ -260,9 +281,11 @@ stelp -e 'regex_replace(r"(\d+\.\d+\.\d+\.\d+).*", r"IP: \1", line)' access.log
 # Count patterns across files  
 stelp -e '
 if regex_match(r"ERROR", line):
-    set_global("errors", get_global("errors", 0) + 1)
+    error_count = inc("errors")
+else:
+    error_count = glob.get("errors", 0)
     
-f"Total errors so far: {get_global(\"errors\", 0)}"
+f"Total errors so far: {error_count}"
 ' *.log
 
 # CSV transformation
@@ -271,8 +294,11 @@ if LINENUM == 1:
     line + ",category"
 else:
     fields = parse_csv(line)
-    category = "senior" if int(fields[1]) >= 30 else "junior"
-    to_csv([fields[0], fields[1], category])
+    age = int(fields[1])
+    category = "senior" if age >= 30 else "junior"
+    name = fields[0]
+    age_str = fields[1]
+    to_csv([name, age_str, category])
 '
 ```
 
