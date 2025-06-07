@@ -108,9 +108,7 @@ impl StarlarkProcessor {
 
         let result_string = if let Some(string_val) = result.unpack_str() {
             // If it's a string, use the actual string content (not debug representation)
-            string_val.to_string()
-        } else if result.is_none() {
-            "None".to_string()
+            string_val.to_string() 
         } else {
             // For non-string values, use string representation
             result.to_string()
