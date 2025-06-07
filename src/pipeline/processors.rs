@@ -23,7 +23,7 @@ impl StarlarkProcessor {
     /// Create from script source
     pub fn from_script(name: &str, script: &str) -> Result<Self, CompilationError> {
         // Create globals with built-in functions
-        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let globals = GlobalsBuilder::standard().with(global_functions).build();
 
         // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
@@ -202,7 +202,7 @@ pub struct FilterProcessor {
 impl FilterProcessor {
     /// Create from filter expression
     pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
-        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let globals = GlobalsBuilder::standard().with(global_functions).build();
 
         let dialect = Dialect {
             enable_f_strings: true,
