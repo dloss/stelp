@@ -195,7 +195,7 @@ fn test_json_functions() {
         r#"
 # Create a simple JSON object and convert it
 data = {"line": line, "length": len(line)}
-to_json(data)
+dump_json(data)
         "#,
     )
     .unwrap();

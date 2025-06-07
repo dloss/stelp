@@ -220,7 +220,7 @@ pub(crate) fn simple_globals(builder: &mut starlark::environment::GlobalsBuilder
         let delim_char = delim.chars().next().unwrap_or(',');
 
         let list = ListRef::from_value(values)
-            .ok_or_else(|| anyhow::anyhow!("Expected list for to_csv"))?;
+            .ok_or_else(|| anyhow::anyhow!("Expected list for dump_csv"))?;
 
         let mut writer = csv::WriterBuilder::new()
             .delimiter(delim_char as u8)

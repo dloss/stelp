@@ -117,7 +117,7 @@ pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
     }
 
     /// Convert value to JSON string
-    fn to_json(value: Value) -> anyhow::Result<String> {
+    fn dump_json(value: Value) -> anyhow::Result<String> {
         let json_value = starlark_to_json_value(value)?;
         Ok(serde_json::to_string(&json_value)?)
     }
@@ -149,12 +149,12 @@ pub fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
     }
 
     /// Convert array to CSV line
-    fn to_csv(values: Value, delimiter: Option<String>) -> anyhow::Result<String> {
+    fn dump_csv(values: Value, delimiter: Option<String>) -> anyhow::Result<String> {
         let delim = delimiter.unwrap_or_else(|| ",".to_string());
         let delim_char = delim.chars().next().unwrap_or(',');
 
         let list = ListRef::from_value(values)
-            .ok_or_else(|| anyhow::anyhow!("Expected list for to_csv"))?;
+            .ok_or_else(|| anyhow::anyhow!("Expected list for dump_csv"))?;
 
         let mut writer = csv::WriterBuilder::new()
             .delimiter(delim_char as u8)

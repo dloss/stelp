@@ -63,8 +63,8 @@ split(line, delimiter=None)               # → list (awk-style field splitting)
 parse_csv(line, headers=None, delimiter=",")  # → list or dict
 parse_json(line)                          # → dict/list
 parse_kv(line, sep="=", delim=" ")       # → dict
-to_csv(data, delimiter=",")              # dict/list → CSV string
-to_json(data)                            # → JSON string
+dump_csv(data, delimiter=",")              # dict/list → CSV string
+dump_json(data)                            # → JSON string
 ```
 
 ## Return Value Processing
@@ -120,7 +120,7 @@ stelp -f kv --filter 'data.get("enabled") == "true"' --eval 'data["name"]' setti
 ### Mixed Processing Pipeline
 ```bash
 # Parse JSON, process, output as CSV
-stelp -f json --eval 'to_csv([data["name"], data["age"], data["city"]])' users.json
+stelp -f json --eval 'dump_csv([data["name"], data["age"], data["city"]])' users.json
 ```
 
 ### Fan-out Processing
@@ -141,7 +141,7 @@ stelp -f json --eval 'inc(f"status_{data[\"status\"]}")' \
 ```bash
 stelp --eval 'data = parse_csv(line, headers=["name", "age"])' \
       --eval 'data["processed"] = True; data["age"] = int(data["age"])' \
-      --eval 'to_json(data)'
+      --eval 'dump_json(data)'
 ```
 
 ## Advanced Examples
@@ -178,14 +178,14 @@ else:
 ```bash
 # CSV to JSON (manual header mapping)
 stelp -f csv --eval 'parse_csv_with_headers(data, ["name", "age", "city"])' \
-      --eval 'to_json(data)' input.csv > output.json
+      --eval 'dump_json(data)' input.csv > output.json
 
 # JSON to CSV  
-stelp -f json --eval 'to_csv([data["name"], data["age"], data["city"]])' input.json > output.csv
+stelp -f json --eval 'dump_csv([data["name"], data["age"], data["city"]])' input.json > output.csv
 
 # Fields to JSON
 stelp -f fields --eval '{"user": data[0], "id": data[1], "status": data[2]}' \
-      --eval 'to_json(data)' users.txt > users.json
+      --eval 'dump_json(data)' users.txt > users.json
 ```
 
 ### Aggregation with Global State

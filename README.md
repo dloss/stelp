@@ -158,7 +158,7 @@ else:
     age = int(fields[1])  # Age column
     if age >= 18:
         name = fields[0]
-        to_csv([name, "adult"])
+        dump_csv([name, "adult"])
     else:
         skip()
 ' users.csv
@@ -288,7 +288,7 @@ else:
     category = "senior" if age >= 30 else "junior"
     name = fields[0]
     age_str = fields[1]
-    to_csv([name, age_str, category])
+    dump_csv([name, age_str, category])
 '
 ```
 
