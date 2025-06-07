@@ -1,7 +1,7 @@
 // src/pipeline/global_functions.rs
 use crate::variables::GlobalVariables;
 use starlark::starlark_module;
-use starlark::values::{dict::Dict, Heap, Value};
+use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
