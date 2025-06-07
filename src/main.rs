@@ -118,14 +118,21 @@ impl Args {
     }
 }
 
-/// Build the final script by concatenating includes and user script
+/// The Stelp prelude embedded from prelude.star at compile time
+const STELP_PRELUDE: &str = include_str!("prelude.star");
+
+/// Build the final script by concatenating prelude, includes, and user script
 fn build_final_script(
     includes: &[PathBuf],
     user_script: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut final_script = String::new();
 
-    // Add includes in order
+    // 1. Add prelude first (always included from prelude.star)
+    final_script.push_str(STELP_PRELUDE);
+    final_script.push_str("\n\n");
+
+    // 2. Add includes in order
     for include_path in includes {
         let include_content = std::fs::read_to_string(include_path)
             .map_err(|e| format!("Include file '{}' not found: {}", include_path.display(), e))?;
@@ -133,7 +140,7 @@ fn build_final_script(
         final_script.push_str("\n\n");
     }
 
-    // Add user script
+    // 3. Add user script
     final_script.push_str(user_script);
 
     Ok(final_script)
