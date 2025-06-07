@@ -115,23 +115,28 @@ impl StarlarkProcessor {
         // Convert the result to our owned type before returning
         let starlark_result = if result.is_none() {
             StarlarkResult::None
-        } else if let Some(list_ref) = ListRef::from_value(result) {
-            // Convert list to Vec<String>
+        } else if let Ok(mut iterator) = result.iterate(module.heap()) {
+            // NEW: Handle any iterable (including ranges)
             let mut strings = Vec::new();
-            for item in list_ref.iter() {
-                let item_str = if item.is_none() {
-                    String::new()
-                } else if let Some(s) = item.unpack_str() {
-                    s.to_string()
-                } else {
-                    let s = item.to_string();
-                    if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                        s[1..s.len() - 1].to_string()
-                    } else {
-                        s
+            loop {
+                match iterator.next() {
+                    Some(item) => {
+                        let item_str = if item.is_none() {
+                            String::new()
+                        } else if let Some(s) = item.unpack_str() {
+                            s.to_string()
+                        } else {
+                            let s = item.to_string();
+                            if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                                s[1..s.len() - 1].to_string()
+                            } else {
+                                s
+                            }
+                        };
+                        strings.push(item_str);
                     }
-                };
-                strings.push(item_str);
+                    None => break,
+                }
             }
             StarlarkResult::List(strings)
         } else {
