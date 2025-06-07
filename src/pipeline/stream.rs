@@ -195,17 +195,6 @@ impl StreamPipeline {
         self.stats.errors += file_stats.errors;
         self.stats.processing_time += file_stats.processing_time;
 
-        if self.config.debug {
-            eprintln!(
-                "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
-                file_stats.records_processed,
-                file_stats.records_output,
-                file_stats.records_skipped,
-                file_stats.errors,
-                file_stats.processing_time
-            );
-        }
-
         Ok(file_stats)
     }
 
