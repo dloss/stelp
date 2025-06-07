@@ -19,16 +19,6 @@ f"Even #{count}: {line}"
 # → Even #3: 6
 # → Even #4: 8
 # → Even #5: 10
-
-# JSON processing with side effects
-echo '{"user": "alice", "action": "login"}' | stelp -e '
-data = parse_json(line)
-user = data["user"]
-action = data["action"]
-login_count = inc("logins")
-emit(f"Login #{login_count} detected: {user}")
-f"User {user} performed {action}"
-'
 ```
 
 ## Features
@@ -62,13 +52,13 @@ Each line becomes the `line` variable in your script:
 ```python
 line.upper()                    # Transform line
 len(line) > 10                  # Filter condition
-f"Processed: {line}"           # Format output
+f"Processed: {line}"            # Format output
 ```
 
 ### Pipeline Stages
 Commands execute in the order specified:
 ```bash
-stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
+cat README.md | stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
 # 1. Filter: keep lines longer than 3 chars
 # 2. Transform: convert to uppercase  
 # 3. Format: add prefix
