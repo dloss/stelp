@@ -240,6 +240,10 @@ impl FilterProcessor {
         // Create fresh module
         let module = Module::new();
 
+        // ADD: Create glob dictionary - this was missing!
+        let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
+        module.set("glob", glob_dict);
+
         // Inject meta variables
         module.set("LINENUM", module.heap().alloc(ctx.line_number as i32));
         module.set("RECNUM", module.heap().alloc(ctx.record_count as i32));
@@ -280,10 +284,32 @@ impl FilterProcessor {
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Filter execution error: {}", e))?;
 
-        Ok(result.to_bool())
+        // ADD: Sync glob dictionary back to global variables after execution
+        if let Some(glob_value) = module.get("glob") {
+            sync_glob_dict_to_globals(glob_value, ctx.global_vars);
+        }
+
+        // Check for control flow
+        let should_exit = EXIT_FLAG.with(|flag| flag.get());
+        if should_exit {
+            let msg = EXIT_MESSAGE.with(|msg| msg.borrow().clone());
+            return Err(anyhow::anyhow!("Filter exit: {}", msg.unwrap_or_default()));
+        }
+
+        // Convert result to boolean
+        if result.is_none() {
+            Ok(false)
+        } else if let Some(b) = result.unpack_bool() {
+            Ok(b)
+        } else {
+            // Truthy evaluation for non-boolean values
+            Ok(!result.is_none()
+                && result != starlark::values::Value::new_bool(false)
+                && !(result.unpack_str().map_or(false, |s| s.is_empty()))
+                && !(result.unpack_i32().map_or(false, |i| i == 0)))
+        }
     }
 }
-
 impl RecordProcessor for FilterProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
         let result = match self.filter_matches(record, ctx) {
