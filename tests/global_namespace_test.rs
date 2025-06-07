@@ -98,7 +98,6 @@ result
     println!("✅ JSON functions work: {}", output_str);
 }
 
-
 #[test]
 fn test_meta_with_none_filename() {
     println!("=== Testing Meta Variables with None Filename ===");
@@ -169,7 +168,6 @@ line.upper()
     println!("✅ Print function works (output goes to stderr)");
 }
 
-
 #[test]
 fn test_none_behavior_explicit() {
     println!("=== Testing None Behavior Explicitly ===");
@@ -196,7 +194,7 @@ print("side effect: " + line)
         .unwrap();
 
     assert_eq!(stats.records_processed, 1);
-    assert_eq!(stats.records_output, 0);  // No output from None
+    assert_eq!(stats.records_output, 0); // No output from None
     assert_eq!(String::from_utf8(output).unwrap(), "");
 
     println!("✅ None expressions produce no output (correct behavior)");
@@ -212,19 +210,11 @@ fn test_explicit_none_vs_string_none() {
     let mut pipeline2 = StreamPipeline::new(config);
 
     // Test explicit None
-    let processor1 = StarlarkProcessor::from_script(
-        "explicit_none",
-        r#"None"#,
-    )
-    .unwrap();
+    let processor1 = StarlarkProcessor::from_script("explicit_none", r#"None"#).unwrap();
     pipeline1.add_processor(Box::new(processor1));
 
     // Test string "None"
-    let processor2 = StarlarkProcessor::from_script(
-        "string_none",
-        r#""None""#,
-    )
-    .unwrap();
+    let processor2 = StarlarkProcessor::from_script("string_none", r#""None""#).unwrap();
     pipeline2.add_processor(Box::new(processor2));
 
     let input1 = Cursor::new("test\n");
@@ -232,8 +222,12 @@ fn test_explicit_none_vs_string_none() {
     let mut output1 = Vec::new();
     let mut output2 = Vec::new();
 
-    let stats1 = pipeline1.process_stream(input1, &mut output1, Some("test.txt")).unwrap();
-    let stats2 = pipeline2.process_stream(input2, &mut output2, Some("test.txt")).unwrap();
+    let stats1 = pipeline1
+        .process_stream(input1, &mut output1, Some("test.txt"))
+        .unwrap();
+    let stats2 = pipeline2
+        .process_stream(input2, &mut output2, Some("test.txt"))
+        .unwrap();
 
     // Explicit None should produce no output
     assert_eq!(stats1.records_output, 0);
@@ -245,7 +239,6 @@ fn test_explicit_none_vs_string_none() {
 
     println!("✅ None vs 'None' distinction works correctly");
 }
-
 
 // The real issue: In Starlark, if/elif/else must be EXPRESSIONS, not STATEMENTS
 // The current code treats them as statements, which return None

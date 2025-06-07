@@ -1,24 +1,29 @@
-// Complete src/pipeline/processors.rs StarlarkProcessor implementation
-// with the None handling fix
-
-use crate::error::{CompilationError, ProcessingError};
-use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
+use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
     global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
+use crate::{CompilationError, ProcessingError};
 use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
-  // ADD: This import for the fix
+use starlark::values::list::ListRef;
 
 /// Starlark-based record processor with global namespace
 pub struct StarlarkProcessor {
     globals: Globals,
     script_source: String,
     name: String,
+}
+
+// Define our own result type that doesn't have lifetime issues
+#[derive(Debug)]
+enum StarlarkResult {
+    None,
+    Text(String),
+    List(Vec<String>),
 }
 
 impl StarlarkProcessor {
@@ -41,12 +46,11 @@ impl StarlarkProcessor {
         })
     }
 
-    /// Execute script with fresh module per record
     fn execute_with_context(
         &self,
         record: &RecordData,
         ctx: &RecordContext,
-    ) -> Result<Option<String>, anyhow::Error> {  // CHANGED: Return type to Option<String>
+    ) -> Result<StarlarkResult, anyhow::Error> {
         // Set up context for global functions
         CURRENT_CONTEXT.with(|ctx_cell| {
             *ctx_cell.borrow_mut() = Some((
@@ -103,19 +107,49 @@ impl StarlarkProcessor {
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Script execution error: {}", e))?;
 
-        // Sync the glob dictionary back to global variables using existing function
-        if let Some(updated_glob) = module.get("glob") {
-            sync_glob_dict_to_globals(updated_glob, ctx.global_vars);
+        // Sync glob dictionary back to global variables after execution
+        if let Some(glob_value) = module.get("glob") {
+            sync_glob_dict_to_globals(glob_value, ctx.global_vars);
         }
 
-        // CHANGED: Handle None values properly to distinguish from string "None"
-        if result.is_none() {
-            Ok(None)
-        } else if let Some(string_val) = result.unpack_str() {
-            Ok(Some(string_val.to_string()))
+        // Convert the result to our owned type before returning
+        let starlark_result = if result.is_none() {
+            StarlarkResult::None
+        } else if let Some(list_ref) = ListRef::from_value(result) {
+            // Convert list to Vec<String>
+            let mut strings = Vec::new();
+            for item in list_ref.iter() {
+                let item_str = if item.is_none() {
+                    String::new()
+                } else if let Some(s) = item.unpack_str() {
+                    s.to_string()
+                } else {
+                    let s = item.to_string();
+                    if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                        s[1..s.len() - 1].to_string()
+                    } else {
+                        s
+                    }
+                };
+                strings.push(item_str);
+            }
+            StarlarkResult::List(strings)
         } else {
-            Ok(Some(result.to_string()))
-        }
+            // Single value
+            let text = if let Some(s) = result.unpack_str() {
+                s.to_string()
+            } else {
+                let s = result.to_string();
+                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                    s[1..s.len() - 1].to_string()
+                } else {
+                    s
+                }
+            };
+            StarlarkResult::Text(text)
+        };
+
+        Ok(starlark_result)
     }
 
     pub fn process_standalone(&self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
@@ -127,7 +161,7 @@ impl StarlarkProcessor {
 
         // Execute script
         let result = match self.execute_with_context(record, ctx) {
-            Ok(result_option) => {  // CHANGED: Handle Option<String> instead of String
+            Ok(starlark_result) => {
                 // Collect emitted lines
                 let emissions: Vec<RecordData> = EMIT_BUFFER.with(|buffer| {
                     buffer
@@ -152,9 +186,23 @@ impl StarlarkProcessor {
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     ProcessResult::Exit(final_output)
                 } else {
-                    // CHANGED: Handle None vs Some(string) results properly
-                    match result_option {
-                        None => {
+                    // NEW: Check if result is a list for fan-out
+                    match starlark_result {
+                        StarlarkResult::List(strings) => {
+                            // Fan-out: convert each string to a RecordData
+                            let mut fan_out_records: Vec<RecordData> =
+                                strings.into_iter().map(|s| RecordData::text(s)).collect();
+
+                            // Add any emissions to the fan-out
+                            fan_out_records.extend(emissions);
+
+                            if fan_out_records.is_empty() {
+                                ProcessResult::Skip
+                            } else {
+                                ProcessResult::FanOut(fan_out_records)
+                            }
+                        }
+                        StarlarkResult::None => {
                             // None means no output
                             if emissions.is_empty() {
                                 ProcessResult::Skip
@@ -162,18 +210,8 @@ impl StarlarkProcessor {
                                 ProcessResult::FanOut(emissions)
                             }
                         }
-                        Some(result_str) => {
-                            // Process actual string result
-                            let processed_str = if result_str.starts_with('"')
-                                && result_str.ends_with('"')
-                                && result_str.len() > 1
-                            {
-                                result_str[1..result_str.len() - 1].to_string()
-                            } else {
-                                result_str
-                            };
-                            let clean_result = RecordData::text(processed_str);
-
+                        StarlarkResult::Text(text) => {
+                            let clean_result = RecordData::text(text);
                             match emissions.is_empty() {
                                 true => ProcessResult::Transform(clean_result),
                                 false => ProcessResult::TransformWithEmissions {
@@ -210,7 +248,6 @@ impl RecordProcessor for StarlarkProcessor {
         &self.name
     }
 }
-
 
 /// Simple filter processor
 pub struct FilterProcessor {
