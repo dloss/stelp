@@ -27,7 +27,7 @@ impl GlobalVariables {
         default.unwrap_or(Value::new_none())
     }
 
-    pub fn set<'v>(&self, name: String, value: Value<'v>) {
+    pub fn set(&self, name: String, value: Value<'_>) {
         // Convert to JSON for storage
         if let Ok(json_value) = starlark_to_json_value(value) {
             if let Ok(json_str) = serde_json::to_string(&json_value) {
@@ -69,10 +69,10 @@ impl Default for GlobalVariables {
 }
 
 // Helper functions for JSON conversion
-fn json_to_starlark_value<'v>(
-    heap: &'v Heap,
+fn json_to_starlark_value(
+    heap: &Heap,
     json: serde_json::Value,
-) -> anyhow::Result<Value<'v>> {
+) -> anyhow::Result<Value<'_>> {
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),

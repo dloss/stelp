@@ -305,8 +305,8 @@ impl FilterProcessor {
             // Truthy evaluation for non-boolean values
             Ok(!result.is_none()
                 && result != starlark::values::Value::new_bool(false)
-                && !(result.unpack_str().map_or(false, |s| s.is_empty()))
-                && !(result.unpack_i32().map_or(false, |i| i == 0)))
+                && !(result.unpack_str().is_some_and(|s| s.is_empty()))
+                && (result.unpack_i32() != Some(0)))
         }
     }
 }
@@ -341,10 +341,10 @@ impl RecordProcessor for FilterProcessor {
 }
 
 // Helper function for JSON conversion
-fn json_to_starlark_value<'v>(
-    heap: &'v starlark::values::Heap,
+fn json_to_starlark_value(
+    heap: &starlark::values::Heap,
     json: serde_json::Value,
-) -> anyhow::Result<starlark::values::Value<'v>> {
+) -> anyhow::Result<starlark::values::Value<'_>> {
     use starlark::values::Value;
 
     match json {

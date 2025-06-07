@@ -19,7 +19,7 @@ pub fn create_glob_dict<'v>(heap: &'v Heap, globals: &GlobalVariables) -> Value<
 }
 
 /// Update GlobalVariables from a glob dictionary after script execution
-pub fn sync_glob_dict_to_globals<'v>(glob_dict: Value<'v>, globals: &GlobalVariables) {
+pub fn sync_glob_dict_to_globals(glob_dict: Value<'_>, globals: &GlobalVariables) {
     use starlark::values::dict::DictRef;
 
     if let Some(dict_ref) = DictRef::from_value(glob_dict) {

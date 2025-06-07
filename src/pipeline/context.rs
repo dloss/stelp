@@ -96,6 +96,12 @@ pub struct PipelineContext {
     pub file_name: Option<String>,
 }
 
+impl Default for PipelineContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PipelineContext {
     pub fn new() -> Self {
         PipelineContext {

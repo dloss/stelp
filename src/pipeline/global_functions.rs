@@ -5,11 +5,11 @@ use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
-    pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = RefCell::new(Vec::new());
-    pub(crate) static SKIP_FLAG: Cell<bool> = Cell::new(false);
-    pub(crate) static EXIT_FLAG: Cell<bool> = Cell::new(false);
-    pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = RefCell::new(None);
-    pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = RefCell::new(None);
+    pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static SKIP_FLAG: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static EXIT_FLAG: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = const { RefCell::new(None) };
 }
 
 #[starlark_module]
@@ -183,10 +183,10 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
 }
 
 // Helper functions for JSON conversion
-fn json_to_starlark_value<'v>(
-    heap: &'v Heap,
+fn json_to_starlark_value(
+    heap: &Heap,
     json: serde_json::Value,
-) -> anyhow::Result<Value<'v>> {
+) -> anyhow::Result<Value<'_>> {
     match json {
         serde_json::Value::Null => Ok(Value::new_none()),
         serde_json::Value::Bool(b) => Ok(Value::new_bool(b)),
