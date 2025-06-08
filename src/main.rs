@@ -165,6 +165,12 @@ fn main() {
     match run(args, &matches) {
         Ok(exit_code) => std::process::exit(exit_code),
         Err(e) => {
+            // Handle broken pipe errors silently (Unix tool convention)
+            let error_string = e.to_string().to_lowercase();
+            if error_string.contains("broken pipe") {
+                std::process::exit(0);
+            }
+
             eprintln!("stelp: {}", e);
             std::process::exit(1);
         }
