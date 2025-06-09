@@ -42,8 +42,8 @@ f"User: {data}, Action: processed"
         .arg(
             r#"
 fields = parse_csv(line)
-name = fields[0]
-age = fields[1]
+name = fields["col1"]
+age = fields["col2"]
 f"Name: {name}, Age: {age}"
         "#,
         )
