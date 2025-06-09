@@ -15,22 +15,22 @@ Each pipeline stage receives a record that is **either** text-based **or** struc
 
 ### Input Format Options
 ```bash
-stelp --input-format csv file.csv           # Auto-parse as CSV → data = ["col1", "col2", ...]
-stelp --input-format json file.json         # Auto-parse as JSON → data = {...}
+stelp --input-format csv file.csv           # Auto-parse as CSV → data = {"col1": "value1", "col2": "value2", ...}
+stelp --input-format jsonl file.jsonl       # Auto-parse as JSONL → data = {...}
 stelp --input-format fields file.txt        # Auto-split on whitespace → data = ["field1", "field2", ...]
 stelp --input-format kv file.conf           # Auto-parse key=value → data = {"key": "value", ...}
 stelp file.txt                              # Default: line-based → line = "text content"
 
 # Short form
 stelp -f csv file.csv
-stelp -f json file.json
+stelp -f jsonl file.jsonl
 stelp -f fields file.txt
 stelp -f kv file.txt
 ```
 
 ### Default Parsing Behavior
-- **csv**: Standard CSV parsing with comma delimiter, no headers → `["col1", "col2", ...]`
-- **json**: JSON object/array parsing → `{...}` or `[...]`
+- **csv**: Standard CSV parsing with comma delimiter, auto-generated headers → `{"col1": "value1", "col2": "value2", ...}`
+- **jsonl**: JSONL (JSON Lines) object/array parsing → `{...}` or `[...]`
 - **fields**: Whitespace-separated fields (like awk) → `["field1", "field2", ...]`
 - **kv**: Key=value pairs separated by whitespace → `{"key": "value", ...}`
 
@@ -59,8 +59,7 @@ RECNUM       # records processed so far in this file
 
 ```python
 inc("counter_name", delta=1)              # increment global counter
-split(line, delimiter=None)               # → list (awk-style field splitting)
-parse_csv(line, headers=None, delimiter=",")  # → list or dict
+parse_csv(line, headers=None, delimiter=",")  # → dict with column headers
 parse_json(line)                          # → dict/list
 parse_kv(line, sep="=", delim=" ")       # → dict
 dump_csv(data, delimiter=",")              # dict/list → CSV string
@@ -82,30 +81,37 @@ dump_json(data)                            # → JSON string
 
 ### Automatic CSV Processing
 ```bash
-# Process CSV with positional access
-stelp -f csv --eval 'f"{data[0]} is {data[1]} years old"' users.csv
+# CSV auto-parsed with generated headers (col1, col2, col3...)
+col1 = data["col1"]
+col3 = data["col3"]
+stelp -f csv --eval 'f"{col1} lives in {col3}"' users.csv
 
-# Need headers? Parse manually in pipeline
-stelp -f csv --eval 'parse_csv_with_headers(data, ["name", "age", "city"])' \
-      --eval 'f"{data[\"name\"]} lives in {data[\"city\"]}"' users.csv
+# Custom headers
+stelp -f csv --eval 'parse_csv(data, ["name", "age", "city"])' \
+      --eval 'name = data["name"]; city = data["city"]; f"{name} lives in {city}"' users.csv
 ```
 
-### Automatic JSON Processing
+### Automatic JSONL Processing
 ```bash
-# Process JSON objects
-stelp -f json --eval 'f"User {data[\"id\"]}: {data[\"status\"]}"' events.json
+# Process JSONL objects
+user_id = data["id"]
+status = data["status"]
+stelp -f jsonl --eval 'f"User {user_id}: {status}"' events.jsonl
 
-# Extract specific fields
-stelp -f json --eval 'data["user"]["email"]' nested.json
+# Extract specific fields - need to assign to variables first
+user_email = data["user"]["email"]
+stelp -f jsonl --eval 'user_email' nested.jsonl
 ```
 
 ### Automatic Field Splitting
 ```bash
 # Process whitespace-separated fields (like awk)
-stelp -f fields --eval 'f"{data[0]} -> {data[2]}"' logfile.txt
+field1 = data[0]
+field3 = data[2]
+stelp -f fields --eval 'f"{field1} -> {field3}"' logfile.txt
 
 # Need custom delimiter? Parse manually
-stelp --eval 'split(line, ":")' --eval 'data[0]' /etc/passwd
+stelp --eval 'line.split(":")' --eval 'data[0]' /etc/passwd
 ```
 
 ### Automatic Key-Value Processing
@@ -114,33 +120,41 @@ stelp --eval 'split(line, ":")' --eval 'data[0]' /etc/passwd
 stelp -f kv --eval 'f"Setting: {data}"' config.conf
 
 # Extract specific settings
-stelp -f kv --filter 'data.get("enabled") == "true"' --eval 'data["name"]' settings.conf
+enabled = data.get("enabled")
+name = data.get("name")
+stelp -f kv --filter 'enabled == "true"' --eval 'name' settings.conf
 ```
 
 ### Mixed Processing Pipeline
 ```bash
-# Parse JSON, process, output as CSV
-stelp -f json --eval 'dump_csv([data["name"], data["age"], data["city"]])' users.json
+# Parse JSONL, process, output as CSV
+name = data["name"]
+age = data["age"] 
+city = data["city"]
+stelp -f jsonl --eval 'dump_csv([name, age, city])' users.jsonl
 ```
 
 ### Fan-out Processing
 ```bash
-# JSON array auto-parsing with fan-out
-stelp -f json --eval 'data["events"]' \
-      --eval 'f"Event: {data[\"type\"]} at {data[\"timestamp\"]}"' events.json
+# JSONL array auto-parsing with fan-out
+events = data["events"]
+stelp -f jsonl --eval 'events' \
+      --eval 'event_type = data["type"]; timestamp = data["timestamp"]; f"Event: {event_type} at {timestamp}"' events.jsonl
 # Stage 1: data={"events": [...]} → [data=event1, data=event2, ...] (fan-out)
 ```
 
 ### Global State Management
 ```bash
-stelp -f json --eval 'inc(f"status_{data[\"status\"]}")' \
-      --eval 'f"Request: {data[\"path\"]} (total {data[\"status\"]}: {glob[f\"status_{data[\"status\"]}\"]})"'
+status = data["status"]
+path = data["path"]
+counter_key = f"status_{status}"
+stelp -f jsonl --eval 'inc(counter_key)' \
+      --eval 'total = glob[counter_key]; f"Request: {path} (total {status}: {total})"'
 ```
 
 ### In-place Data Modification
 ```bash
-stelp --eval 'data = parse_csv(line, headers=["name", "age"])' \
-      --eval 'data["processed"] = True; data["age"] = int(data["age"])' \
+stelp -f csv --eval 'data["processed"] = True; data["col2"] = int(data["col2"])' \
       --eval 'dump_json(data)'
 ```
 
@@ -149,42 +163,56 @@ stelp --eval 'data = parse_csv(line, headers=["name", "age"])' \
 ### Multi-format Processing
 ```bash
 # Process different file types automatically
-stelp -f json --eval 'data["user"]["name"]' users.json
-stelp -f csv --csv-headers --eval 'data["name"]' users.csv
+user_name = data["user"]["name"]
+stelp -f jsonl --eval 'user_name' users.jsonl
+stelp -f csv --eval 'data["col1"]' users.csv  # Using auto-generated headers
 stelp -f fields --eval 'data[0]' users.txt
 ```
 
 ### Data Validation Pipeline
 ```bash
 stelp -f csv --eval '
-# Convert to dict first if we need field names
-fields = parse_csv_with_headers(data, ["email", "name", "age"])
+# CSV already parsed as dict with col1, col2, col3 headers
 errors = []
-if not regex_match(r".+@.+", fields["email"]):
+email = data["col1"]
+age_str = data["col2"]
+if not regex_match(r".+@.+", email):
     errors.append("invalid_email")
-if int(fields["age"]) < 0:
+if int(age_str) < 0:
     errors.append("invalid_age")
 
 if errors:
     emit(f"INVALID line {LINENUM}: {errors}")
     skip()
 else:
-    fields["validated"] = True
-    fields
-' --eval 'f"✓ {data[\"name\"]} ({data[\"email\"]})"' users.csv
+    data["validated"] = True
+    data
+' --eval 'col1 = data["col1"]; col2 = data["col2"]; f"✓ {col1} ({col2})"' users.csv
 ```
 
 ### Format Conversion
 ```bash
-# CSV to JSON (manual header mapping)
-stelp -f csv --eval 'parse_csv_with_headers(data, ["name", "age", "city"])' \
+# CSV to JSON (using auto-generated headers)
+stelp -f csv --eval 'dump_json(data)' input.csv > output.json
+
+# CSV to JSON with custom field names
+col1 = data["col1"]
+col2 = data["col2"] 
+col3 = data["col3"]
+stelp -f csv --eval '{"name": col1, "age": col2, "city": col3}' \
       --eval 'dump_json(data)' input.csv > output.json
 
-# JSON to CSV  
-stelp -f json --eval 'dump_csv([data["name"], data["age"], data["city"]])' input.json > output.csv
+# JSONL to CSV  
+name = data["name"]
+age = data["age"]
+city = data["city"]
+stelp -f jsonl --eval 'dump_csv([name, age, city])' input.jsonl > output.csv
 
 # Fields to JSON
-stelp -f fields --eval '{"user": data[0], "id": data[1], "status": data[2]}' \
+user = data[0]
+user_id = data[1]
+status = data[2]
+stelp -f fields --eval '{"user": user, "id": user_id, "status": status}' \
       --eval 'dump_json(data)' users.txt > users.json
 ```
 
@@ -196,13 +224,18 @@ user_id = data["user_id"]
 action = data["action"]
 
 # Track user activity
-inc(f"user_{user_id}_total")
-inc(f"action_{action}_total")
+user_total_key = f"user_{user_id}_total"
+action_total_key = f"action_{action}_total"
+user_latest_key = f"user_{user_id}_latest"
+
+inc(user_total_key)
+inc(action_total_key)
 
 # Store user's latest action
-glob[f"user_{user_id}_latest"] = action
+glob[user_latest_key] = action
 
-f"User {user_id}: {action} (total actions: {glob[f\"user_{user_id}_total\"]})"
+total_actions = glob[user_total_key]
+f"User {user_id}: {action} (total actions: {total_actions})"
 '
 ```
 
@@ -210,32 +243,29 @@ f"User {user_id}: {action} (total actions: {glob[f\"user_{user_id}_total\"]})"
 ```bash
 stelp --eval 'parse_json(line)' \
       --eval '
-if data["level"] == "ERROR":
+level = data["level"]
+message = data["message"]
+
+if level == "ERROR":
     inc("error_count")
-    emit(f"🚨 ERROR #{glob[\"error_count\"]}: {data[\"message\"]}")
+    error_num = glob["error_count"]
+    emit(f"🚨 ERROR #{error_num}: {message}")
     
-if data["level"] == "WARN":
+if level == "WARN":
     inc("warning_count")
 
 # Continue processing all records
-f"[{data[\"level\"]}] {data[\"message\"]}"
+f"[{level}] {message}"
 '
 ```
 
 ## Data Type Conversions
 
-### Awk-style Field Splitting
-```python
-split(line)                    # → ["field1", "field2", "field3"] (whitespace)
-split(line, ",")               # → ["field1", "field2", "field3"] (comma)
-split(line, ":")               # → ["field1", "field2", "field3"] (colon)
-```
-
 ### CSV Parsing Options
 ```python
-parse_csv(line)                           # → ["col1", "col2", "col3"]
-parse_csv(line, headers=["a", "b", "c"])  # → {"a": "col1", "b": "col2", "c": "col3"}
-parse_csv(line, headers=True)             # → {"col0": "col1", "col1": "col2", "col2": "col3"}
+parse_csv(line)                           # → {"col1": "value1", "col2": "value2", ...}
+parse_csv(line, headers=["a", "b", "c"])  # → {"a": "value1", "b": "value2", "c": "value3"}
+parse_csv(line, headers=True)             # → Use first row as headers
 ```
 
 ### Fan-out Behavior
@@ -263,76 +293,30 @@ parse_csv(line, headers=True)             # → {"col0": "col1", "col1": "col2",
 - Return values override variable assignments
 - `glob` modifications persist across stages and files
 
+### CSV Header Generation
+- Auto-generated headers follow pattern: `col1`, `col2`, `col3`, etc.
+- First column is always `col1` (not `col0`)
+- Headers can be overridden with explicit `headers` parameter
 
 ### Error Handling
 ```python
 # Safe data access
-data.get("field", "default_value") if data else "no_data"
+col1 = data.get("col1", "default_value") if data else "no_data"
 
 # Type checking
-if data and "field" in data:
-    data["field"]
+if data and "col1" in data:
+    col1 = data["col1"]
 else:
-    "field_missing"
+    col1 = "field_missing"
 
 # Defensive parsing (functions should handle errors gracefully)
 parsed = parse_json(line)  # Should return error dict on parse failure
 if "error" in parsed:
-    f"Parse failed: {parsed['error']}"
+    error_msg = parsed["error"]
+    f"Parse failed: {error_msg}"
 else:
-    parsed["actual_field"]
-```
-
-## Backwards Compatibility
-
-**Breaking Change**: This design removes backwards compatibility in favor of a cleaner API.
-
-### Migration from Old Stelp
-**Old approach:**
-```bash
-stelp --eval 'parse_csv(line)' --eval 'data[0]'
-```
-
-**New approach:**
-```bash
-stelp -f csv --eval 'data[0]'
-```
-
-**Old text processing:**
-```bash
-stelp --eval 'line.upper()'
-```
-
-**New text processing:**
-```bash
-stelp --eval 'line.upper()'  # No change for default text mode
-```
-
-## Migration Examples
-
-### From String Processing
-**Before:**
-```bash
-stelp --eval 'line.split(",")[0] + " is " + line.split(",")[1] + " years old"'
-```
-
-**After:**
-```bash
-stelp --eval 'parse_csv(line, headers=["name", "age"])' \
-      --eval 'f"{data[\"name\"]} is {data[\"age\"]} years old"'
-```
-
-### From External Tools
-**Replace jq:**
-```bash
-# Instead of: cat data.json | jq -r '.user.name'
-stelp --eval 'parse_json(line)' --eval 'data["user"]["name"]'
-```
-
-**Replace awk:**
-```bash
-# Instead of: awk -F, '{print $1 " -> " $3}'
-stelp --eval 'parse_csv(line)' --eval 'f"{data[0]} -> {data[2]}"'
+    actual_field = parsed["actual_field"]
+    actual_field
 ```
 
 ## Performance Considerations
@@ -341,6 +325,7 @@ stelp --eval 'parse_csv(line)' --eval 'f"{data[0]} -> {data[2]}"'
 - JSON/CSV parsing is lazy (only when functions called)
 - Global state (`glob`) uses efficient storage
 - Fan-out creates records lazily
+- CSV header generation is efficient and consistent
 
 ## Future Extensions
 
@@ -362,7 +347,8 @@ stelp --eval 'parse_csv(line)' --eval 'f"{data[0]} -> {data[2]}"'
 4. **Stateful Processing** - Global variables persist across records
 5. **Composability** - Each stage does one thing well
 6. **Performance** - Structured features don't slow down text processing
+7. **Consistent Headers** - CSV parsing always returns dict with predictable keys
 
 ## Summary
 
-This design enables Stelp to handle complex structured data while maintaining simplicity for text processing. The either/or record model (line XOR data) provides a clean foundation for building sophisticated data pipelines from simple command-line expressions.
+This design enables Stelp to handle complex structured data while maintaining simplicity for text processing. The either/or record model (line XOR data) provides a clean foundation for building sophisticated data pipelines from simple command-line expressions. CSV processing now consistently returns dictionaries with auto-generated headers, making field access predictable and intuitive.
