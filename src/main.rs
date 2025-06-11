@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
-use stelp::input_format::InputFormat;
+use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
 use stelp::StreamPipeline;
 
@@ -133,18 +133,28 @@ fn build_final_script(includes: &[PathBuf], user_script: &str) -> Result<String,
     Ok(final_script)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)
-        .map_err(|e| format!("Argument parsing failed: {}", e))?;
+        .unwrap_or_else(|e| {
+            eprintln!("stelp: argument parsing failed: {}", e);
+            std::process::exit(1);
+        });
 
     // Validate arguments
-    args.validate()
-        .map_err(|e| format!("Invalid arguments: {}", e))?;
+    if let Err(e) = args.validate() {
+        eprintln!("stelp: {}", e);
+        std::process::exit(1);
+    }
 
     // Build pipeline steps first (before moving parts of args)
-    let steps = args.get_pipeline_steps(&matches)
-        .map_err(|e| format!("Failed to parse pipeline steps: {}", e))?;
+    let steps = args.get_pipeline_steps(&matches).unwrap_or_else(|e| {
+        eprintln!("stelp: failed to parse pipeline steps: {}", e);
+        std::process::exit(1);
+    });
+
+    // Extract input format before creating config
+    let input_format = args.input_format.clone();
 
     // Create pipeline configuration
     let config = PipelineConfig {
@@ -154,48 +164,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        input_format: args.input_format,
+        input_format: input_format.clone(),
         ..Default::default()
     };
 
     // Create pipeline
     let mut pipeline = StreamPipeline::new(config);
 
+    // Create input format wrapper
+    let format_wrapper = InputFormatWrapper::new(input_format.as_ref());
+
     // Add processors to pipeline in order
     for (i, step) in steps.iter().enumerate() {
         match step {
             PipelineStep::Eval(eval_expr) => {
-                let final_script = build_final_script(&args.includes, eval_expr)?;
+                let final_script = build_final_script(&args.includes, eval_expr).unwrap_or_else(|e| {
+                    eprintln!("stelp: {}", e);
+                    std::process::exit(1);
+                });
                 let processor =
                     StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
-                        .map_err(|e| {
-                            format!("failed to compile eval expression {}: {}", i + 1, e)
-                        })?;
+                        .unwrap_or_else(|e| {
+                            eprintln!("stelp: failed to compile eval expression {}: {}", i + 1, e);
+                            std::process::exit(1);
+                        });
                 pipeline.add_processor(Box::new(processor));
             }
             PipelineStep::Filter(filter_expr) => {
-                let final_script = build_final_script(&args.includes, filter_expr)?;
+                let final_script = build_final_script(&args.includes, filter_expr).unwrap_or_else(|e| {
+                    eprintln!("stelp: {}", e);
+                    std::process::exit(1);
+                });
                 let processor = FilterProcessor::from_expression(
                     &format!("filter_{}", i + 1),
                     &final_script,
                 )
-                .map_err(|e| format!("failed to compile filter expression {}: {}", i + 1, e))?;
+                .unwrap_or_else(|e| {
+                    eprintln!("stelp: failed to compile filter expression {}: {}", i + 1, e);
+                    std::process::exit(1);
+                });
                 pipeline.add_processor(Box::new(processor));
             }
             PipelineStep::ScriptFile(script_path) => {
-                let script_content = std::fs::read_to_string(script_path).map_err(|e| {
-                    format!(
-                        "failed to read script file '{}': {}",
+                let script_content = std::fs::read_to_string(script_path).unwrap_or_else(|e| {
+                    eprintln!(
+                        "stelp: failed to read script file '{}': {}",
                         script_path.display(),
                         e
-                    )
-                })?;
-                let final_script = build_final_script(&args.includes, &script_content)?;
+                    );
+                    std::process::exit(1);
+                });
+                let final_script = build_final_script(&args.includes, &script_content).unwrap_or_else(|e| {
+                    eprintln!("stelp: {}", e);
+                    std::process::exit(1);
+                });
                 let processor = StarlarkProcessor::from_script(
                     &format!("script:{}", script_path.display()),
                     &final_script,
                 )
-                .map_err(|e| format!("failed to compile script file: {}", e))?;
+                .unwrap_or_else(|e| {
+                    eprintln!("stelp: failed to compile script file: {}", e);
+                    std::process::exit(1);
+                });
                 pipeline.add_processor(Box::new(processor));
             }
         }
@@ -203,13 +233,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up output
     let mut output: Box<dyn Write> = if let Some(output_path) = &args.output_file {
-        let file = File::create(output_path).map_err(|e| {
-            format!(
-                "failed to create output file '{}': {}",
+        let file = File::create(output_path).unwrap_or_else(|e| {
+            eprintln!(
+                "stelp: failed to create output file '{}': {}",
                 output_path.display(),
                 e
-            )
-        })?;
+            );
+            std::process::exit(1);
+        });
         Box::new(io::BufWriter::with_capacity(65536, file))
     } else {
         Box::new(io::BufWriter::with_capacity(65536, io::stdout()))
@@ -224,9 +255,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("stelp: reading from stdin");
         }
         let input = BufReader::with_capacity(65536, io::stdin());
-        let stats = pipeline
-            .process_stream(input, &mut output, Some("<stdin>"))
-            .map_err(|e| format!("processing stdin failed: {}", e))?;
+        let stats = format_wrapper
+            .process_with_pipeline(input, &mut pipeline, &mut output, Some("<stdin>"))
+            .unwrap_or_else(|e| {
+                eprintln!("stelp: processing stdin failed: {}", e);
+                std::process::exit(1);
+            });
         total_stats = stats;
     } else {
         // Process each input file
@@ -235,19 +269,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("stelp: processing file: {}", input_path.display());
             }
 
-            let file = File::open(input_path).map_err(|e| {
-                format!(
-                    "failed to open input file '{}': {}",
+            let file = File::open(input_path).unwrap_or_else(|e| {
+                eprintln!(
+                    "stelp: failed to open input file '{}': {}",
                     input_path.display(),
                     e
-                )
-            })?;
+                );
+                std::process::exit(1);
+            });
             let input = BufReader::with_capacity(65536, file);
 
             let filename = input_path.to_string_lossy();
-            let stats = pipeline
-                .process_stream(input, &mut output, Some(&filename))
-                .map_err(|e| format!("processing file '{}' failed: {}", input_path.display(), e))?;
+            let stats = format_wrapper
+                .process_with_pipeline(input, &mut pipeline, &mut output, Some(&filename))
+                .unwrap_or_else(|e| {
+                    eprintln!("stelp: processing file '{}' failed: {}", input_path.display(), e);
+                    std::process::exit(1);
+                });
 
             // Accumulate statistics
             if file_index == 0 {
@@ -266,7 +304,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Ensure output is flushed
-    output.flush()?;
+    if let Err(e) = output.flush() {
+        eprintln!("stelp: failed to flush output: {}", e);
+        std::process::exit(1);
+    }
 
     // Print final stats if debug mode
     if args.debug {
