@@ -77,7 +77,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(serde_json::to_string(&json_value)?)
     }
 
-  // CSV functions
+    // CSV functions
     fn parse_csv<'v>(
         heap: &'v Heap,
         line: String,
@@ -98,7 +98,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         if let Some(record) = reader.records().next() {
             let record = record?;
             let fields: Vec<String> = record.iter().map(|field| field.to_string()).collect();
-            
+
             // Handle headers
             let column_names = if let Some(headers_val) = headers {
                 // Extract headers from list value
@@ -118,14 +118,12 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 }
             } else {
                 // Auto-generate col1, col2, col3...
-                (1..=fields.len())
-                    .map(|i| format!("col{}", i))
-                    .collect()
+                (1..=fields.len()).map(|i| format!("col{}", i)).collect()
             };
 
             // Create dict from headers and fields
             let mut dict_map = SmallMap::new();
-            
+
             for (i, header) in column_names.iter().enumerate() {
                 let value = if i < fields.len() {
                     fields[i].clone()
@@ -133,15 +131,15 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                     // More headers than fields - fill with empty string
                     String::new()
                 };
-                
+
                 // Allocate key and value as strings directly
-                let key = heap.alloc(header.as_str());  // Use as_str() to avoid extra quotes
+                let key = heap.alloc(header.as_str()); // Use as_str() to avoid extra quotes
                 let val = heap.alloc(value);
                 dict_map.insert_hashed(key.get_hashed().unwrap(), val);
             }
-            
+
             // Note: if there are more fields than headers, we ignore the extra fields
-            
+
             let dict = Dict::new(dict_map);
             Ok(heap.alloc(dict))
         } else {
@@ -305,37 +303,37 @@ mod tests {
     // Helper to run a test and extract values immediately
     fn test_parse_csv_script(script: &str) -> Result<(usize, Vec<(String, String)>), String> {
         // Create globals with our functions
-        let globals = GlobalsBuilder::new()
-            .with(global_functions)
-            .build();
-        
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+
         // Create module and evaluator
         let module = Module::new();
         let mut eval = Evaluator::new(&module);
-        
+
         // Parse and execute the script
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended)
             .map_err(|e| format!("Parse error: {}", e))?;
-        let result = eval.eval_module(ast, &globals)
+        let result = eval
+            .eval_module(ast, &globals)
             .map_err(|e| format!("Eval error: {}", e))?;
-        
+
         // Extract the dict data immediately while the module is still alive
-        let dict = DictRef::from_value(result)
-            .ok_or_else(|| "Result is not a dict".to_string())?;
-        
+        let dict = DictRef::from_value(result).ok_or_else(|| "Result is not a dict".to_string())?;
+
         let len = dict.len();
         let mut entries = Vec::new();
-        
+
         for (k, v) in dict.iter() {
-            let key = k.unpack_str()
+            let key = k
+                .unpack_str()
                 .ok_or_else(|| "Key is not a string".to_string())?
                 .to_string();
-            let value = v.unpack_str()
+            let value = v
+                .unpack_str()
                 .ok_or_else(|| "Value is not a string".to_string())?
                 .to_string();
             entries.push((key, value));
         }
-        
+
         entries.sort(); // Sort for consistent testing
         Ok((len, entries))
     }
@@ -344,71 +342,86 @@ mod tests {
     fn test_parse_csv_auto_headers() {
         let script = r#"parse_csv("alice,25,engineer")"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 3);
-        assert_eq!(entries, vec![
-            ("col1".to_string(), "alice".to_string()),
-            ("col2".to_string(), "25".to_string()),
-            ("col3".to_string(), "engineer".to_string()),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                ("col1".to_string(), "alice".to_string()),
+                ("col2".to_string(), "25".to_string()),
+                ("col3".to_string(), "engineer".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_csv_with_headers() {
         let script = r#"parse_csv("alice,25,engineer", headers=["name", "age", "job"])"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 3);
-        assert_eq!(entries, vec![
-            ("age".to_string(), "25".to_string()),
-            ("job".to_string(), "engineer".to_string()),
-            ("name".to_string(), "alice".to_string()),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                ("age".to_string(), "25".to_string()),
+                ("job".to_string(), "engineer".to_string()),
+                ("name".to_string(), "alice".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_csv_more_headers_than_fields() {
         let script = r#"parse_csv("alice,25", headers=["name", "age", "job"])"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 3);
-        assert_eq!(entries, vec![
-            ("age".to_string(), "25".to_string()),
-            ("job".to_string(), "".to_string()), // Empty string
-            ("name".to_string(), "alice".to_string()),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                ("age".to_string(), "25".to_string()),
+                ("job".to_string(), "".to_string()), // Empty string
+                ("name".to_string(), "alice".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_csv_more_fields_than_headers() {
         let script = r#"parse_csv("alice,25,engineer,bonus", headers=["name", "age"])"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 2); // Only 2 headers, extra fields ignored
-        assert_eq!(entries, vec![
-            ("age".to_string(), "25".to_string()),
-            ("name".to_string(), "alice".to_string()),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                ("age".to_string(), "25".to_string()),
+                ("name".to_string(), "alice".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_csv_custom_delimiter() {
         let script = r#"parse_csv("alice|25|engineer", sep="|")"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 3);
-        assert_eq!(entries, vec![
-            ("col1".to_string(), "alice".to_string()),
-            ("col2".to_string(), "25".to_string()),
-            ("col3".to_string(), "engineer".to_string()),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                ("col1".to_string(), "alice".to_string()),
+                ("col2".to_string(), "25".to_string()),
+                ("col3".to_string(), "engineer".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_csv_empty_line() {
         let script = r#"parse_csv("")"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 0); // Empty dict for empty line
         assert_eq!(entries, vec![]);
     }
@@ -417,10 +430,8 @@ mod tests {
     fn test_parse_csv_single_field() {
         let script = r#"parse_csv("alice")"#;
         let (len, entries) = test_parse_csv_script(script).unwrap();
-        
+
         assert_eq!(len, 1);
-        assert_eq!(entries, vec![
-            ("col1".to_string(), "alice".to_string()),
-        ]);
+        assert_eq!(entries, vec![("col1".to_string(), "alice".to_string()),]);
     }
 }

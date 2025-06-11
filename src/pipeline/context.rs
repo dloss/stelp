@@ -1,5 +1,7 @@
 use crate::error::ProcessingError;
 use crate::variables::GlobalVariables;
+use serde_json;
+use std::cell::RefCell;
 use std::time::Duration;
 
 /// A record that flows through the pipeline - either text or structured data
@@ -112,4 +114,28 @@ impl PipelineContext {
             file_name: None,
         }
     }
+}
+
+// Thread-local storage for parsed data (add this to your existing thread-locals)
+thread_local! {
+    static PARSED_DATA: RefCell<Option<serde_json::Value>> = RefCell::new(None);
+}
+
+/// Set parsed data for the current line (called by InputFormatWrapper)
+pub fn set_parsed_data(data: Option<serde_json::Value>) {
+    PARSED_DATA.with(|cell| {
+        *cell.borrow_mut() = data;
+    });
+}
+
+/// Get parsed data for the current line (called by StarlarkProcessor)
+pub fn get_parsed_data() -> Option<serde_json::Value> {
+    PARSED_DATA.with(|cell| cell.borrow().clone())
+}
+
+/// Clear parsed data (called between lines)
+pub fn clear_parsed_data() {
+    PARSED_DATA.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
 }

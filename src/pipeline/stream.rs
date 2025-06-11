@@ -49,6 +49,18 @@ impl StreamPipeline {
         }
     }
 
+    /// Enhanced process_stream that supports parsed data
+    pub fn process_stream_with_data<R: BufRead, W: Write>(
+        &mut self,
+        reader: R,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<ProcessingStats, Box<dyn std::error::Error>> {
+        // Convert your ProcessingError to Box<dyn Error>
+        self.process_stream(reader, output, filename)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    }
+
     /// Process a single file/stream
     pub fn process_stream<R: BufRead, W: Write>(
         &mut self,

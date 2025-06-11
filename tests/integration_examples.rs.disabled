@@ -1,0 +1,166 @@
+// tests/integration_examples.rs - Real-world log processing examples
+
+use std::io::Cursor;
+use stelp::input_format::InputFormat;
+use stelp::log_format_processor::{create_log_format_processor, LogFormatConfig};
+
+#[test]
+fn test_microservice_error_filtering() {
+    // Real-world scenario: Filter ERROR logs from microservices
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"service\"] + \": \" + data[\"message\"]".to_string()),
+        filter_expr: Some("data[\"level\"] == \"ERROR\"".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"timestamp": "2024-01-15T10:00:00Z", "service": "api", "level": "INFO", "message": "Request processed"}
+{"timestamp": "2024-01-15T10:00:01Z", "service": "database", "level": "ERROR", "message": "Connection timeout"}
+{"timestamp": "2024-01-15T10:00:02Z", "service": "cache", "level": "DEBUG", "message": "Cache miss"}
+{"timestamp": "2024-01-15T10:00:03Z", "service": "api", "level": "ERROR", "message": "Invalid request"}
+{"timestamp": "2024-01-15T10:00:04Z", "service": "auth", "level": "WARN", "message": "Rate limit exceeded"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output: "database: Connection timeout" and "api: Invalid request"
+}
+
+#[test]
+fn test_performance_monitoring() {
+    // Real-world scenario: Monitor response times from logs
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some(
+            "\"SLOW: \" + data[\"endpoint\"] + \" (\" + str(data[\"response_time\"]) + \"ms)\""
+                .to_string(),
+        ),
+        filter_expr: Some("data[\"response_time\"] > 1000".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"endpoint": "/api/users", "response_time": 250, "status": 200}
+{"endpoint": "/api/orders", "response_time": 1500, "status": 200}
+{"endpoint": "/api/products", "response_time": 800, "status": 200}
+{"endpoint": "/api/search", "response_time": 2300, "status": 200}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output slow endpoints only
+}
+
+#[test]
+fn test_security_alert_filtering() {
+    // Real-world scenario: Security monitoring
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some(
+            "\"SECURITY ALERT: \" + data[\"event\"] + \" from \" + data[\"source_ip\"]".to_string(),
+        ),
+        filter_expr: Some(
+            "data[\"event\"] in [\"failed_login\", \"suspicious_activity\", \"brute_force\"]"
+                .to_string(),
+        ),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"event": "user_login", "source_ip": "192.168.1.100", "user": "alice"}
+{"event": "failed_login", "source_ip": "10.0.0.50", "user": "admin"}
+{"event": "page_view", "source_ip": "192.168.1.200", "page": "/dashboard"}
+{"event": "brute_force", "source_ip": "203.0.113.45", "attempts": 5}
+{"event": "suspicious_activity", "source_ip": "198.51.100.30", "details": "unusual_pattern"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output security alerts only
+}
+
+#[test]
+fn test_csv_access_log_analysis() {
+    // Real-world scenario: Analyze exported access logs
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Csv),
+        eval_expr: Some("data[\"path\"] + \" -> \" + data[\"status\"] + \" (\" + data[\"response_time\"] + \"ms)\"".to_string()),
+        filter_expr: Some("data[\"status\"].startswith(\"5\") or int(data[\"response_time\"]) > 2000".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "timestamp,path,status,response_time,user_agent\n2024-01-15T10:00:00Z,/api/users,200,150,curl/7.68.0\n2024-01-15T10:00:01Z,/api/orders,500,300,Mozilla/5.0\n2024-01-15T10:00:02Z,/api/search,200,2500,Chrome/96.0\n2024-01-15T10:00:03Z,/api/products,503,100,Firefox/95.0";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output problematic requests (5xx status or slow responses)
+}
+
+#[test]
+fn test_traditional_log_parsing() {
+    // Real-world scenario: Parse traditional syslog format
+    let config = LogFormatConfig {
+        input_format: None,
+        eval_expr: Some("line.split()[4:]".to_string()), // Extract message part
+        filter_expr: Some("\"ERROR\" in line or \"CRITICAL\" in line".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "Jan 15 10:00:00 web01 nginx: INFO - Request processed successfully\nJan 15 10:00:01 web01 app: ERROR - Database connection failed\nJan 15 10:00:02 web01 system: CRITICAL - Disk space low\nJan 15 10:00:03 web01 nginx: INFO - Request completed";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output error and critical messages only
+}
+
+#[test]
+fn test_kubernetes_log_processing() {
+    // Real-world scenario: Process Kubernetes pod logs
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some(
+            "data[\"pod\"] + \" [\" + data[\"level\"] + \"] \" + data[\"message\"]".to_string(),
+        ),
+        filter_expr: Some(
+            "data[\"level\"] != \"DEBUG\" and data[\"namespace\"] == \"production\"".to_string(),
+        ),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"pod": "api-deployment-abc123", "namespace": "production", "level": "INFO", "message": "Server started"}
+{"pod": "worker-xyz789", "namespace": "staging", "level": "ERROR", "message": "Job failed"}
+{"pod": "api-deployment-def456", "namespace": "production", "level": "DEBUG", "message": "Verbose logging"}
+{"pod": "database-ghi012", "namespace": "production", "level": "WARN", "message": "Slow query detected"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should output production logs (excluding DEBUG)
+}
+
+#[test]
+fn test_emit_functionality() {
+    // Real-world scenario: Generate alerts while processing
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("emit(\"ALERT: Critical error in \" + data[\"service\"]) if data[\"level\"] == \"CRITICAL\" else data[\"message\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"service": "api", "level": "INFO", "message": "Request processed"}
+{"service": "database", "level": "CRITICAL", "message": "Data corruption detected"}
+{"service": "cache", "level": "WARN", "message": "Memory usage high"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+    // Should emit alert for critical error and show regular messages
+}

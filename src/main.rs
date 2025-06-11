@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
+use stelp::input_format::InputFormat;
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
+use stelp::StreamPipeline;
 
 #[derive(Debug, Clone)]
 enum PipelineStep {
@@ -38,6 +40,10 @@ struct Args {
     /// Filter expressions - Only keep lines where expression is true
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
+
+    /// Input format for structured parsing (jsonl, csv)
+    #[arg(short = 'f', long = "input-format", value_enum)]
+    input_format: Option<InputFormat>,
 
     /// Output file (default: stdout)
     #[arg(short = 'o', long = "output")]
@@ -78,13 +84,10 @@ impl Args {
         if let Some(eval_indices) = matches.indices_of("evals") {
             let eval_values: Vec<&String> = matches
                 .get_many::<String>("evals")
-                .unwrap_or_default()
+                .unwrap()
                 .collect();
-
-            for (i, index) in eval_indices.enumerate() {
-                if i < eval_values.len() {
-                    steps_with_indices.push((index, PipelineStep::Eval(eval_values[i].clone())));
-                }
+            for (pos, index) in eval_indices.enumerate() {
+                steps_with_indices.push((index, PipelineStep::Eval(eval_values[pos].clone())));
             }
         }
 
@@ -92,47 +95,31 @@ impl Args {
         if let Some(filter_indices) = matches.indices_of("filters") {
             let filter_values: Vec<&String> = matches
                 .get_many::<String>("filters")
-                .unwrap_or_default()
+                .unwrap()
                 .collect();
-
-            for (i, index) in filter_indices.enumerate() {
-                if i < filter_values.len() {
-                    steps_with_indices
-                        .push((index, PipelineStep::Filter(filter_values[i].clone())));
-                }
+            for (pos, index) in filter_indices.enumerate() {
+                steps_with_indices.push((index, PipelineStep::Filter(filter_values[pos].clone())));
             }
         }
 
-        // Add script file if present (it doesn't have a specific position, so put it first)
-        if let Some(ref script_path) = self.script_file {
-            steps_with_indices.push((0, PipelineStep::ScriptFile(script_path.clone())));
+        // Handle script file - it doesn't have an index, so we place it first
+        if let Some(script_file) = &self.script_file {
+            steps_with_indices.push((0, PipelineStep::ScriptFile(script_file.clone())));
         }
 
-        // Sort by command line position to get correct order
+        // Sort by original command line position
         steps_with_indices.sort_by_key(|(index, _)| *index);
 
-        Ok(steps_with_indices
-            .into_iter()
-            .map(|(_, step)| step)
-            .collect())
+        // Extract just the steps
+        Ok(steps_with_indices.into_iter().map(|(_, step)| step).collect())
     }
 }
 
-/// The Stelp prelude embedded from prelude.star at compile time
-const STELP_PRELUDE: &str = include_str!("prelude.star");
-
-/// Build the final script by concatenating prelude, includes, and user script
-fn build_final_script(
-    includes: &[PathBuf],
-    user_script: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+/// Build the final script by concatenating includes and user script
+fn build_final_script(includes: &[PathBuf], user_script: &str) -> Result<String, String> {
     let mut final_script = String::new();
 
-    // 1. Add prelude first (always included from prelude.star)
-    final_script.push_str(STELP_PRELUDE);
-    final_script.push_str("\n\n");
-
-    // 2. Add includes in order
+    // Add includes in order
     for include_path in includes {
         let include_content = std::fs::read_to_string(include_path)
             .map_err(|e| format!("Include file '{}' not found: {}", include_path.display(), e))?;
@@ -140,44 +127,25 @@ fn build_final_script(
         final_script.push_str("\n\n");
     }
 
-    // 3. Add user script
+    // Add user script
     final_script.push_str(user_script);
 
     Ok(final_script)
 }
 
-fn main() {
-    // Parse args using both derive API and manual matching for indices
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Args::command().get_matches();
-    let args = match Args::from_arg_matches(&matches) {
-        Ok(args) => args,
-        Err(e) => {
-            eprintln!("stelp: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let args = Args::from_arg_matches(&matches)
+        .map_err(|e| format!("Argument parsing failed: {}", e))?;
 
-    if let Err(e) = args.validate() {
-        eprintln!("stelp: {}", e);
-        std::process::exit(1);
-    }
+    // Validate arguments
+    args.validate()
+        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-    match run(args, &matches) {
-        Ok(exit_code) => std::process::exit(exit_code),
-        Err(e) => {
-            // Handle broken pipe errors silently (Unix tool convention)
-            let error_string = e.to_string().to_lowercase();
-            if error_string.contains("broken pipe") {
-                std::process::exit(0);
-            }
+    // Build pipeline steps first (before moving parts of args)
+    let steps = args.get_pipeline_steps(&matches)
+        .map_err(|e| format!("Failed to parse pipeline steps: {}", e))?;
 
-            eprintln!("stelp: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-fn run(args: Args, matches: &ArgMatches) -> Result<i32, Box<dyn std::error::Error>> {
     // Create pipeline configuration
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
@@ -186,32 +154,15 @@ fn run(args: Args, matches: &ArgMatches) -> Result<i32, Box<dyn std::error::Erro
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        buffer_size: 65536,
-        max_line_length: 1048576,
-        progress_interval: 0,
+        input_format: args.input_format,
+        ..Default::default()
     };
 
     // Create pipeline
-    let mut pipeline = stelp::StreamPipeline::new(config);
+    let mut pipeline = StreamPipeline::new(config);
 
-    // Get pipeline steps in command-line order
-    let pipeline_steps = args.get_pipeline_steps(matches)?;
-
-    if args.debug {
-        eprintln!("Pipeline steps (in order):");
-        for (i, step) in pipeline_steps.iter().enumerate() {
-            match step {
-                PipelineStep::Eval(expr) => eprintln!("  {}: eval: {}", i + 1, expr),
-                PipelineStep::Filter(expr) => eprintln!("  {}: filter: {}", i + 1, expr),
-                PipelineStep::ScriptFile(path) => {
-                    eprintln!("  {}: script: {}", i + 1, path.display())
-                }
-            }
-        }
-    }
-
-    // Add processors based on ordered steps
-    for (i, step) in pipeline_steps.iter().enumerate() {
+    // Add processors to pipeline in order
+    for (i, step) in steps.iter().enumerate() {
         match step {
             PipelineStep::Eval(eval_expr) => {
                 let final_script = build_final_script(&args.includes, eval_expr)?;
@@ -338,5 +289,5 @@ fn run(args: Args, matches: &ArgMatches) -> Result<i32, Box<dyn std::error::Erro
         0 // Success
     };
 
-    Ok(exit_code)
+    std::process::exit(exit_code);
 }

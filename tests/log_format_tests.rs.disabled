@@ -1,0 +1,185 @@
+// tests/log_format_tests.rs - Simple tests for log format processing
+
+use std::io::Cursor;
+use stelp::input_format::InputFormat;
+use stelp::log_format_processor::{create_log_format_processor, LogFormatConfig};
+
+#[test]
+fn test_raw_text_logs() {
+    let config = LogFormatConfig {
+        input_format: None,
+        eval_expr: Some("line.upper()".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "2024-01-15 10:00:00 ERROR Database connection failed";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_jsonl_logs_basic() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"level\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input =
+        r#"{"timestamp": "2024-01-15T10:00:00Z", "level": "ERROR", "message": "Database failed"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_jsonl_logs_with_filter() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"message\"]".to_string()),
+        filter_expr: Some("data[\"level\"] == \"ERROR\"".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"level": "INFO", "message": "All good"}
+{"level": "ERROR", "message": "Something broke"}
+{"level": "DEBUG", "message": "Debug info"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_csv_logs_basic() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Csv),
+        eval_expr: Some("data[\"level\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "timestamp,level,message\n2024-01-15T10:00:00Z,ERROR,Database failed";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_csv_logs_with_filter() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Csv),
+        eval_expr: Some("data[\"host\"] + \": \" + data[\"message\"]".to_string()),
+        filter_expr: Some("data[\"level\"] == \"ERROR\"".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "timestamp,level,message,host\n2024-01-15T10:00:00Z,ERROR,Database failed,web01\n2024-01-15T10:01:00Z,INFO,Request ok,web02";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_multiline_jsonl_logs() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"service\"] + \": \" + data[\"level\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"service": "api", "level": "ERROR", "message": "Failed"}
+{"service": "db", "level": "WARN", "message": "Slow query"}
+{"service": "cache", "level": "INFO", "message": "Cache hit"}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_invalid_jsonl() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"level\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"invalid": json syntax"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_empty_csv() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Csv),
+        eval_expr: Some("data[\"level\"]".to_string()),
+        filter_expr: None,
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_raw_text_with_filter() {
+    let config = LogFormatConfig {
+        input_format: None,
+        eval_expr: Some("line".to_string()),
+        filter_expr: Some("\"ERROR\" in line".to_string()),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = "2024-01-15 10:00:00 INFO All good\n2024-01-15 10:00:01 ERROR Something broke\n2024-01-15 10:00:02 DEBUG Debug info";
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_complex_jsonl_filtering() {
+    let config = LogFormatConfig {
+        input_format: Some(InputFormat::Jsonl),
+        eval_expr: Some("data[\"host\"] + \": \" + data[\"message\"]".to_string()),
+        filter_expr: Some(
+            "data[\"level\"] in [\"ERROR\", \"WARN\"] and data[\"cpu\"] > 80".to_string(),
+        ),
+        debug: false,
+        no_multiline: false,
+    };
+
+    let processor = create_log_format_processor(config);
+    let input = r#"{"level": "INFO", "message": "Normal", "host": "web01", "cpu": 50}
+{"level": "ERROR", "message": "High CPU", "host": "web02", "cpu": 90}
+{"level": "WARN", "message": "Warning", "host": "web03", "cpu": 85}
+{"level": "ERROR", "message": "Low CPU error", "host": "web04", "cpu": 30}"#;
+
+    let result = processor.process_input(Cursor::new(input));
+    assert!(result.is_ok());
+}

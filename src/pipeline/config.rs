@@ -1,3 +1,5 @@
+use crate::input_format::InputFormat;
+
 /// Configuration for pipeline behavior
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -6,6 +8,7 @@ pub struct PipelineConfig {
     pub buffer_size: usize,
     pub max_line_length: usize,
     pub progress_interval: usize,
+    pub input_format: Option<InputFormat>,
 }
 
 impl Default for PipelineConfig {
@@ -16,6 +19,7 @@ impl Default for PipelineConfig {
             buffer_size: 65536,       // 64KB
             max_line_length: 1048576, // 1MB
             progress_interval: 0,     // Disabled
+            input_format: None,
         }
     }
 }

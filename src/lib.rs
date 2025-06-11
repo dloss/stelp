@@ -1,5 +1,6 @@
 // src/lib.rs
 pub mod error;
+pub mod input_format;
 pub mod pipeline;
 pub mod variables;
 
