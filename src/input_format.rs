@@ -38,9 +38,11 @@ impl CsvParser {
     }
 
     pub fn parse_headers(&mut self, header_line: &str) -> Result<(), String> {
-        let headers: Vec<String> = header_line
-            .split(',')
+        let headers: Vec<String> = self.parse_csv_fields(header_line.trim())
+            .map_err(|e| format!("Failed to parse CSV headers: {}", e))?
+            .into_iter()
             .map(|h| h.trim().trim_matches('"').to_string())
+            .filter(|h| !h.is_empty())  // Remove empty headers after trimming
             .collect();
 
         if headers.is_empty() {
@@ -50,13 +52,58 @@ impl CsvParser {
         self.headers = Some(headers);
         Ok(())
     }
+
+    // Proper CSV field parsing that handles quoted fields with commas
+    fn parse_csv_fields(&self, line: &str) -> Result<Vec<String>, String> {
+        let mut fields = Vec::new();
+        let mut current_field = String::new();
+        let mut in_quotes = false;
+        let mut chars = line.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' => {
+                    // Check for escaped quotes (double quotes)
+                    if in_quotes && chars.peek() == Some(&'"') {
+                        chars.next(); // consume the second quote
+                        current_field.push('"');
+                    } else {
+                        // Toggle quote state
+                        in_quotes = !in_quotes;
+                    }
+                }
+                ',' => {
+                    if in_quotes {
+                        // Inside quotes, comma is part of the field
+                        current_field.push(',');
+                    } else {
+                        // Outside quotes, comma is field separator
+                        fields.push(current_field.trim().to_string());
+                        current_field.clear();
+                    }
+                }
+                _ => {
+                    current_field.push(ch);
+                }
+            }
+        }
+
+        // Don't forget the last field
+        fields.push(current_field.trim().to_string());
+
+        if in_quotes {
+            return Err("Unclosed quote in CSV line".to_string());
+        }
+
+        Ok(fields)
+    }
 }
 
 impl LineParser for CsvParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let headers = self.headers.as_ref().ok_or("CSV headers not initialized")?;
 
-        let values: Vec<&str> = line.split(',').collect();
+        let values = self.parse_csv_fields(line)?;
 
         if values.len() != headers.len() {
             return Err(format!(
@@ -68,7 +115,12 @@ impl LineParser for CsvParser {
 
         let mut map = serde_json::Map::new();
         for (header, value) in headers.iter().zip(values.iter()) {
-            let cleaned_value = value.trim().trim_matches('"').to_string();
+            // Remove surrounding quotes if present, but preserve inner content
+            let cleaned_value = if value.starts_with('"') && value.ends_with('"') && value.len() > 1 {
+                value[1..value.len()-1].to_string()
+            } else {
+                value.clone()
+            };
             map.insert(header.clone(), serde_json::Value::String(cleaned_value));
         }
 
