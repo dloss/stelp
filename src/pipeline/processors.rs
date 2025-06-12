@@ -245,7 +245,23 @@ impl StarlarkProcessor {
 
 impl RecordProcessor for StarlarkProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
-        self.process_standalone(record, ctx)
+        let result = match self.process_standalone(record, ctx) {
+            ProcessResult::Transform(output_record) => ProcessResult::Transform(output_record),
+            ProcessResult::FanOut(output_records) => ProcessResult::FanOut(output_records),
+            ProcessResult::TransformWithEmissions { primary, emissions } => {
+                ProcessResult::TransformWithEmissions { primary, emissions }
+            }
+            ProcessResult::Skip => ProcessResult::Skip,
+            ProcessResult::Exit(final_output) => ProcessResult::Exit(final_output),
+            ProcessResult::Error(err) => ProcessResult::Error(err),
+        };
+
+        // Clear context
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = None;
+        });
+
+        result
     }
 
     fn name(&self) -> &str {

@@ -82,10 +82,7 @@ impl Args {
 
         // Get eval steps with their indices
         if let Some(eval_indices) = matches.indices_of("evals") {
-            let eval_values: Vec<&String> = matches
-                .get_many::<String>("evals")
-                .unwrap()
-                .collect();
+            let eval_values: Vec<&String> = matches.get_many::<String>("evals").unwrap().collect();
             for (pos, index) in eval_indices.enumerate() {
                 steps_with_indices.push((index, PipelineStep::Eval(eval_values[pos].clone())));
             }
@@ -93,10 +90,8 @@ impl Args {
 
         // Get filter steps with their indices
         if let Some(filter_indices) = matches.indices_of("filters") {
-            let filter_values: Vec<&String> = matches
-                .get_many::<String>("filters")
-                .unwrap()
-                .collect();
+            let filter_values: Vec<&String> =
+                matches.get_many::<String>("filters").unwrap().collect();
             for (pos, index) in filter_indices.enumerate() {
                 steps_with_indices.push((index, PipelineStep::Filter(filter_values[pos].clone())));
             }
@@ -111,7 +106,10 @@ impl Args {
         steps_with_indices.sort_by_key(|(index, _)| *index);
 
         // Extract just the steps
-        Ok(steps_with_indices.into_iter().map(|(_, step)| step).collect())
+        Ok(steps_with_indices
+            .into_iter()
+            .map(|(_, step)| step)
+            .collect())
     }
 }
 
@@ -135,11 +133,10 @@ fn build_final_script(includes: &[PathBuf], user_script: &str) -> Result<String,
 
 fn main() {
     let matches = Args::command().get_matches();
-    let args = Args::from_arg_matches(&matches)
-        .unwrap_or_else(|e| {
-            eprintln!("stelp: argument parsing failed: {}", e);
-            std::process::exit(1);
-        });
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| {
+        eprintln!("stelp: argument parsing failed: {}", e);
+        std::process::exit(1);
+    });
 
     // Validate arguments
     if let Err(e) = args.validate() {
@@ -178,10 +175,11 @@ fn main() {
     for (i, step) in steps.iter().enumerate() {
         match step {
             PipelineStep::Eval(eval_expr) => {
-                let final_script = build_final_script(&args.includes, eval_expr).unwrap_or_else(|e| {
-                    eprintln!("stelp: {}", e);
-                    std::process::exit(1);
-                });
+                let final_script =
+                    build_final_script(&args.includes, eval_expr).unwrap_or_else(|e| {
+                        eprintln!("stelp: {}", e);
+                        std::process::exit(1);
+                    });
                 let processor =
                     StarlarkProcessor::from_script(&format!("eval_{}", i + 1), &final_script)
                         .unwrap_or_else(|e| {
@@ -191,18 +189,21 @@ fn main() {
                 pipeline.add_processor(Box::new(processor));
             }
             PipelineStep::Filter(filter_expr) => {
-                let final_script = build_final_script(&args.includes, filter_expr).unwrap_or_else(|e| {
-                    eprintln!("stelp: {}", e);
-                    std::process::exit(1);
-                });
-                let processor = FilterProcessor::from_expression(
-                    &format!("filter_{}", i + 1),
-                    &final_script,
-                )
-                .unwrap_or_else(|e| {
-                    eprintln!("stelp: failed to compile filter expression {}: {}", i + 1, e);
-                    std::process::exit(1);
-                });
+                let final_script =
+                    build_final_script(&args.includes, filter_expr).unwrap_or_else(|e| {
+                        eprintln!("stelp: {}", e);
+                        std::process::exit(1);
+                    });
+                let processor =
+                    FilterProcessor::from_expression(&format!("filter_{}", i + 1), &final_script)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "stelp: failed to compile filter expression {}: {}",
+                                i + 1,
+                                e
+                            );
+                            std::process::exit(1);
+                        });
                 pipeline.add_processor(Box::new(processor));
             }
             PipelineStep::ScriptFile(script_path) => {
@@ -214,10 +215,11 @@ fn main() {
                     );
                     std::process::exit(1);
                 });
-                let final_script = build_final_script(&args.includes, &script_content).unwrap_or_else(|e| {
-                    eprintln!("stelp: {}", e);
-                    std::process::exit(1);
-                });
+                let final_script = build_final_script(&args.includes, &script_content)
+                    .unwrap_or_else(|e| {
+                        eprintln!("stelp: {}", e);
+                        std::process::exit(1);
+                    });
                 let processor = StarlarkProcessor::from_script(
                     &format!("script:{}", script_path.display()),
                     &final_script,
@@ -283,7 +285,11 @@ fn main() {
             let stats = format_wrapper
                 .process_with_pipeline(input, &mut pipeline, &mut output, Some(&filename))
                 .unwrap_or_else(|e| {
-                    eprintln!("stelp: processing file '{}' failed: {}", input_path.display(), e);
+                    eprintln!(
+                        "stelp: processing file '{}' failed: {}",
+                        input_path.display(),
+                        e
+                    );
                     std::process::exit(1);
                 });
 

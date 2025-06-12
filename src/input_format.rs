@@ -38,11 +38,12 @@ impl CsvParser {
     }
 
     pub fn parse_headers(&mut self, header_line: &str) -> Result<(), String> {
-        let headers: Vec<String> = self.parse_csv_fields(header_line.trim())
+        let headers: Vec<String> = self
+            .parse_csv_fields(header_line.trim())
             .map_err(|e| format!("Failed to parse CSV headers: {}", e))?
             .into_iter()
             .map(|h| h.trim().trim_matches('"').to_string())
-            .filter(|h| !h.is_empty())  // Remove empty headers after trimming
+            .filter(|h| !h.is_empty()) // Remove empty headers after trimming
             .collect();
 
         if headers.is_empty() {
@@ -116,8 +117,9 @@ impl LineParser for CsvParser {
         let mut map = serde_json::Map::new();
         for (header, value) in headers.iter().zip(values.iter()) {
             // Remove surrounding quotes if present, but preserve inner content
-            let cleaned_value = if value.starts_with('"') && value.ends_with('"') && value.len() > 1 {
-                value[1..value.len()-1].to_string()
+            let cleaned_value = if value.starts_with('"') && value.ends_with('"') && value.len() > 1
+            {
+                value[1..value.len() - 1].to_string()
             } else {
                 value.clone()
             };
@@ -133,11 +135,12 @@ pub struct InputFormatWrapper<'a> {
     format: Option<&'a InputFormat>,
 }
 
+// Remove the duplicate process_jsonl method - keep only this complete one
+
 impl<'a> InputFormatWrapper<'a> {
     pub fn new(format: Option<&'a InputFormat>) -> Self {
         Self { format }
     }
-
     pub fn process_with_pipeline<R: Read, W: Write>(
         &self,
         reader: R,
@@ -172,15 +175,21 @@ impl<'a> InputFormatWrapper<'a> {
         // Read all lines and parse them
         for line_result in reader.lines() {
             let line = line_result?;
+            let line_content = line.trim();
 
-            // Parse JSONL and store in context
-            if let Ok(data) = parser.parse_line(&line) {
-                crate::context::set_parsed_data(Some(data));
-            } else {
-                crate::context::clear_parsed_data();
+            if line_content.is_empty() {
+                continue;
             }
 
-            enhanced_lines.push(line);
+            // Parse JSONL and store in thread-local context
+            if let Ok(data) = parser.parse_line(&line_content) {
+                // Create a special marker that tells the processor
+                // this line contains JSON data
+                enhanced_lines.push(format!("__JSONL__{}", serde_json::to_string(&data)?));
+            } else {
+                // On parse error, pass through original line
+                enhanced_lines.push(line);
+            }
         }
 
         // Process enhanced lines through existing pipeline

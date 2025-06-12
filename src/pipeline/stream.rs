@@ -61,7 +61,6 @@ impl StreamPipeline {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
-    /// Process a single file/stream
     pub fn process_stream<R: BufRead, W: Write>(
         &mut self,
         input: R,
@@ -78,52 +77,59 @@ impl StreamPipeline {
         // Reset local stats for this file
         let mut file_stats = ProcessingStats::default();
 
-        // Reset processor state (not global variables)
-        for processor in &mut self.processors {
-            processor.reset();
-        }
-
-        // Process the file line by line
         for line_result in input.lines() {
-            let line = match line_result {
-                Ok(line) => line,
-                Err(e) => {
-                    // Handle broken pipe gracefully
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                        break;
-                    }
-                    return Err(ProcessingError::IoError(e));
-                }
-            };
+            let line = line_result.map_err(|e| ProcessingError::IoError(e))?;
 
             self.context.line_number += 1;
             self.context.record_count += 1;
             file_stats.records_processed += 1;
 
-            // Check line length
-            if line.len() > self.config.max_line_length {
-                let error = ProcessingError::LineTooLong {
-                    length: line.len(),
-                    max_length: self.config.max_line_length,
-                };
-                match self.config.error_strategy {
-                    ErrorStrategy::FailFast => return Err(error),
-                    ErrorStrategy::Skip => {
-                        file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!(
-                                "stelp: line {}: line too long, skipping",
-                                self.context.line_number
-                            );
-                        }
-                        continue;
-                    }
-                }
+            // Check for empty lines
+            let line_content = line.trim();
+            if line_content.is_empty() {
+                file_stats.records_skipped += 1;
+                continue;
             }
 
-            // Create initial record from line
-            let record = RecordData::text(line);
+            // Create the appropriate record type based on content
+            let record = if line.starts_with("__JSONL__") {
+                // Extract JSON data and create structured record
+                let json_str = &line[9..]; // Remove "__JSONL__" prefix
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(json_data) => RecordData::structured(json_data),
+                    Err(e) => {
+                        // JSON parse error - treat as error or skip based on strategy
+                        match self.config.error_strategy {
+                            ErrorStrategy::FailFast => {
+                                return Err(ProcessingError::ScriptError {
+                                    step: "json_parse".to_string(),
+                                    line: self.context.line_number,
+                                    source: anyhow::anyhow!(
+                                        "Invalid JSON on line {}: {}",
+                                        self.context.line_number,
+                                        e
+                                    ),
+                                });
+                            }
+                            ErrorStrategy::Skip => {
+                                file_stats.errors += 1;
+                                if self.config.debug {
+                                    eprintln!(
+                                        "stelp: line {}: JSON parse error: {}",
+                                        self.context.line_number, e
+                                    );
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Regular text record
+                RecordData::text(line)
+            };
 
+            // Process the record through the pipeline
             match self.process_record(&record)? {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.write_record(output, &output_record) {
@@ -170,7 +176,6 @@ impl StreamPipeline {
                     file_stats.records_skipped += 1;
                 }
                 ProcessResult::Exit(final_output) => {
-                    // Output the final record if provided
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -180,8 +185,7 @@ impl StreamPipeline {
                             file_stats.records_output += 1;
                         }
                     }
-                    // Stop processing
-                    break;
+                    break; // Stop processing
                 }
                 ProcessResult::Error(err) => match self.config.error_strategy {
                     ErrorStrategy::FailFast => return Err(err),
