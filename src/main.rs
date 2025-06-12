@@ -345,8 +345,12 @@ fn main() {
 
     // Ensure output is flushed
     if let Err(e) = output.flush() {
-        eprintln!("stelp: failed to flush output: {}", e);
-        std::process::exit(1);
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0); // Normal termination
+        } else {
+            eprintln!("stelp: failed to flush output: {}", e);
+            std::process::exit(1);
+        }
     }
 
     // Print final stats if debug mode
