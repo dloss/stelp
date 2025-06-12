@@ -135,8 +135,6 @@ pub struct InputFormatWrapper<'a> {
     format: Option<&'a InputFormat>,
 }
 
-// Remove the duplicate process_jsonl method - keep only this complete one
-
 impl<'a> InputFormatWrapper<'a> {
     pub fn new(format: Option<&'a InputFormat>) -> Self {
         Self { format }
@@ -185,15 +183,23 @@ impl<'a> InputFormatWrapper<'a> {
             if let Ok(data) = parser.parse_line(&line_content) {
                 // Create a special marker that tells the processor
                 // this line contains JSON data
-                enhanced_lines.push(format!("__JSONL__{}", serde_json::to_string(&data)?));
+
+                let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
+                enhanced_lines.push(enhanced_line);
             } else {
                 // On parse error, pass through original line
                 enhanced_lines.push(line);
             }
         }
 
-        // Process enhanced lines through existing pipeline
-        let enhanced_reader = std::io::Cursor::new(enhanced_lines.join("\n"));
+        // Process each enhanced line separately
+        let combined = if enhanced_lines.is_empty() {
+            String::new()
+        } else {
+            enhanced_lines.join("\n") + "\n"
+        };
+
+        let enhanced_reader = std::io::Cursor::new(combined);
         pipeline.process_stream_with_data(enhanced_reader, output, filename)
     }
 

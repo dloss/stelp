@@ -93,10 +93,12 @@ impl StreamPipeline {
 
             // Create the appropriate record type based on content
             let record = if line.starts_with("__JSONL__") {
-                // Extract JSON data and create structured record
+                                                                             // Extract JSON data and create structured record
                 let json_str = &line[9..]; // Remove "__JSONL__" prefix
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(json_data) => RecordData::structured(json_data),
+                    Ok(json_data) => {
+                        RecordData::structured(json_data)
+                    }
                     Err(e) => {
                         // JSON parse error - treat as error or skip based on strategy
                         match self.config.error_strategy {

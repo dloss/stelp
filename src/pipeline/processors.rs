@@ -445,24 +445,20 @@ fn json_to_starlark_value(
             Ok(heap.alloc(values?))
         }
         serde_json::Value::Object(obj) => {
-            let mut items = Vec::new();
+            use starlark::collections::SmallMap;
+            use starlark::values::dict::Dict;
+
+            let mut content = SmallMap::new();
             for (k, v) in obj {
-                let value_repr = match json_to_starlark_value(heap, v) {
-                    Ok(val) => {
-                        if val.is_none() {
-                            "None".to_string()
-                        } else if let Some(s) = val.unpack_str() {
-                            format!("\"{}\"", s)
-                        } else {
-                            val.to_string()
-                        }
-                    }
-                    Err(_) => "None".to_string(),
-                };
-                items.push(format!("\"{}\": {}", k, value_repr));
+                let key = heap.alloc(k);
+                let value = json_to_starlark_value(heap, v)?;
+                content.insert_hashed(
+                    key.get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                    value,
+                );
             }
-            let dict_str = format!("{{{}}}", items.join(", "));
-            Ok(heap.alloc(dict_str))
+            let dict = Dict::new(content);
+            Ok(heap.alloc(dict))
         }
     }
 }
