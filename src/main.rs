@@ -73,15 +73,18 @@ impl Args {
         let has_script_file = self.script_file.is_some();
         let has_evals = !self.evals.is_empty();
         let has_filters = !self.filters.is_empty();
+        let has_input_format = self.input_format.is_some();
+        let has_output_format = self.output_format != OutputFormat::default();
 
-        match (has_script_file, has_evals || has_filters) {
-            (true, true) => {
+        match (has_script_file, has_evals || has_filters, has_input_format || has_output_format) {
+            (true, true, _) => {
                 Err("Cannot use --script with --eval or --filter arguments".to_string())
             }
-            (true, false) => Ok(()), // Script file only
-            (false, true) => Ok(()), // Eval/filter arguments only
-            (false, false) => {
-                Err("Must provide either --script or --eval/--filter arguments".to_string())
+            (true, false, _) => Ok(()), // Script file only
+            (false, true, _) => Ok(()), // Eval/filter arguments only  
+            (false, false, true) => Ok(()), // Input/output format only - NEW: allow this case
+            (false, false, false) => {
+                Err("Must provide either --script, --eval/--filter arguments, or --input-format/--output-format".to_string())
             }
         }
     }

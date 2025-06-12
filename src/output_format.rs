@@ -1,6 +1,6 @@
 // src/output_format.rs
-use crate::pipeline::context::RecordData;
 use crate::error::ProcessingError;
+use crate::pipeline::context::RecordData;
 use serde_json::Value;
 use std::io::Write;
 
@@ -68,8 +68,9 @@ impl OutputFormatter {
             }
             RecordData::Structured(data) => {
                 // For structured records, output as JSON
-                let json_line = serde_json::to_string(data)
-                    .map_err(|e| ProcessingError::OutputError(format!("JSON encoding error: {}", e)))?;
+                let json_line = serde_json::to_string(data).map_err(|e| {
+                    ProcessingError::OutputError(format!("JSON encoding error: {}", e))
+                })?;
                 writeln!(output, "{}", json_line)?;
             }
         }
@@ -107,8 +108,9 @@ impl OutputFormatter {
                             Value::Number(n) => n.to_string(),
                             Value::Bool(b) => b.to_string(),
                             Value::Null => String::new(),
-                            other => serde_json::to_string(other)
-                                .unwrap_or_else(|_| "null".to_string()),
+                            other => {
+                                serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
+                            }
                         };
                         values.push(self.csv_escape(&value_str));
                     }
@@ -142,8 +144,9 @@ impl OutputFormatter {
                             Value::Number(n) => n.to_string(),
                             Value::Bool(b) => b.to_string(),
                             Value::Null => String::new(),
-                            other => serde_json::to_string(other)
-                                .unwrap_or_else(|_| "null".to_string()),
+                            other => {
+                                serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
+                            }
                         };
                         let key_clean = self.logfmt_escape_key(key);
                         let value_clean = self.logfmt_escape(&value_str);
