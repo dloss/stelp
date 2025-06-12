@@ -1,4 +1,5 @@
 use crate::input_format::InputFormat;
+use crate::output_format::OutputFormat;
 
 /// Configuration for pipeline behavior
 #[derive(Debug, Clone)]
@@ -9,6 +10,7 @@ pub struct PipelineConfig {
     pub max_line_length: usize,
     pub progress_interval: usize,
     pub input_format: Option<InputFormat>,
+    pub output_format: OutputFormat,
 }
 
 impl Default for PipelineConfig {
@@ -20,6 +22,7 @@ impl Default for PipelineConfig {
             max_line_length: 1048576, // 1MB
             progress_interval: 0,     // Disabled
             input_format: None,
+            output_format: OutputFormat::default(), // defaults to jsonl
         }
     }
 }

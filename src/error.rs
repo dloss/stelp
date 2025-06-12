@@ -1,43 +1,70 @@
-#[derive(Debug, thiserror::Error)]
+// src/error.rs
+use std::fmt;
+
+#[derive(Debug)]
 pub enum ProcessingError {
-    #[error("Script error in step '{step}' at line {line}: {source}")]
+    /// I/O related errors (file reading, writing, etc.)
+    IoError(std::io::Error),
+
+    /// Script compilation or execution errors
     ScriptError {
         step: String,
         line: usize,
-        #[source]
         source: anyhow::Error,
     },
 
-    #[error("Parse error in step '{step}': {message}")]
-    ParseError { step: String, message: String },
-
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-
-    #[error("Line too long: {length} > {max_length}")]
-    LineTooLong { length: usize, max_length: usize },
+    /// Output formatting errors
+    OutputError(String),
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CompilationError {
-    #[error("Starlark syntax error: {0}")]
-    SyntaxError(String),
-
-    #[error("File not found: {0}")]
-    FileNotFound(String),
-
-    #[error("Invalid configuration: {0}")]
-    ConfigError(String),
-}
-
-impl From<starlark::Error> for CompilationError {
-    fn from(err: starlark::Error) -> Self {
-        CompilationError::SyntaxError(format!("{}", err))
+impl fmt::Display for ProcessingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProcessingError::IoError(e) => write!(f, "I/O error: {}", e),
+            ProcessingError::ScriptError { step, line, source } => {
+                write!(f, "Script error in {}, line {}: {}", step, line, source)
+            }
+            ProcessingError::OutputError(msg) => write!(f, "Output error: {}", msg),
+        }
     }
 }
 
-impl From<std::io::Error> for CompilationError {
-    fn from(err: std::io::Error) -> Self {
-        CompilationError::FileNotFound(err.to_string())
+impl std::error::Error for ProcessingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ProcessingError::IoError(e) => Some(e),
+            ProcessingError::ScriptError { source, .. } => source.source(),
+            ProcessingError::OutputError(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ProcessingError {
+    fn from(e: std::io::Error) -> Self {
+        ProcessingError::IoError(e)
+    }
+}
+
+// Compilation error type for script validation
+#[derive(Debug)]
+pub enum CompilationError {
+    SyntaxError(starlark::Error),
+    ValidationError(String),
+}
+
+impl fmt::Display for CompilationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompilationError::SyntaxError(e) => write!(f, "Syntax error: {}", e),
+            CompilationError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CompilationError {}
+
+impl From<starlark::Error> for CompilationError {
+    fn from(e: starlark::Error) -> Self {
+        CompilationError::SyntaxError(e)
     }
 }

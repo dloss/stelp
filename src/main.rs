@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
+use stelp::output_format::OutputFormat;
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
 use stelp::StreamPipeline;
 
@@ -44,6 +45,15 @@ struct Args {
     /// Input format for structured parsing (jsonl, csv)
     #[arg(short = 'f', long = "input-format", value_enum)]
     input_format: Option<InputFormat>,
+
+    /// Output format (jsonl, csv, logfmt)
+    #[arg(
+        short = 'F',
+        long = "output-format",
+        value_enum,
+        default_value = "jsonl"
+    )]
+    output_format: OutputFormat,
 
     /// Output file (default: stdout)
     #[arg(short = 'o', long = "output")]
@@ -162,6 +172,7 @@ fn main() {
         },
         debug: args.debug,
         input_format: input_format.clone(),
+        output_format: args.output_format,
         ..Default::default()
     };
 

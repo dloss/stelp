@@ -1,4 +1,5 @@
 // src/pipeline/stream.rs
+use crate::output_format::OutputFormatter;
 use crate::variables::GlobalVariables;
 use std::io::{BufRead, Write};
 use std::time::Instant;
@@ -22,13 +23,16 @@ pub struct StreamPipeline {
     context: PipelineContext,
     config: PipelineConfig,
     stats: ProcessingStats,
+    output_formatter: OutputFormatter,
 }
 
 impl StreamPipeline {
     pub fn new(config: PipelineConfig) -> Self {
+        let output_formatter = OutputFormatter::new(config.output_format);
         StreamPipeline {
             processors: Vec::new(),
             context: PipelineContext::new(),
+            output_formatter,
             config,
             stats: ProcessingStats::default(),
         }
@@ -47,6 +51,7 @@ impl StreamPipeline {
         for processor in &mut self.processors {
             processor.reset();
         }
+        self.output_formatter.reset();
     }
 
     /// Enhanced process_stream that supports parsed data
@@ -93,12 +98,10 @@ impl StreamPipeline {
 
             // Create the appropriate record type based on content
             let record = if line.starts_with("__JSONL__") {
-                                                                             // Extract JSON data and create structured record
+                // Extract JSON data and create structured record
                 let json_str = &line[9..]; // Remove "__JSONL__" prefix
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(json_data) => {
-                        RecordData::structured(json_data)
-                    }
+                    Ok(json_data) => RecordData::structured(json_data),
                     Err(e) => {
                         // JSON parse error - treat as error or skip based on strategy
                         match self.config.error_strategy {
@@ -134,7 +137,7 @@ impl StreamPipeline {
             // Process the record through the pipeline
             match self.process_record(&record)? {
                 ProcessResult::Transform(output_record) => {
-                    if let Err(e) = self.write_record(output, &output_record) {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                         // Handle broken pipe gracefully
                         if e.to_string().contains("Broken pipe") {
                             break;
@@ -145,7 +148,7 @@ impl StreamPipeline {
                 }
                 ProcessResult::FanOut(output_records) => {
                     for output_record in output_records {
-                        if let Err(e) = self.write_record(output, &output_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if e.to_string().contains("Broken pipe") {
                                 break;
                             }
@@ -156,7 +159,7 @@ impl StreamPipeline {
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(output_record) = primary {
-                        if let Err(e) = self.write_record(output, &output_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if e.to_string().contains("Broken pipe") {
                                 break;
                             }
@@ -165,7 +168,7 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                     for emission in emissions {
-                        if let Err(e) = self.write_record(output, &emission) {
+                        if let Err(e) = self.output_formatter.write_record(output, &emission) {
                             if e.to_string().contains("Broken pipe") {
                                 break;
                             }
@@ -179,7 +182,7 @@ impl StreamPipeline {
                 }
                 ProcessResult::Exit(final_output) => {
                     if let Some(output_record) = final_output {
-                        if let Err(e) = self.write_record(output, &output_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e);
                             }
@@ -251,27 +254,6 @@ impl StreamPipeline {
         Ok(ProcessResult::Transform(current_record))
     }
 
-    fn write_record<W: Write>(
-        &self,
-        output: &mut W,
-        record: &RecordData,
-    ) -> Result<(), ProcessingError> {
-        match record {
-            RecordData::Text(text) => {
-                writeln!(output, "{}", text)?;
-            }
-            RecordData::Structured(data) => {
-                // For now, write structured data as JSON
-                writeln!(
-                    output,
-                    "{}",
-                    serde_json::to_string(data).unwrap_or_else(|_| "null".to_string())
-                )?;
-            }
-        }
-        Ok(())
-    }
-
     /// Get current accumulated stats
     pub fn get_stats(&self) -> &ProcessingStats {
         &self.stats
@@ -289,6 +271,7 @@ impl StreamPipeline {
             processor.reset();
         }
 
+        self.output_formatter.reset();
         self.stats = ProcessingStats::default();
     }
 }
