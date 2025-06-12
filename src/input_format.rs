@@ -203,7 +203,7 @@ impl<'a> InputFormatWrapper<'a> {
         pipeline.process_stream_with_data(enhanced_reader, output, filename)
     }
 
-    fn process_csv<R: BufRead, W: Write>(
+fn process_csv<R: BufRead, W: Write>(
         &self,
         mut reader: R,
         pipeline: &mut crate::StreamPipeline,
@@ -226,19 +226,32 @@ impl<'a> InputFormatWrapper<'a> {
         // Read and parse remaining lines
         for line_result in reader.lines() {
             let line = line_result?;
+            let line_content = line.trim();
 
-            // Parse CSV and store in context
-            if let Ok(data) = parser.parse_line(&line) {
-                crate::context::set_parsed_data(Some(data));
-            } else {
-                crate::context::clear_parsed_data();
+            if line_content.is_empty() {
+                continue;
             }
 
-            enhanced_lines.push(line);
+            // Parse CSV and create structured record similar to JSONL
+            if let Ok(data) = parser.parse_line(&line) {
+                // Create a special marker that tells the processor
+                // this line contains structured data
+                let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
+                enhanced_lines.push(enhanced_line);
+            } else {
+                // On parse error, pass through original line
+                enhanced_lines.push(line);
+            }
         }
 
-        // Process through existing pipeline
-        let enhanced_reader = std::io::Cursor::new(enhanced_lines.join("\n"));
+        // Process each enhanced line separately
+        let combined = if enhanced_lines.is_empty() {
+            String::new()
+        } else {
+            enhanced_lines.join("\n") + "\n"
+        };
+
+        let enhanced_reader = std::io::Cursor::new(combined);
         pipeline.process_stream_with_data(enhanced_reader, output, filename)
     }
 }
