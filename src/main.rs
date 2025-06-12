@@ -47,13 +47,8 @@ struct Args {
     input_format: Option<InputFormat>,
 
     /// Output format (jsonl, csv, logfmt)
-    #[arg(
-        short = 'F',
-        long = "output-format",
-        value_enum,
-        default_value = "jsonl"
-    )]
-    output_format: OutputFormat,
+    #[arg(short = 'F', long = "output-format", value_enum)]
+    output_format: Option<OutputFormat>,
 
     /// Output file (default: stdout)
     #[arg(short = 'o', long = "output")]
@@ -74,7 +69,7 @@ impl Args {
         let has_evals = !self.evals.is_empty();
         let has_filters = !self.filters.is_empty();
         let has_input_format = self.input_format.is_some();
-        let has_output_format = self.output_format != OutputFormat::default();
+        let has_output_format = self.output_format.is_some();
 
         match (has_script_file, has_evals || has_filters, has_input_format || has_output_format) {
             (true, true, _) => {
@@ -166,7 +161,19 @@ fn main() {
     // Extract input format before creating config
     let input_format = args.input_format.clone();
 
-    // Create pipeline configuration
+    // Build configuration with smart output format defaulting
+    let output_format = match args.output_format {
+        Some(format) => format, // User explicitly specified output format
+        None => {
+            // Default output format based on input format
+            match args.input_format {
+                Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
+                Some(InputFormat::Csv) => OutputFormat::Csv,
+                None => OutputFormat::Jsonl, // Default when no input format
+            }
+        }
+    };
+
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
             ErrorStrategy::FailFast
@@ -174,8 +181,8 @@ fn main() {
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        input_format: input_format.clone(),
-        output_format: args.output_format,
+        input_format: args.input_format,
+        output_format, // Use the determined format
         ..Default::default()
     };
 
