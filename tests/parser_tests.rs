@@ -1,6 +1,6 @@
 // tests/parser_tests.rs - Unit tests for format parsers
 
-use stelp::input_format::{CsvParser, JsonlParser, LineParser};
+use stelp::input_format::{CsvParser, JsonlParser, LogfmtParser, LineParser};
 
 #[test]
 fn test_jsonl_parser_valid() {
@@ -138,4 +138,94 @@ fn test_csv_parser_whitespace_handling() {
     assert_eq!(data["timestamp"], "2024-01-15T10:00:00Z");
     assert_eq!(data["level"], "ERROR");
     assert_eq!(data["message"], "Database failed");
+}
+
+// Add to tests/parser_tests.rs
+
+#[test]
+fn test_logfmt_parser_basic() {
+    let parser = LogfmtParser::new();
+    let line = r#"level=ERROR message="Database failed" timestamp=2024-01-15T10:00:00Z"#;
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["level"], "ERROR");
+    assert_eq!(data["message"], "Database failed");
+    assert_eq!(data["timestamp"], "2024-01-15T10:00:00Z");
+}
+
+#[test]
+fn test_logfmt_parser_quoted_values() {
+    let parser = LogfmtParser::new();
+    let line = r#"name=web01 message="Connection failed, retrying" status=ERROR"#;
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["name"], "web01");
+    assert_eq!(data["message"], "Connection failed, retrying");
+    assert_eq!(data["status"], "ERROR");
+}
+
+#[test]
+fn test_logfmt_parser_escaped_quotes() {
+    let parser = LogfmtParser::new();
+    let line = r#"message="User said \"Hello world\"" status=OK"#;
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["message"], r#"User said "Hello world""#);
+    assert_eq!(data["status"], "OK");
+}
+
+#[test]
+fn test_logfmt_parser_empty_values() {
+    let parser = LogfmtParser::new();
+    let line = r#"key1= key2="" key3=value"#;
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["key1"], "");
+    assert_eq!(data["key2"], "");
+    assert_eq!(data["key3"], "value");
+}
+
+#[test]
+fn test_logfmt_parser_single_pair() {
+    let parser = LogfmtParser::new();
+    let line = "level=INFO";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["level"], "INFO");
+}
+
+#[test]
+fn test_logfmt_parser_invalid_format() {
+    let parser = LogfmtParser::new();
+    let line = "invalid format without equals";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_logfmt_parser_empty_line() {
+    let parser = LogfmtParser::new();
+    let line = "";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert!(data.as_object().unwrap().is_empty());
 }

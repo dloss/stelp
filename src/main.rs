@@ -169,6 +169,7 @@ fn main() {
             match args.input_format {
                 Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
                 Some(InputFormat::Csv) => OutputFormat::Csv,
+                Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
                 None => OutputFormat::Jsonl, // Default when no input format
             }
         }

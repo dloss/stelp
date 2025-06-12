@@ -9,6 +9,8 @@ pub enum InputFormat {
     Jsonl,
     #[value(name = "csv")]
     Csv,
+    #[value(name = "logfmt")]
+    Logfmt,
 }
 
 pub trait LineParser {
@@ -130,6 +132,113 @@ impl LineParser for CsvParser {
     }
 }
 
+pub struct LogfmtParser;
+
+impl LogfmtParser {
+    pub fn new() -> Self {
+        Self
+    }
+
+    // Parse logfmt line: key1=value1 key2="value with spaces" key3=value3
+    fn parse_logfmt_pairs(&self, line: &str) -> Result<Vec<(String, String)>, String> {
+        let mut pairs = Vec::new();
+        let mut chars = line.chars().peekable();
+
+        while chars.peek().is_some() {
+            // Skip whitespace
+            while chars.peek() == Some(&' ') || chars.peek() == Some(&'\t') {
+                chars.next();
+            }
+
+            if chars.peek().is_none() {
+                break;
+            }
+
+            // Parse key
+            let mut key = String::new();
+            while let Some(&ch) = chars.peek() {
+                if ch == '=' {
+                    break;
+                } else if ch == ' ' || ch == '\t' {
+                    return Err("Key cannot contain spaces".to_string());
+                } else {
+                    key.push(chars.next().unwrap());
+                }
+            }
+
+            if key.is_empty() {
+                return Err("Empty key found".to_string());
+            }
+
+            // Expect '='
+            if chars.next() != Some('=') {
+                return Err(format!("Expected '=' after key '{}'", key));
+            }
+
+            // Parse value
+            let mut value = String::new();
+            if chars.peek() == Some(&'"') {
+                // Quoted value
+                chars.next(); // consume opening quote
+                while let Some(ch) = chars.next() {
+                    if ch == '"' {
+                        // Check for escaped quote
+                        if chars.peek() == Some(&'"') {
+                            chars.next(); // consume escaped quote
+                            value.push('"');
+                        } else {
+                            break; // end of quoted value
+                        }
+                    } else if ch == '\\' {
+                        // Handle escape sequences
+                        if let Some(escaped_ch) = chars.next() {
+                            match escaped_ch {
+                                'n' => value.push('\n'),
+                                't' => value.push('\t'),
+                                'r' => value.push('\r'),
+                                '\\' => value.push('\\'),
+                                '"' => value.push('"'),
+                                _ => {
+                                    value.push('\\');
+                                    value.push(escaped_ch);
+                                }
+                            }
+                        }
+                    } else {
+                        value.push(ch);
+                    }
+                }
+            } else {
+                // Unquoted value - read until space or end
+                while let Some(&ch) = chars.peek() {
+                    if ch == ' ' || ch == '\t' {
+                        break;
+                    } else {
+                        value.push(chars.next().unwrap());
+                    }
+                }
+            }
+
+            pairs.push((key, value));
+        }
+
+        Ok(pairs)
+    }
+}
+
+impl LineParser for LogfmtParser {
+    fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
+        let pairs = self.parse_logfmt_pairs(line.trim())?;
+
+        let mut map = serde_json::Map::new();
+        for (key, value) in pairs {
+            map.insert(key, serde_json::Value::String(value));
+        }
+
+        Ok(serde_json::Value::Object(map))
+    }
+}
+
 /// Wrapper that integrates input format parsing with existing StreamPipeline
 pub struct InputFormatWrapper<'a> {
     format: Option<&'a InputFormat>,
@@ -152,6 +261,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
             Some(InputFormat::Csv) => {
                 self.process_csv(BufReader::new(reader), pipeline, output, filename)
+            }
+            Some(InputFormat::Logfmt) => {
+                self.process_logfmt(BufReader::new(reader), pipeline, output, filename)
             }
             None => {
                 // Raw text - use existing pipeline unchanged
@@ -203,7 +315,7 @@ impl<'a> InputFormatWrapper<'a> {
         pipeline.process_stream_with_data(enhanced_reader, output, filename)
     }
 
-fn process_csv<R: BufRead, W: Write>(
+    fn process_csv<R: BufRead, W: Write>(
         &self,
         mut reader: R,
         pipeline: &mut crate::StreamPipeline,
@@ -234,6 +346,48 @@ fn process_csv<R: BufRead, W: Write>(
 
             // Parse CSV and create structured record similar to JSONL
             if let Ok(data) = parser.parse_line(&line) {
+                // Create a special marker that tells the processor
+                // this line contains structured data
+                let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
+                enhanced_lines.push(enhanced_line);
+            } else {
+                // On parse error, pass through original line
+                enhanced_lines.push(line);
+            }
+        }
+
+        // Process each enhanced line separately
+        let combined = if enhanced_lines.is_empty() {
+            String::new()
+        } else {
+            enhanced_lines.join("\n") + "\n"
+        };
+
+        let enhanced_reader = std::io::Cursor::new(combined);
+        pipeline.process_stream_with_data(enhanced_reader, output, filename)
+    }
+
+    fn process_logfmt<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let parser = LogfmtParser::new();
+        let mut enhanced_lines = Vec::new();
+
+        // Read all lines and parse them
+        for line_result in reader.lines() {
+            let line = line_result?;
+            let line_content = line.trim();
+
+            if line_content.is_empty() {
+                continue;
+            }
+
+            // Parse logfmt and create structured record
+            if let Ok(data) = parser.parse_line(&line_content) {
                 // Create a special marker that tells the processor
                 // this line contains structured data
                 let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
