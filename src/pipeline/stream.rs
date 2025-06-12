@@ -28,7 +28,7 @@ pub struct StreamPipeline {
 
 impl StreamPipeline {
     pub fn new(config: PipelineConfig) -> Self {
-        let output_formatter = OutputFormatter::new(config.output_format);
+        let output_formatter = OutputFormatter::new(config.output_format, config.keys.clone());
         StreamPipeline {
             processors: Vec::new(),
             context: PipelineContext::new(),

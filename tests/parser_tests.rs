@@ -1,6 +1,6 @@
 // tests/parser_tests.rs - Unit tests for format parsers
 
-use stelp::input_format::{CsvParser, JsonlParser, LogfmtParser, LineParser};
+use stelp::input_format::{CsvParser, JsonlParser, LineParser, LogfmtParser};
 
 #[test]
 fn test_jsonl_parser_valid() {

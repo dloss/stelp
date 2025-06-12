@@ -11,6 +11,7 @@ pub struct PipelineConfig {
     pub progress_interval: usize,
     pub input_format: Option<InputFormat>,
     pub output_format: OutputFormat,
+    pub keys: Option<Vec<String>>,
 }
 
 impl Default for PipelineConfig {
@@ -23,6 +24,7 @@ impl Default for PipelineConfig {
             progress_interval: 0,     // Disabled
             input_format: None,
             output_format: OutputFormat::default(), // defaults to jsonl
+            keys: None,
         }
     }
 }

@@ -1,4 +1,3 @@
-// src/output_format.rs
 use crate::error::ProcessingError;
 use crate::pipeline::context::RecordData;
 use serde_json::Value;
@@ -32,15 +31,32 @@ impl Default for OutputFormat {
 
 pub struct OutputFormatter {
     format: OutputFormat,
+    keys: Option<Vec<String>>,
     csv_headers_written: bool,
 }
 
 impl OutputFormatter {
-    pub fn new(format: OutputFormat) -> Self {
+    pub fn new(format: OutputFormat, keys: Option<Vec<String>>) -> Self {
         OutputFormatter {
             format,
             csv_headers_written: false,
+            keys,
         }
+    }
+
+    fn filter_keys(&self, data: &serde_json::Value) -> serde_json::Value {
+        if let Some(ref key_list) = self.keys {
+            if let serde_json::Value::Object(obj) = data {
+                let mut filtered = serde_json::Map::new();
+                for key in key_list {
+                    if let Some(value) = obj.get(key) {
+                        filtered.insert(key.clone(), value.clone());
+                    }
+                }
+                return serde_json::Value::Object(filtered);
+            }
+        }
+        data.clone()
     }
 
     pub fn write_record<W: Write>(
@@ -67,8 +83,8 @@ impl OutputFormatter {
                 writeln!(output, "{}", text)?;
             }
             RecordData::Structured(data) => {
-                // For structured records, output as JSON
-                let json_line = serde_json::to_string(data).map_err(|e| {
+                let data = self.filter_keys(data);
+                let json_line = serde_json::to_string(&data).map_err(|e| {
                     ProcessingError::OutputError(format!("JSON encoding error: {}", e))
                 })?;
                 writeln!(output, "{}", json_line)?;
@@ -92,7 +108,8 @@ impl OutputFormatter {
                 writeln!(output, "{}", self.csv_escape(text))?;
             }
             RecordData::Structured(data) => {
-                if let Value::Object(obj) = data {
+                let data = self.filter_keys(data);
+                if let serde_json::Value::Object(obj) = data {
                     // Write headers if not written yet
                     if !self.csv_headers_written {
                         let headers: Vec<String> = obj.keys().cloned().collect();
@@ -104,13 +121,13 @@ impl OutputFormatter {
                     let mut values = Vec::new();
                     for key in obj.keys() {
                         let value_str = match &obj[key] {
-                            Value::String(s) => s.clone(),
-                            Value::Number(n) => n.to_string(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Null => String::new(),
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Null => String::new(),
                             other => {
                                 serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
-                            }
+                            } // Handle the Result
                         };
                         values.push(self.csv_escape(&value_str));
                     }
@@ -136,17 +153,19 @@ impl OutputFormatter {
                 writeln!(output, "text={}", self.logfmt_escape(text))?;
             }
             RecordData::Structured(data) => {
+                let data = self.filter_keys(data);
                 if let Value::Object(obj) = data {
                     let mut pairs = Vec::new();
-                    for (key, value) in obj {
+                    for (key, value) in &obj {
+                        // Add & here to iterate by reference
                         let value_str = match value {
-                            Value::String(s) => s.clone(),
-                            Value::Number(n) => n.to_string(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Null => String::new(),
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Null => String::new(),
                             other => {
                                 serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
-                            }
+                            } // Handle the Result
                         };
                         let key_clean = self.logfmt_escape_key(key);
                         let value_clean = self.logfmt_escape(&value_str);

@@ -50,6 +50,10 @@ struct Args {
     #[arg(short = 'F', long = "output-format", value_enum)]
     output_format: Option<OutputFormat>,
 
+    /// Restrict output to specific keys from structured data (comma-separated)
+    #[arg(short = 'k', long = "keys")]
+    keys: Option<String>,
+
     /// Output file (default: stdout)
     #[arg(short = 'o', long = "output")]
     output_file: Option<PathBuf>,
@@ -175,6 +179,13 @@ fn main() {
         }
     };
 
+    let keys = args.keys.map(|k| {
+        k.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+    });
+
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
             ErrorStrategy::FailFast
@@ -184,6 +195,7 @@ fn main() {
         debug: args.debug,
         input_format: args.input_format,
         output_format, // Use the determined format
+        keys,
         ..Default::default()
     };
 
