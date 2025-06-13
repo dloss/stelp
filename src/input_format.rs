@@ -15,8 +15,8 @@ pub enum InputFormat {
     Logfmt,
     #[value(name = "syslog")]
     Syslog,
-    #[value(name = "weblog")]
-    Weblog,
+    #[value(name = "combined")]
+    Combined,
 }
 
 pub trait LineParser {
@@ -353,12 +353,12 @@ impl LineParser for SyslogParser {
     }
 }
 
-pub struct WeblogParser {
+pub struct CombinedParser {
     combined_regex: Regex,
     common_regex: Regex,
 }
 
-impl WeblogParser {
+impl CombinedParser {
     pub fn new() -> Self {
         // Combined Log Format: IP - user [timestamp] "request" status size "referer" "user_agent"
         let combined_regex = Regex::new(
@@ -399,7 +399,7 @@ impl WeblogParser {
     }
 }
 
-impl LineParser for WeblogParser {
+impl LineParser for CombinedParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let line = line.trim();
         
@@ -567,8 +567,8 @@ impl<'a> InputFormatWrapper<'a> {
             Some(InputFormat::Syslog) => {
                 self.process_syslog(BufReader::new(reader), pipeline, output, filename)
             }
-            Some(InputFormat::Weblog) => {
-                self.process_weblog(BufReader::new(reader), pipeline, output, filename)
+            Some(InputFormat::Combined) => {
+                self.process_combined(BufReader::new(reader), pipeline, output, filename)
             }
             None => {
                 // Raw text - apply chunking if configured
@@ -864,14 +864,14 @@ impl<'a> InputFormatWrapper<'a> {
         Ok(result)
     }
 
-    fn process_weblog<R: BufRead, W: Write>(
+    fn process_combined<R: BufRead, W: Write>(
         &self,
         reader: R,
         pipeline: &mut crate::StreamPipeline,
         output: &mut W,
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
-        let parser = WeblogParser::new();
+        let parser = CombinedParser::new();
         let mut records = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 0;
@@ -887,7 +887,7 @@ impl<'a> InputFormatWrapper<'a> {
                 continue;
             }
 
-            // Parse weblog and create structured record
+            // Parse combined log and create structured record
             match parser.parse_line(&line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
@@ -897,7 +897,7 @@ impl<'a> InputFormatWrapper<'a> {
                     match config.error_strategy {
                         crate::config::ErrorStrategy::FailFast => {
                             return Err(format!(
-                                "weblog parse error on line {}: {}",
+                                "combined log parse error on line {}: {}",
                                 line_number, parse_error
                             )
                             .into());
@@ -924,7 +924,7 @@ impl<'a> InputFormatWrapper<'a> {
         for parse_error in parse_errors {
             result.parse_errors.push(crate::context::ParseErrorInfo {
                 line_number: parse_error.line_number,
-                format_name: "weblog".to_string(),
+                format_name: "combined".to_string(),
                 error: parse_error.error,
             });
         }

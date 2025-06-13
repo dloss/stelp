@@ -719,15 +719,15 @@ fn test_syslog_invalid_format_error_handling() {
 }
 
 #[test]
-fn test_weblog_combined_format_parsing() {
+fn test_combined_log_format_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
     
     let config = stelp::config::PipelineConfig::default();
     let mut pipeline = stelp::StreamPipeline::new(config);
 
-    // Script to extract key weblog fields
+    // Script to extract key combined log fields
     let processor = StarlarkProcessor::from_script(
-        "weblog_test",
+        "combined_test",
         r#"
 ip = data["ip"]
 method = data["method"]
@@ -746,7 +746,7 @@ f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={ua}"
 "#);
     let mut output = Vec::new();
 
-    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
     let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
 
     assert_eq!(stats.records_processed, 1);
@@ -758,7 +758,7 @@ f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={ua}"
 }
 
 #[test]
-fn test_weblog_common_format_parsing() {
+fn test_combined_common_format_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
     
     let config = stelp::config::PipelineConfig::default();
@@ -766,7 +766,7 @@ fn test_weblog_common_format_parsing() {
 
     // Script to check for optional fields
     let processor = StarlarkProcessor::from_script(
-        "weblog_test",
+        "combined_test",
         r#"
 ip = data["ip"]
 method = data["method"]
@@ -786,7 +786,7 @@ f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={has_ua} REF={has_refer
 "#);
     let mut output = Vec::new();
 
-    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
     let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
 
     assert_eq!(stats.records_processed, 1);
@@ -798,7 +798,7 @@ f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={has_ua} REF={has_refer
 }
 
 #[test]
-fn test_weblog_request_parsing() {
+fn test_combined_request_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
     
     let config = stelp::config::PipelineConfig::default();
@@ -806,7 +806,7 @@ fn test_weblog_request_parsing() {
 
     // Test request field parsing into method/path/protocol
     let processor = StarlarkProcessor::from_script(
-        "weblog_test",
+        "combined_test",
         r#"
 req = data["req"]
 method = data.get("method", "none")
@@ -825,7 +825,7 @@ f"REQ=[{req}] METHOD={method} PATH={path} PROTO={proto}"
 "#);
     let mut output = Vec::new();
 
-    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
     let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
 
     assert_eq!(stats.records_processed, 3);
@@ -840,7 +840,7 @@ f"REQ=[{req}] METHOD={method} PATH={path} PROTO={proto}"
 }
 
 #[test]
-fn test_weblog_status_filtering() {
+fn test_combined_status_filtering() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
     
     let config = stelp::config::PipelineConfig::default();
@@ -851,7 +851,7 @@ fn test_weblog_status_filtering() {
     pipeline.add_processor(Box::new(filter));
 
     let processor = StarlarkProcessor::from_script(
-        "weblog_test",
+        "combined_test",
         r#"
 ip = data["ip"]
 method = data["method"]
@@ -869,7 +869,7 @@ f"{status} {method} {path} from {ip}"
 "#);
     let mut output = Vec::new();
 
-    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
     let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
 
     assert_eq!(stats.records_processed, 4);
@@ -883,7 +883,7 @@ f"{status} {method} {path} from {ip}"
 }
 
 #[test]
-fn test_weblog_invalid_format_error_handling() {
+fn test_combined_invalid_format_error_handling() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
     
     let config = stelp::config::PipelineConfig::default();
@@ -893,11 +893,11 @@ fn test_weblog_invalid_format_error_handling() {
     let processor = StarlarkProcessor::from_script("test", r#"data["ip"]"#).unwrap();
     pipeline.add_processor(Box::new(processor));
 
-    // Invalid weblog format lines
-    let input = std::io::Cursor::new("This is not a valid weblog entry\nNor is this line\n");
+    // Invalid combined log format lines
+    let input = std::io::Cursor::new("This is not a valid combined log entry\nNor is this line\n");
     let mut output = Vec::new();
 
-    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
     let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
 
     // Should skip invalid lines according to default error strategy
@@ -905,5 +905,5 @@ fn test_weblog_invalid_format_error_handling() {
     assert_eq!(stats.records_output, 0);
     assert_eq!(stats.errors, 2); // Two parse errors
     assert_eq!(stats.parse_errors.len(), 2);
-    assert_eq!(stats.parse_errors[0].format_name, "weblog");
+    assert_eq!(stats.parse_errors[0].format_name, "combined");
 }
