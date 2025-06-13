@@ -61,6 +61,12 @@ len(line) > 10                  # Filter condition
 f"Processed: {line}"            # Format output
 ```
 
+**Note**: Lists and other complex data structures output as their string representation. Use `emit_all()` to output each item as a separate line:
+```python
+[line + "1", line + "2"]        # Outputs: [hello1, hello2]
+emit_all([line + "1", line + "2"])  # Outputs: hello1, hello2 (separate lines)
+```
+
 ### Pipeline Stages
 Commands execute in the order specified:
 ```bash
@@ -105,6 +111,7 @@ f"User: {user} has {item_count} items"
 
 ```python
 emit("message")           # Output additional line (continues processing)
+emit_all([list])         # Output each item in a list as separate lines
 skip()                    # Skip current line (no output)
 exit("reason")           # Stop processing with message
 inc("counter")           # Increment counter, returns new value
@@ -185,6 +192,19 @@ if "ERROR" in line:
     emit(f"🚨 Error #{error_count}: {line}")
 f"[{count}] {line}"
 ' server.log
+```
+
+### Fan-out Processing
+```bash
+# Split lines into multiple outputs using emit_all()
+echo -e "user:alice,bob\nuser:charlie,dave" | stelp -e '
+users = line.split(":")[1].split(",")
+emit_all(users)  # Returns None, so original line is skipped automatically
+'
+# → alice
+# → bob
+# → charlie
+# → dave
 ```
 
 ### JSON Processing
