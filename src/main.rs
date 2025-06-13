@@ -43,6 +43,14 @@ struct Args {
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
 
+    /// BEGIN expression - Run before processing any input lines
+    #[arg(long = "begin")]
+    begin: Option<String>,
+
+    /// END expression - Run after processing all input lines
+    #[arg(long = "end")]
+    end: Option<String>,
+
     /// Input format for structured parsing (jsonl, csv)
     #[arg(short = 'f', long = "input-format", value_enum)]
     input_format: Option<InputFormat>,
@@ -93,6 +101,7 @@ impl Args {
         let has_script_file = self.script_file.is_some();
         let has_evals = !self.evals.is_empty();
         let has_filters = !self.filters.is_empty();
+        let has_begin_end = self.begin.is_some() || self.end.is_some();
         let has_input_format = self.input_format.is_some();
         let has_output_format = self.output_format.is_some();
         let has_chunking = self.chunk_lines.is_some() || 
@@ -110,15 +119,15 @@ impl Args {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
-        match (has_script_file, has_evals || has_filters, has_input_format || has_output_format || has_chunking) {
+        match (has_script_file, has_evals || has_filters || has_begin_end, has_input_format || has_output_format || has_chunking) {
             (true, true, _) => {
-                Err("Cannot use --script with --eval or --filter arguments".to_string())
+                Err("Cannot use --script with --eval, --filter, --begin, or --end arguments".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
-            (false, true, _) => Ok(()), // Eval/filter arguments only  
+            (false, true, _) => Ok(()), // Eval/filter/begin/end arguments only  
             (false, false, true) => Ok(()), // Input/output format or chunking only
             (false, false, false) => {
-                Err("Must provide either --script, --eval/--filter arguments, or --input-format/--output-format/chunking options".to_string())
+                Err("Must provide either --script, --eval/--filter/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
             }
         }
     }
@@ -334,6 +343,34 @@ fn main() {
                 pipeline.add_processor(Box::new(processor));
             }
         }
+    }
+
+    // Add BEGIN processor if specified
+    if let Some(begin_expr) = &args.begin {
+        let final_script = build_final_script(&args.includes, begin_expr).unwrap_or_else(|e| {
+            eprintln!("stelp: {}", e);
+            std::process::exit(1);
+        });
+        let processor = StarlarkProcessor::from_script("BEGIN", &final_script)
+            .unwrap_or_else(|e| {
+                eprintln!("stelp: failed to compile BEGIN expression: {}", e);
+                std::process::exit(1);
+            });
+        pipeline.set_begin_processor(Box::new(processor));
+    }
+
+    // Add END processor if specified
+    if let Some(end_expr) = &args.end {
+        let final_script = build_final_script(&args.includes, end_expr).unwrap_or_else(|e| {
+            eprintln!("stelp: {}", e);
+            std::process::exit(1);
+        });
+        let processor = StarlarkProcessor::from_script("END", &final_script)
+            .unwrap_or_else(|e| {
+                eprintln!("stelp: failed to compile END expression: {}", e);
+                std::process::exit(1);
+            });
+        pipeline.set_end_processor(Box::new(processor));
     }
 
     // Set up output

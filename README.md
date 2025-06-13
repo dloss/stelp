@@ -43,6 +43,8 @@ Options:
       --filter <EXPRESSION>   Filter expressions (only keep lines where true)
   -s, --script <FILE>         Script file containing pipeline definition
   -I, --include <FILE>        Include Starlark files (processed in order)
+      --begin <EXPRESSION>    Expression to run before processing any input
+      --end <EXPRESSION>      Expression to run after processing all input
   -f, --input-format <FORMAT> Input format for structured parsing (jsonl, csv, logfmt)
   -F, --output-format <FORMAT> Output format (jsonl, csv, logfmt)
   -k, --keys <KEYS>           Specify output columns for structured data (comma-separated)
@@ -205,6 +207,28 @@ emit_all(users)  # Returns None, so original line is skipped automatically
 # → bob
 # → charlie
 # → dave
+```
+
+### BEGIN/END Processing
+Like AWK, stelp supports BEGIN and END blocks that run before and after input processing:
+
+```bash
+# Add headers and footers
+echo -e "apple\nbanana\ncherry" | stelp \
+  --begin '"=== FRUIT REPORT ==="' \
+  --end '"=== END REPORT ==="' \
+  -e 'line.upper()'
+# → === FRUIT REPORT ===
+# → APPLE
+# → BANANA  
+# → CHERRY
+# → === END REPORT ===
+
+# Early termination from BEGIN
+echo -e "a\nb\nc" | stelp \
+  --begin 'exit("No processing needed")' \
+  -e 'line.upper()'
+# → No processing needed
 ```
 
 ### JSON Processing

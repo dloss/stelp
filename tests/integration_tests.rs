@@ -418,3 +418,122 @@ fn test_emit_all_function() {
     assert_eq!(stats.records_skipped, 0); // emit() + skip() counts as fan-out, not skip
     assert_eq!(output_str, "\"x0\"\n\"x1\"\n\"y0\"\n\"y1\"\n");
 }
+
+#[test]
+fn test_begin_end_basic() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Set up BEGIN processor
+    let begin_processor = StarlarkProcessor::from_script("BEGIN", "\"=== HEADER ===\"").unwrap();
+    pipeline.set_begin_processor(Box::new(begin_processor));
+
+    // Set up main processor  
+    let main_processor = StarlarkProcessor::from_script("main", "line.upper()").unwrap();
+    pipeline.add_processor(Box::new(main_processor));
+
+    // Set up END processor
+    let end_processor = StarlarkProcessor::from_script("END", "\"=== FOOTER ===\"").unwrap();
+    pipeline.set_end_processor(Box::new(end_processor));
+
+    let input = Cursor::new("hello\nworld\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    assert_eq!(stats.records_processed, 2);
+    assert_eq!(stats.records_output, 4); // 2 input + BEGIN + END
+    assert_eq!(output_str, "=== HEADER ===\nHELLO\nWORLD\n=== FOOTER ===\n");
+}
+
+#[test]
+fn test_begin_end_with_global_state() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // BEGIN: Initialize counter
+    let begin_processor = StarlarkProcessor::from_script("BEGIN", "glob['count'] = 0").unwrap();
+    pipeline.set_begin_processor(Box::new(begin_processor));
+
+    // Main: Count and transform
+    let main_processor = StarlarkProcessor::from_script("main", 
+        "glob['count'] = glob.get('count', 0) + 1; line.upper()").unwrap();
+    pipeline.add_processor(Box::new(main_processor));
+
+    // END: Output total count
+    let end_processor = StarlarkProcessor::from_script("END", 
+        "count = glob.get('count', 0); f'Total: {count}'").unwrap();
+    pipeline.set_end_processor(Box::new(end_processor));
+
+    let input = Cursor::new("a\nb\nc\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    assert_eq!(stats.records_processed, 3);
+    assert_eq!(stats.records_output, 4); // 3 input + END output
+    assert_eq!(output_str, "A\nB\nC\nTotal: 3\n");
+}
+
+#[test]
+fn test_begin_early_exit() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // BEGIN with early exit
+    let begin_processor = StarlarkProcessor::from_script("BEGIN", 
+        "exit('Early termination')").unwrap();
+    pipeline.set_begin_processor(Box::new(begin_processor));
+
+    // This should not execute
+    let main_processor = StarlarkProcessor::from_script("main", "line.upper()").unwrap();
+    pipeline.add_processor(Box::new(main_processor));
+
+    let input = Cursor::new("a\nb\nc\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    assert_eq!(stats.records_processed, 0); // No input lines processed
+    assert_eq!(stats.records_output, 1); // Only BEGIN exit message
+    assert_eq!(output_str, "Early termination\n");
+}
+
+#[test]
+fn test_begin_end_empty_input() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // BEGIN processor
+    let begin_processor = StarlarkProcessor::from_script("BEGIN", "\"Start\"").unwrap();
+    pipeline.set_begin_processor(Box::new(begin_processor));
+
+    // END processor  
+    let end_processor = StarlarkProcessor::from_script("END", "\"End\"").unwrap();
+    pipeline.set_end_processor(Box::new(end_processor));
+
+    let input = Cursor::new("");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    assert_eq!(stats.records_processed, 0); // No input lines
+    assert_eq!(stats.records_output, 2); // BEGIN + END
+    assert_eq!(output_str, "Start\nEnd\n");
+}
