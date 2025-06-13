@@ -305,7 +305,7 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = JsonlParser::new();
-        let mut enhanced_lines = Vec::new();
+        let mut records = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 0;
         let mut parse_errors = Vec::new();
@@ -320,13 +320,10 @@ impl<'a> InputFormatWrapper<'a> {
                 continue;
             }
 
-            // Parse JSONL and store in thread-local context
+            // Parse JSONL and create structured records
             match parser.parse_line(&line_content) {
                 Ok(data) => {
-                    // Create a special marker that tells the processor
-                    // this line contains JSON data
-                    let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
-                    enhanced_lines.push(enhanced_line);
+                    records.push(crate::context::RecordData::structured(data));
                 }
                 Err(parse_error) => {
                     // Handle parsing error according to error strategy
@@ -352,16 +349,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
         }
 
-        // Process each enhanced line separately
-        let combined = if enhanced_lines.is_empty() {
-            String::new()
-        } else {
-            enhanced_lines.join("\n") + "\n"
-        };
-
-        let enhanced_reader = std::io::Cursor::new(combined);
+        // Process records directly
         let debug = config.debug;
-        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        let result = pipeline.process_records(records, output, filename);
         
         // Report parse errors after processing is complete
         Self::report_parse_errors("JSON", &parse_errors, debug);
@@ -387,7 +377,7 @@ impl<'a> InputFormatWrapper<'a> {
         let mut parser = CsvParser::new();
         parser.parse_headers(&header_line).map_err(|e| e)?;
 
-        let mut enhanced_lines = Vec::new();
+        let mut records = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 1; // Start at 1 since we already read the header line
         let mut parse_errors = Vec::new();
@@ -402,13 +392,10 @@ impl<'a> InputFormatWrapper<'a> {
                 continue;
             }
 
-            // Parse CSV and create structured record similar to JSONL
+            // Parse CSV and create structured record
             match parser.parse_line(&line) {
                 Ok(data) => {
-                    // Create a special marker that tells the processor
-                    // this line contains structured data
-                    let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
-                    enhanced_lines.push(enhanced_line);
+                    records.push(crate::context::RecordData::structured(data));
                 }
                 Err(parse_error) => {
                     // Handle parsing error according to error strategy
@@ -434,16 +421,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
         }
 
-        // Process each enhanced line separately
-        let combined = if enhanced_lines.is_empty() {
-            String::new()
-        } else {
-            enhanced_lines.join("\n") + "\n"
-        };
-
-        let enhanced_reader = std::io::Cursor::new(combined);
+        // Process records directly
         let debug = config.debug;
-        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        let result = pipeline.process_records(records, output, filename);
         
         // Report parse errors after processing is complete
         Self::report_parse_errors("CSV", &parse_errors, debug);
@@ -459,7 +439,7 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = LogfmtParser::new();
-        let mut enhanced_lines = Vec::new();
+        let mut records = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 0;
         let mut parse_errors = Vec::new();
@@ -477,10 +457,7 @@ impl<'a> InputFormatWrapper<'a> {
             // Parse logfmt and create structured record
             match parser.parse_line(&line_content) {
                 Ok(data) => {
-                    // Create a special marker that tells the processor
-                    // this line contains structured data
-                    let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
-                    enhanced_lines.push(enhanced_line);
+                    records.push(crate::context::RecordData::structured(data));
                 }
                 Err(parse_error) => {
                     // Handle parsing error according to error strategy
@@ -506,16 +483,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
         }
 
-        // Process each enhanced line separately
-        let combined = if enhanced_lines.is_empty() {
-            String::new()
-        } else {
-            enhanced_lines.join("\n") + "\n"
-        };
-
-        let enhanced_reader = std::io::Cursor::new(combined);
+        // Process records directly
         let debug = config.debug;
-        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        let result = pipeline.process_records(records, output, filename);
         
         // Report parse errors after processing is complete
         Self::report_parse_errors("logfmt", &parse_errors, debug);

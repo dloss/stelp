@@ -70,6 +70,113 @@ impl StreamPipeline {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
+    /// Process a collection of records directly (used by input format parsers)
+    pub fn process_records<W: Write>(
+        &mut self,
+        records: Vec<RecordData>,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<ProcessingStats, Box<dyn std::error::Error>> {
+        let start_time = Instant::now();
+
+        // Update context for new file
+        self.context.file_name = filename.map(|s| s.to_string());
+        self.context.line_number = 0;
+        self.context.record_count = 0;
+
+        // Reset local stats for this file
+        let mut file_stats = ProcessingStats::default();
+
+        for record in records {
+            self.context.line_number += 1;
+            self.context.record_count += 1;
+            file_stats.records_processed += 1;
+
+            // Process the record through the pipeline
+            match self.process_record(&record).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? {
+                ProcessResult::Transform(output_record) => {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        // Handle broken pipe gracefully
+                        if e.to_string().contains("Broken pipe") {
+                            break;
+                        }
+                        return Err(e.into());
+                    }
+                    file_stats.records_output += 1;
+                }
+                ProcessResult::FanOut(output_records) => {
+                    for output_record in output_records {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        file_stats.records_output += 1;
+                    }
+                }
+                ProcessResult::TransformWithEmissions { primary, emissions } => {
+                    if let Some(output_record) = primary {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        file_stats.records_output += 1;
+                    }
+                    for emission in emissions {
+                        if let Err(e) = self.output_formatter.write_record(output, &emission) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        file_stats.records_output += 1;
+                    }
+                }
+                ProcessResult::Skip => {
+                    file_stats.records_skipped += 1;
+                }
+                ProcessResult::Exit(final_output) => {
+                    if let Some(output_record) = final_output {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e.into());
+                            }
+                        } else {
+                            file_stats.records_output += 1;
+                        }
+                    }
+                    break; // Stop processing
+                }
+                ProcessResult::Error(err) => match self.config.error_strategy {
+                    ErrorStrategy::FailFast => return Err(Box::new(err)),
+                    ErrorStrategy::Skip => {
+                        file_stats.errors += 1;
+                        if self.config.debug {
+                            eprintln!("stelp: line {}: {}", self.context.line_number, err);
+                        }
+                        continue;
+                    }
+                },
+            }
+
+            self.context.total_processed += 1;
+        }
+
+        file_stats.processing_time = start_time.elapsed();
+
+        // Update global stats
+        self.stats.records_processed += file_stats.records_processed;
+        self.stats.records_output += file_stats.records_output;
+        self.stats.records_skipped += file_stats.records_skipped;
+        self.stats.errors += file_stats.errors;
+        self.stats.processing_time += file_stats.processing_time;
+
+        Ok(file_stats)
+    }
+
     pub fn process_stream<R: BufRead, W: Write>(
         &mut self,
         input: R,
@@ -100,40 +207,8 @@ impl StreamPipeline {
                 continue;
             }
 
-            // Create the appropriate record type based on content
-            let record = if line.starts_with("__JSONL__") {
-                // Extract JSON data and create structured record
-                let json_str = &line[9..]; // Remove "__JSONL__" prefix
-                match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(json_data) => RecordData::structured(json_data),
-                    Err(e) => {
-                        // JSON parse error - treat as error or skip based on strategy
-                        match self.config.error_strategy {
-                            ErrorStrategy::FailFast => {
-                                return Err(ProcessingError::ScriptError {
-                                    step: "json_parse".to_string(),
-                                    line: self.context.line_number,
-                                    source: anyhow::anyhow!(
-                                        "Invalid JSON on line {}: {}",
-                                        self.context.line_number,
-                                        e
-                                    ),
-                                });
-                            }
-                            ErrorStrategy::Skip => {
-                                file_stats.errors += 1;
-                                // Note: Don't report __JSONL__ parsing errors here since they indicate
-                                // bugs in our JSON generation, not user data issues. User data parsing
-                                // errors are already reported by the input format layer.
-                                continue;
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Regular text record
-                RecordData::text(line)
-            };
+            // Create text record from line
+            let record = RecordData::text(line);
 
             // Process the record through the pipeline
             match self.process_record(&record)? {
