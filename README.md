@@ -116,7 +116,7 @@ Stelp supports structured input and output formats:
 echo '{"name": "alice", "age": 25}' | stelp -f jsonl -F jsonl -e 'data["name"].upper()'
 
 # CSV input/output
-echo "name,age\nalice,25" | stelp -f csv -F csv -e 'data["name"].upper()'
+printf "name,age\nalice,25\n" | stelp -f csv -F csv -e 'data["name"].upper()'
 
 # logfmt input/output
 echo "name=alice age=25" | stelp -f logfmt -F logfmt -e 'data["name"].upper()'
@@ -322,7 +322,7 @@ f"Total errors so far: {error_count}"
 ' *.log
 
 # CSV transformation with headers
-echo -e "name,age\nAlice,25\nBob,30" | stelp -f csv -F csv -e '
+printf "name,age\nAlice,25\nBob,30\n" | stelp -f csv -F csv -e '
 age = int(data["age"])
 category = "senior" if age >= 30 else "junior"
 name = data["name"]
