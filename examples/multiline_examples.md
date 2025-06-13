@@ -10,7 +10,7 @@ Process text in chunks of a fixed number of lines:
 
 ```bash
 # Process every 3 lines as a chunk
-seq 1 10 | stelp --chunk-lines 3 -e 'f"Chunk: {line.replace(chr(10), " | ")}"'
+seq 1 10 | stelp --chunk-lines 3 -e 'replaced = line.replace(chr(10), " | "); f"Chunk: {replaced}"'
 ```
 
 ### 2. Start Pattern (Timestamp-based)
@@ -68,7 +68,8 @@ if len(lines) > 1:
     if error_line:
         f"ERROR: {error_line}"
     else:
-        f"TRACEBACK: {lines[0]}"
+        first_line = lines[0]
+        f"TRACEBACK: {first_line}"
 else:
     lines[0]
 '
@@ -94,7 +95,8 @@ for l in lines:
         key_val = l.split("=")
         if len(key_val) == 2:
             config_items.append(key_val[0].strip())
-f"Config block with: {", ".join(config_items)}"
+items_list = ", ".join(config_items)
+f"Config block with: {items_list}"
 '
 ```
 
@@ -105,7 +107,7 @@ All chunking strategies include safety limits to prevent memory issues:
 ```bash
 # Chunks are limited to 1000 lines and 1MB by default
 # You can override these limits:
-cat large_file.log | stelp --chunk-start-pattern '^ERROR' --chunk-max-lines 500 --chunk-max-size 524288 -e 'f"Error chunk with {len(line.split(chr(10)))} lines"'
+cat large_file.log | stelp --chunk-start-pattern '^ERROR' --chunk-max-lines 500 --chunk-max-size 524288 -e 'line_count = len(line.split(chr(10))); f"Error chunk with {line_count} lines"'
 ```
 
 ## Combining with Other Features
@@ -114,16 +116,21 @@ Chunking works with all other Stelp features:
 
 ```bash
 # Use chunking with filters
-python3 examples/multiline_demo.py | stelp --chunk-start-pattern '^[0-9]{4}' --filter 'len(line.split(chr(10))) > 2' -e 'f"Multi-line entry: {line.split(chr(10))[0]}"'
+python3 examples/multiline_demo.py | stelp --chunk-start-pattern '^[0-9]{4}' --filter 'len(line.split(chr(10))) > 2' -e 'first_line = line.split(chr(10))[0]; f"Multi-line entry: {first_line}"'
 
 # Use chunking with structured output
 python3 examples/multiline_demo.py | stelp --chunk-start-pattern '^[0-9]{4}' -F jsonl -e '
 lines = line.split(chr(10))
+first_line_parts = lines[0].split(" ")
+timestamp = first_line_parts[0]
+level = first_line_parts[2] if len(first_line_parts) > 2 else "INFO"
+line_count = len(lines)
+is_multiline = len(lines) > 1
 {
-    "timestamp": lines[0].split(" ")[0],
-    "level": lines[0].split(" ")[2] if len(lines[0].split(" ")) > 2 else "INFO",
-    "line_count": len(lines),
-    "is_multiline": len(lines) > 1
+    "timestamp": timestamp,
+    "level": level,
+    "line_count": line_count,
+    "is_multiline": is_multiline
 }
 '
 ```
