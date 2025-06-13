@@ -2,6 +2,7 @@
 
 use serde_json;
 use std::io::{BufRead, BufReader, Read, Write};
+use crate::chunking::{ChunkConfig, chunk_lines};
 
 #[derive(Clone, Debug, clap::ValueEnum)]
 pub enum InputFormat {
@@ -249,11 +250,20 @@ struct ParseError {
 /// Wrapper that integrates input format parsing with existing StreamPipeline
 pub struct InputFormatWrapper<'a> {
     format: Option<&'a InputFormat>,
+    chunk_config: Option<ChunkConfig>,
 }
 
 impl<'a> InputFormatWrapper<'a> {
     pub fn new(format: Option<&'a InputFormat>) -> Self {
-        Self { format }
+        Self { 
+            format,
+            chunk_config: None,
+        }
+    }
+    
+    pub fn with_chunking(mut self, chunk_config: ChunkConfig) -> Self {
+        self.chunk_config = Some(chunk_config);
+        self
     }
 
     pub fn process_with_pipeline<R: Read, W: Write>(
@@ -274,8 +284,13 @@ impl<'a> InputFormatWrapper<'a> {
                 self.process_logfmt(BufReader::new(reader), pipeline, output, filename)
             }
             None => {
-                // Raw text - use existing pipeline unchanged
-                pipeline.process_stream_with_data(BufReader::new(reader), output, filename)
+                // Raw text - apply chunking if configured
+                if self.chunk_config.is_some() {
+                    self.process_text_with_chunking(BufReader::new(reader), pipeline, output, filename)
+                } else {
+                    // Use existing pipeline unchanged
+                    pipeline.process_stream_with_data(BufReader::new(reader), output, filename)
+                }
             }
         }
     }
@@ -492,5 +507,25 @@ impl<'a> InputFormatWrapper<'a> {
         }
         
         Ok(result)
+    }
+
+    fn process_text_with_chunking<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let chunk_config = self.chunk_config.as_ref().unwrap();
+        let chunks = chunk_lines(reader, chunk_config.clone())?;
+        
+        // Convert chunks to RecordData
+        let records: Vec<crate::context::RecordData> = chunks
+            .into_iter()
+            .map(|chunk| crate::context::RecordData::text(chunk))
+            .collect();
+        
+        // Process chunks through the pipeline
+        pipeline.process_records(records, output, filename)
     }
 }

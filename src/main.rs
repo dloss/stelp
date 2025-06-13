@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
+use stelp::chunking::{ChunkConfig, parse_chunk_strategy};
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
@@ -65,6 +66,26 @@ struct Args {
     /// Fail on first error instead of skipping lines
     #[arg(long)]
     fail_fast: bool,
+
+    /// Enable multiline chunking with fixed number of lines per chunk
+    #[arg(long)]
+    chunk_lines: Option<usize>,
+
+    /// Enable multiline chunking with a start pattern (regex)
+    #[arg(long)]
+    chunk_start_pattern: Option<String>,
+
+    /// Enable multiline chunking with a delimiter
+    #[arg(long)]
+    chunk_delimiter: Option<String>,
+
+    /// Maximum lines per chunk (safety limit)
+    #[arg(long, default_value = "1000")]
+    chunk_max_lines: usize,
+
+    /// Maximum bytes per chunk (safety limit)
+    #[arg(long, default_value = "1048576")]
+    chunk_max_size: usize,
 }
 
 impl Args {
@@ -74,16 +95,30 @@ impl Args {
         let has_filters = !self.filters.is_empty();
         let has_input_format = self.input_format.is_some();
         let has_output_format = self.output_format.is_some();
+        let has_chunking = self.chunk_lines.is_some() || 
+                          self.chunk_start_pattern.is_some() || 
+                          self.chunk_delimiter.is_some();
 
-        match (has_script_file, has_evals || has_filters, has_input_format || has_output_format) {
+        // Check for mutually exclusive chunking options
+        let chunk_options_count = [
+            self.chunk_lines.is_some(),
+            self.chunk_start_pattern.is_some(),
+            self.chunk_delimiter.is_some(),
+        ].iter().filter(|&&x| x).count();
+
+        if chunk_options_count > 1 {
+            return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
+        }
+
+        match (has_script_file, has_evals || has_filters, has_input_format || has_output_format || has_chunking) {
             (true, true, _) => {
                 Err("Cannot use --script with --eval or --filter arguments".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
             (false, true, _) => Ok(()), // Eval/filter arguments only  
-            (false, false, true) => Ok(()), // Input/output format only - NEW: allow this case
+            (false, false, true) => Ok(()), // Input/output format or chunking only
             (false, false, false) => {
-                Err("Must provide either --script, --eval/--filter arguments, or --input-format/--output-format".to_string())
+                Err("Must provide either --script, --eval/--filter arguments, or --input-format/--output-format/chunking options".to_string())
             }
         }
     }
@@ -122,6 +157,30 @@ impl Args {
             .into_iter()
             .map(|(_, step)| step)
             .collect())
+    }
+
+    fn get_chunk_config(&self) -> Result<Option<ChunkConfig>, String> {
+        if let Some(lines) = self.chunk_lines {
+            Ok(Some(ChunkConfig {
+                strategy: parse_chunk_strategy(&format!("lines:{}", lines))?,
+                max_chunk_lines: self.chunk_max_lines,
+                max_chunk_size: self.chunk_max_size,
+            }))
+        } else if let Some(pattern) = &self.chunk_start_pattern {
+            Ok(Some(ChunkConfig {
+                strategy: parse_chunk_strategy(&format!("start-pattern:{}", pattern))?,
+                max_chunk_lines: self.chunk_max_lines,
+                max_chunk_size: self.chunk_max_size,
+            }))
+        } else if let Some(delimiter) = &self.chunk_delimiter {
+            Ok(Some(ChunkConfig {
+                strategy: parse_chunk_strategy(&format!("delimiter:{}", delimiter))?,
+                max_chunk_lines: self.chunk_max_lines,
+                max_chunk_size: self.chunk_max_size,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -165,12 +224,18 @@ fn main() {
     // Extract input format before creating config
     let input_format = args.input_format.clone();
 
+    // Extract chunking config before moving args
+    let chunk_config = args.get_chunk_config().unwrap_or_else(|e| {
+        eprintln!("stelp: {}", e);
+        std::process::exit(1);
+    });
+
     // Build configuration with smart output format defaulting
     let output_format = match args.output_format {
         Some(format) => format, // User explicitly specified output format
         None => {
             // Default output format based on input format
-            match args.input_format {
+            match input_format {
                 Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
                 Some(InputFormat::Csv) => OutputFormat::Csv,
                 Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
@@ -179,7 +244,7 @@ fn main() {
         }
     };
 
-    let keys = args.keys.map(|k| {
+    let keys = args.keys.as_ref().map(|k| {
         k.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -193,7 +258,7 @@ fn main() {
             ErrorStrategy::Skip
         },
         debug: args.debug,
-        input_format: args.input_format,
+        input_format: input_format.clone(),
         output_format, // Use the determined format
         keys,
         ..Default::default()
@@ -202,8 +267,12 @@ fn main() {
     // Create pipeline
     let mut pipeline = StreamPipeline::new(config);
 
-    // Create input format wrapper
-    let format_wrapper = InputFormatWrapper::new(input_format.as_ref());
+    // Create input format wrapper with optional chunking
+    let format_wrapper = if let Some(config) = chunk_config {
+        InputFormatWrapper::new(input_format.as_ref()).with_chunking(config)
+    } else {
+        InputFormatWrapper::new(input_format.as_ref())
+    };
 
     // Add processors to pipeline in order
     for (i, step) in steps.iter().enumerate() {

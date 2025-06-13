@@ -1,4 +1,5 @@
 // src/lib.rs
+pub mod chunking;
 pub mod error;
 pub mod input_format;
 pub mod output_format;
