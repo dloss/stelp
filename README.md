@@ -25,7 +25,7 @@ f"Even #{count}: {line}"
 
 - **Pipeline Processing**: Chain multiple transformation and filter steps
 - **Python-like Syntax**: Familiar Starlark (Python subset) scripting
-- **Data Format Support**: JSON, CSV, key-value, field splitting
+- **Data Format Support**: JSON Lines, CSV, logfmt input/output formats
 - **Global State**: Accumulate counters, track state across lines
 - **Side Effects**: Emit additional output, skip lines, early exit
 - **Meta Variables**: Access line numbers, filenames, record counts
@@ -40,6 +40,9 @@ Options:
       --filter <EXPRESSION>   Filter expressions (only keep lines where true)
   -s, --script <FILE>         Script file containing pipeline definition
   -I, --include <FILE>        Include Starlark files (processed in order)
+  -f, --input-format <FORMAT> Input format for structured parsing (jsonl, csv, logfmt)
+  -F, --output-format <FORMAT> Output format (jsonl, csv, logfmt)
+  -k, --keys <KEYS>           Restrict output to specific keys from structured data (comma-separated)
   -o, --output <FILE>         Output file (default: stdout)
       --debug                 Debug mode - show processing details
       --fail-fast             Fail on first error instead of skipping lines
@@ -104,6 +107,30 @@ exit("reason")           # Stop processing with message
 inc("counter")           # Increment counter, returns new value
 ```
 
+### Structured Data Formats
+
+Stelp supports structured input and output formats:
+
+```bash
+# JSON Lines input/output
+echo '{"name": "alice", "age": 25}' | stelp -f jsonl -F jsonl -e 'data["name"].upper()'
+
+# CSV input/output
+echo "name,age\nalice,25" | stelp -f csv -F csv -e 'data["name"].upper()'
+
+# logfmt input/output
+echo "name=alice age=25" | stelp -f logfmt -F logfmt -e 'data["name"].upper()'
+
+# Restrict output to specific keys
+echo '{"name": "alice", "age": 25, "city": "NYC"}' | \
+  stelp -f jsonl -F jsonl -k "name,age" -e 'data["name"].upper()'
+```
+
+When using structured formats:
+- Use `data` variable to access parsed fields instead of `line`
+- Output format defaults to match input format
+- Use `-k/--keys` to filter output to specific fields
+
 ## Examples
 
 ### Basic Text Processing
@@ -137,10 +164,9 @@ f"[{count}] {line}"
 
 ### JSON Processing
 ```bash
-# Extract and transform JSON fields
+# Process JSON Lines format
 echo '{"user": "alice", "action": "login"}' | \
-stelp -e '
-data = parse_json(line)
+stelp -f jsonl -e '
 user = data["user"]
 action = data["action"]
 f"{user} performed {action}"
@@ -150,18 +176,35 @@ f"{user} performed {action}"
 ### CSV Processing  
 ```bash
 # Process CSV with headers
-stelp -e '
-if LINENUM == 1:
-    line  # Keep header
+stelp -f csv -F csv -e '
+age = int(data["age"])
+if age >= 18:
+    name = data["name"]
+    # Output will be in CSV format automatically
+    f"{name},adult"
 else:
-    fields = parse_csv(line)
-    age = int(fields[1])  # Age column
-    if age >= 18:
-        name = fields[0]
-        dump_csv([name, "adult"])
-    else:
-        skip()
+    skip()
 ' users.csv
+```
+
+### logfmt Processing
+```bash
+# Process logfmt structured logs
+echo "level=info msg='user login' user=alice duration=1.2s" | \
+stelp -f logfmt -e '
+level = data["level"]
+user = data["user"]
+duration = data["duration"]
+f"[{level.upper()}] {user} - {duration}"
+'
+```
+
+### Key Filtering
+```bash
+# Extract only specific fields from JSON
+echo '{"name": "alice", "age": 25, "city": "NYC", "country": "USA"}' | \
+stelp -f jsonl -F jsonl -k "name,age" -e 'data["name"].upper()'
+# Output: {"name": "ALICE", "age": 25}
 ```
 
 ### Log Analysis with Early Exit
@@ -278,17 +321,13 @@ else:
 f"Total errors so far: {error_count}"
 ' *.log
 
-# CSV transformation
-echo -e "name,age\nAlice,25\nBob,30" | stelp -e '
-if LINENUM == 1:
-    line + ",category"
-else:
-    fields = parse_csv(line)
-    age = int(fields[1])
-    category = "senior" if age >= 30 else "junior"
-    name = fields[0]
-    age_str = fields[1]
-    dump_csv([name, age_str, category])
+# CSV transformation with headers
+echo -e "name,age\nAlice,25\nBob,30" | stelp -f csv -F csv -e '
+age = int(data["age"])
+category = "senior" if age >= 30 else "junior"
+name = data["name"]
+age_str = str(age)
+f"{name},{age_str},{category}"
 '
 ```
 
