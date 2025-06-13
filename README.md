@@ -45,7 +45,7 @@ Options:
   -I, --include <FILE>        Include Starlark files (processed in order)
   -f, --input-format <FORMAT> Input format for structured parsing (jsonl, csv, logfmt)
   -F, --output-format <FORMAT> Output format (jsonl, csv, logfmt)
-  -k, --keys <KEYS>           Restrict output to specific keys from structured data (comma-separated)
+  -k, --keys <KEYS>           Specify output columns for structured data (comma-separated)
   -o, --output <FILE>         Output file (default: stdout)
       --debug                 Debug mode - show processing details
       --fail-fast             Fail on first error instead of skipping lines
@@ -132,7 +132,29 @@ echo '{"name": "alice", "age": 25, "city": "NYC"}' | \
 When using structured formats:
 - Use `data` variable to access parsed fields instead of `line`
 - Output format defaults to match input format
-- Use `-k/--keys` to filter output to specific fields
+- Use `-k/--keys` to specify exact output columns and prevent data loss
+
+### CSV Output from Schema-less Data
+
+When converting from schema-less formats (JSONL, logfmt) to CSV, records may have different fields. Stelp handles this intelligently:
+
+```bash
+# Default behavior: warns about missing keys
+echo -e '{"a":1,"b":2}\n{"a":1,"c":3}' | stelp -f jsonl -F csv
+# Output:
+# a,b
+# 1,2
+# 1,3
+# stelp: warning: keys 'c' found but not in CSV schema (based on first record)
+# stelp: suggestion: use --keys a,b,c to include all data
+
+# Explicit keys: no data loss, no warnings
+echo -e '{"a":1,"b":2}\n{"a":1,"c":3}' | stelp -f jsonl -F csv --keys a,b,c
+# Output:
+# a,b,c
+# 1,2,
+# 1,,3
+```
 
 ## Examples
 
@@ -202,8 +224,30 @@ f"[{level.upper()}] {user} - {duration}"
 '
 ```
 
-### Key Filtering
+### Key Options for Structured Data
+
+The `--keys` option gives you precise control over output columns when working with structured data:
+
 ```bash
+# Select specific fields in desired order
+echo '{"name": "Alice", "age": 30, "city": "NYC"}' | stelp -f jsonl -F csv --keys name,city
+# Output:
+# name,city
+# Alice,NYC
+
+# Include fields that might be missing (become empty cells)
+echo -e '{"name": "Alice"}\n{"name": "Bob", "age": 25}' | stelp -f jsonl -F csv --keys name,age
+# Output:
+# name,age
+# Alice,
+# Bob,25
+
+# Reorder columns
+echo '{"age": 30, "name": "Alice"}' | stelp -f jsonl -F csv --keys name,age
+# Output:
+# name,age
+# Alice,30
+
 # Extract only specific fields from JSON
 echo '{"name": "alice", "age": 25, "city": "NYC", "country": "USA"}' | \
 stelp -f jsonl -F jsonl -k "name,age" -e 'data["name"].upper()'
