@@ -15,6 +15,8 @@ pub enum InputFormat {
     Logfmt,
     #[value(name = "syslog")]
     Syslog,
+    #[value(name = "weblog")]
+    Weblog,
 }
 
 pub trait LineParser {
@@ -351,6 +353,174 @@ impl LineParser for SyslogParser {
     }
 }
 
+pub struct WeblogParser {
+    combined_regex: Regex,
+    common_regex: Regex,
+}
+
+impl WeblogParser {
+    pub fn new() -> Self {
+        // Combined Log Format: IP - user [timestamp] "request" status size "referer" "user_agent"
+        let combined_regex = Regex::new(
+            r#"^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\d+) (\S+) "([^"]*)" "([^"]*)"$"#
+        ).expect("Combined log format regex should compile");
+
+        // Common Log Format: IP - user [timestamp] "request" status size
+        let common_regex = Regex::new(
+            r#"^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\d+) (\S+)$"#
+        ).expect("Common log format regex should compile");
+
+        Self {
+            combined_regex,
+            common_regex,
+        }
+    }
+
+    fn parse_request(request: &str) -> (Option<String>, Option<String>, Option<String>) {
+        let parts: Vec<&str> = request.splitn(3, ' ').collect();
+        match parts.len() {
+            3 => (
+                Some(parts[0].to_string()),  // method
+                Some(parts[1].to_string()),  // path
+                Some(parts[2].to_string()),  // protocol
+            ),
+            2 => (
+                Some(parts[0].to_string()),  // method
+                Some(parts[1].to_string()),  // path
+                None,                        // protocol
+            ),
+            1 => (
+                Some(parts[0].to_string()),  // method
+                None,                        // path
+                None,                        // protocol
+            ),
+            _ => (None, None, None),
+        }
+    }
+}
+
+impl LineParser for WeblogParser {
+    fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
+        let line = line.trim();
+        
+        // Try Combined Log Format first (with referer and user_agent)
+        if let Some(captures) = self.combined_regex.captures(line) {
+            let ip = captures.get(1).unwrap().as_str();
+            let ident = captures.get(2).unwrap().as_str();
+            let user = captures.get(3).unwrap().as_str();
+            let timestamp = captures.get(4).unwrap().as_str();
+            let request = captures.get(5).unwrap().as_str();
+            let status = captures.get(6).unwrap().as_str();
+            let size = captures.get(7).unwrap().as_str();
+            let referer = captures.get(8).unwrap().as_str();
+            let user_agent = captures.get(9).unwrap().as_str();
+            
+            let (method, path, protocol) = Self::parse_request(request);
+            
+            let mut map = serde_json::Map::new();
+            map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
+            
+            // Only include non-dash values for optional fields
+            if ident != "-" {
+                map.insert("ident".to_string(), serde_json::Value::String(ident.to_string()));
+            }
+            if user != "-" {
+                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+            }
+            
+            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
+            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
+            
+            if let Some(m) = method {
+                map.insert("method".to_string(), serde_json::Value::String(m));
+            }
+            if let Some(p) = path {
+                map.insert("path".to_string(), serde_json::Value::String(p));
+            }
+            if let Some(proto) = protocol {
+                map.insert("proto".to_string(), serde_json::Value::String(proto));
+            }
+            
+            if let Ok(status_num) = status.parse::<u32>() {
+                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+            } else {
+                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+            }
+            
+            if size != "-" {
+                if let Ok(size_num) = size.parse::<u64>() {
+                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                } else {
+                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                }
+            }
+            
+            if referer != "-" {
+                map.insert("referer".to_string(), serde_json::Value::String(referer.to_string()));
+            }
+            if user_agent != "-" {
+                map.insert("ua".to_string(), serde_json::Value::String(user_agent.to_string()));
+            }
+            
+            return Ok(serde_json::Value::Object(map));
+        }
+        
+        // Try Common Log Format (without referer and user_agent)
+        if let Some(captures) = self.common_regex.captures(line) {
+            let ip = captures.get(1).unwrap().as_str();
+            let ident = captures.get(2).unwrap().as_str();
+            let user = captures.get(3).unwrap().as_str();
+            let timestamp = captures.get(4).unwrap().as_str();
+            let request = captures.get(5).unwrap().as_str();
+            let status = captures.get(6).unwrap().as_str();
+            let size = captures.get(7).unwrap().as_str();
+            
+            let (method, path, protocol) = Self::parse_request(request);
+            
+            let mut map = serde_json::Map::new();
+            map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
+            
+            if ident != "-" {
+                map.insert("ident".to_string(), serde_json::Value::String(ident.to_string()));
+            }
+            if user != "-" {
+                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+            }
+            
+            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
+            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
+            
+            if let Some(m) = method {
+                map.insert("method".to_string(), serde_json::Value::String(m));
+            }
+            if let Some(p) = path {
+                map.insert("path".to_string(), serde_json::Value::String(p));
+            }
+            if let Some(proto) = protocol {
+                map.insert("proto".to_string(), serde_json::Value::String(proto));
+            }
+            
+            if let Ok(status_num) = status.parse::<u32>() {
+                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+            } else {
+                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+            }
+            
+            if size != "-" {
+                if let Ok(size_num) = size.parse::<u64>() {
+                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                } else {
+                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                }
+            }
+            
+            return Ok(serde_json::Value::Object(map));
+        }
+        
+        Err("Line does not match Combined or Common Log Format".to_string())
+    }
+}
+
 /// Simple parse error info for summary reporting
 #[derive(Debug)]
 struct ParseError {
@@ -396,6 +566,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
             Some(InputFormat::Syslog) => {
                 self.process_syslog(BufReader::new(reader), pipeline, output, filename)
+            }
+            Some(InputFormat::Weblog) => {
+                self.process_weblog(BufReader::new(reader), pipeline, output, filename)
             }
             None => {
                 // Raw text - apply chunking if configured
@@ -684,6 +857,74 @@ impl<'a> InputFormatWrapper<'a> {
             result.parse_errors.push(crate::context::ParseErrorInfo {
                 line_number: parse_error.line_number,
                 format_name: "syslog".to_string(),
+                error: parse_error.error,
+            });
+        }
+        
+        Ok(result)
+    }
+
+    fn process_weblog<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let parser = WeblogParser::new();
+        let mut records = Vec::new();
+        let config = pipeline.get_config();
+        let mut line_number = 0;
+        let mut parse_errors = Vec::new();
+
+        // Read all lines and parse them
+        for line_result in reader.lines() {
+            let line = line_result?;
+            line_number += 1;
+            let line_content = line.trim();
+
+            if line_content.is_empty() {
+                continue;
+            }
+
+            // Parse weblog and create structured record
+            match parser.parse_line(&line_content) {
+                Ok(data) => {
+                    records.push(crate::context::RecordData::structured(data));
+                }
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match config.error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "weblog parse error on line {}: {}",
+                                line_number, parse_error
+                            )
+                            .into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
+                            // Skip the malformed line entirely to maintain output format consistency
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process records directly
+        let mut result = pipeline.process_records(records, output, filename)?;
+        
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "weblog".to_string(),
                 error: parse_error.error,
             });
         }

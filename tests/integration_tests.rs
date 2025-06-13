@@ -717,3 +717,193 @@ fn test_syslog_invalid_format_error_handling() {
     assert_eq!(stats.parse_errors.len(), 2);
     assert_eq!(stats.parse_errors[0].format_name, "syslog");
 }
+
+#[test]
+fn test_weblog_combined_format_parsing() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Script to extract key weblog fields
+    let processor = StarlarkProcessor::from_script(
+        "weblog_test",
+        r#"
+ip = data["ip"]
+method = data["method"]
+path = data["path"]
+status = data["status"]
+size = data["size"]
+ua = data["ua"]
+f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={ua}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Combined Log Format entry
+    let input = std::io::Cursor::new(r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api/v1/users HTTP/1.1" 200 1234 "https://example.com/page" "Mozilla/5.0 (Windows NT 10.0)"
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "IP=192.168.1.1 GET /api/v1/users STATUS=200 SIZE=1234 UA=Mozilla/5.0 (Windows NT 10.0)\n");
+}
+
+#[test]
+fn test_weblog_common_format_parsing() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Script to check for optional fields
+    let processor = StarlarkProcessor::from_script(
+        "weblog_test",
+        r#"
+ip = data["ip"]
+method = data["method"]
+path = data["path"]
+status = data["status"]
+size = data.get("size", "none")
+has_ua = "ua" in data
+has_referer = "referer" in data
+f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={has_ua} REF={has_referer}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Common Log Format entry (no referer/user_agent)
+    let input = std::io::Cursor::new(r#"10.0.0.1 - admin [25/Dec/2023:14:23:45 +0000] "POST /login HTTP/1.1" 302 -
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "IP=10.0.0.1 POST /login STATUS=302 SIZE=none UA=False REF=False\n");
+}
+
+#[test]
+fn test_weblog_request_parsing() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Test request field parsing into method/path/protocol
+    let processor = StarlarkProcessor::from_script(
+        "weblog_test",
+        r#"
+req = data["req"]
+method = data.get("method", "none")
+path = data.get("path", "none")
+proto = data.get("proto", "none")
+f"REQ=[{req}] METHOD={method} PATH={path} PROTO={proto}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Test various request formats
+    let input = std::io::Cursor::new(r#"127.0.0.1 - - [01/Jan/2024:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 2048
+127.0.0.1 - - [01/Jan/2024:12:00:01 +0000] "POST /api/data" 201 512
+127.0.0.1 - - [01/Jan/2024:12:00:02 +0000] "INVALID" 400 0
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 3);
+    assert_eq!(stats.records_output, 3);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines[0], "REQ=[GET /index.html HTTP/1.1] METHOD=GET PATH=/index.html PROTO=HTTP/1.1");
+    assert_eq!(lines[1], "REQ=[POST /api/data] METHOD=POST PATH=/api/data PROTO=none");
+    assert_eq!(lines[2], "REQ=[INVALID] METHOD=INVALID PATH=none PROTO=none");
+}
+
+#[test]
+fn test_weblog_status_filtering() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Filter for client errors (4xx) and server errors (5xx)
+    let filter = FilterProcessor::from_expression("filter", r#"data["status"] >= 400"#).unwrap();
+    pipeline.add_processor(Box::new(filter));
+
+    let processor = StarlarkProcessor::from_script(
+        "weblog_test",
+        r#"
+ip = data["ip"]
+method = data["method"]
+path = data["path"]
+status = data["status"]
+f"{status} {method} {path} from {ip}"
+        "#,
+    ).unwrap();
+    pipeline.add_processor(Box::new(processor));
+
+    let input = std::io::Cursor::new(r#"192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET /ok HTTP/1.1" 200 1234
+192.168.1.2 - - [10/Oct/2023:13:55:37 +0000] "GET /notfound HTTP/1.1" 404 512
+192.168.1.3 - - [10/Oct/2023:13:55:38 +0000] "POST /api HTTP/1.1" 500 256
+192.168.1.4 - - [10/Oct/2023:13:55:39 +0000] "GET /success HTTP/1.1" 201 128
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 4);
+    assert_eq!(stats.records_output, 2); // Only 404 and 500 should pass filter
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines[0], "404 GET /notfound from 192.168.1.2");
+    assert_eq!(lines[1], "500 POST /api from 192.168.1.3");
+}
+
+#[test]
+fn test_weblog_invalid_format_error_handling() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Simple pass-through processor
+    let processor = StarlarkProcessor::from_script("test", r#"data["ip"]"#).unwrap();
+    pipeline.add_processor(Box::new(processor));
+
+    // Invalid weblog format lines
+    let input = std::io::Cursor::new("This is not a valid weblog entry\nNor is this line\n");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Weblog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+
+    // Should skip invalid lines according to default error strategy
+    assert_eq!(stats.records_processed, 0);
+    assert_eq!(stats.records_output, 0);
+    assert_eq!(stats.errors, 2); // Two parse errors
+    assert_eq!(stats.parse_errors.len(), 2);
+    assert_eq!(stats.parse_errors[0].format_name, "weblog");
+}
