@@ -122,12 +122,9 @@ impl StreamPipeline {
                             }
                             ErrorStrategy::Skip => {
                                 file_stats.errors += 1;
-                                if self.config.debug {
-                                    eprintln!(
-                                        "stelp: line {}: JSON parse error: {}",
-                                        self.context.line_number, e
-                                    );
-                                }
+                                // Note: Don't report __JSONL__ parsing errors here since they indicate
+                                // bugs in our JSON generation, not user data issues. User data parsing
+                                // errors are already reported by the input format layer.
                                 continue;
                             }
                         }
