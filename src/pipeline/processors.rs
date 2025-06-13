@@ -208,17 +208,15 @@ impl StarlarkProcessor {
                     // Handle different result types
                     match starlark_result {
                         StarlarkResult::List(strings) => {
-                            // Fan-out: convert each string to a RecordData
-                            let mut fan_out_records: Vec<RecordData> =
-                                strings.into_iter().map(|s| RecordData::text(s)).collect();
-
-                            // Add any emissions to the fan-out
-                            fan_out_records.extend(emissions);
-
-                            if fan_out_records.is_empty() {
-                                ProcessResult::Skip
-                            } else {
-                                ProcessResult::FanOut(fan_out_records)
+                            // Convert list to string representation (no implicit fan-out)
+                            let list_str = format!("[{}]", strings.join(", "));
+                            let clean_result = RecordData::text(list_str);
+                            match emissions.is_empty() {
+                                true => ProcessResult::Transform(clean_result),
+                                false => ProcessResult::TransformWithEmissions {
+                                    primary: Some(clean_result),
+                                    emissions,
+                                },
                             }
                         }
                         StarlarkResult::None => {

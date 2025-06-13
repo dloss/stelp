@@ -366,3 +366,55 @@ fn test_error_handling_skip_strategy() {
     assert_eq!(stats.errors, 3); // All lines should error
     assert_eq!(stats.records_output, 0); // No successful outputs
 }
+
+#[test]
+fn test_emit_all_and_no_implicit_fanout() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Test that lists no longer fan out implicitly - they should output as string representations
+    let list_processor = StarlarkProcessor::from_script("list_test", "[line + '0', line + '1']").unwrap();
+    pipeline.add_processor(Box::new(list_processor));
+
+    let input = Cursor::new("a\nb\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    // Should output list as strings, not fan out individual items
+    assert_eq!(stats.records_processed, 2);
+    assert_eq!(stats.records_output, 2);
+    assert_eq!(output_str, "[a0, a1]\n[b0, b1]\n");
+}
+
+#[test]
+fn test_emit_all_function() {
+    let config = PipelineConfig::default();
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Test emit_all function for explicit fan-out
+    let emit_all_processor = StarlarkProcessor::from_script(
+        "emit_all_test", 
+        "emit_all([line + '0', line + '1']); skip()"
+    ).unwrap();
+    pipeline.add_processor(Box::new(emit_all_processor));
+
+    let input = Cursor::new("x\ny\n");
+    let mut output = Vec::new();
+
+    let stats = pipeline
+        .process_stream(input, &mut output, None)
+        .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    
+    // Should emit all items from the list, and skip the original record
+    assert_eq!(stats.records_processed, 2);
+    assert_eq!(stats.records_output, 4); // 2 items emitted per input line
+    assert_eq!(stats.records_skipped, 0); // emit() + skip() counts as fan-out, not skip
+    assert_eq!(output_str, "\"x0\"\n\"x1\"\n\"y0\"\n\"y1\"\n");
+}

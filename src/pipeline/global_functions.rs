@@ -22,6 +22,23 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(starlark::values::none::NoneType)
     }
 
+    fn emit_all<'v>(heap: &'v Heap, items: Value<'v>) -> anyhow::Result<starlark::values::none::NoneType> {
+        match items.iterate(heap) {
+            Ok(mut iterable) => {
+                EMIT_BUFFER.with(|buffer| {
+                    let mut buffer = buffer.borrow_mut();
+                    while let Some(item) = iterable.next() {
+                        buffer.push(item.to_string());
+                    }
+                });
+                Ok(starlark::values::none::NoneType)
+            }
+            Err(_) => {
+                Err(anyhow::anyhow!("emit_all() requires an iterable argument"))
+            }
+        }
+    }
+
     fn skip() -> anyhow::Result<starlark::values::none::NoneType> {
         SKIP_FLAG.with(|flag| flag.set(true));
         Ok(starlark::values::none::NoneType)
