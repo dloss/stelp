@@ -46,6 +46,10 @@ impl StreamPipeline {
         &self.context.global_vars
     }
 
+    pub fn get_config(&self) -> &PipelineConfig {
+        &self.config
+    }
+
     /// Reset processor state between files (but keep global variables)
     pub fn reset_processors(&mut self) {
         for processor in &mut self.processors {

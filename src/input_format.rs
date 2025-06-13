@@ -376,10 +376,13 @@ impl<'a> InputFormatWrapper<'a> {
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = LogfmtParser::new();
         let mut enhanced_lines = Vec::new();
+        let config = pipeline.get_config();
+        let mut line_number = 0;
 
         // Read all lines and parse them
         for line_result in reader.lines() {
             let line = line_result?;
+            line_number += 1;
             let line_content = line.trim();
 
             if line_content.is_empty() {
@@ -387,14 +390,35 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse logfmt and create structured record
-            if let Ok(data) = parser.parse_line(&line_content) {
-                // Create a special marker that tells the processor
-                // this line contains structured data
-                let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
-                enhanced_lines.push(enhanced_line);
-            } else {
-                // On parse error, pass through original line
-                enhanced_lines.push(line);
+            match parser.parse_line(&line_content) {
+                Ok(data) => {
+                    // Create a special marker that tells the processor
+                    // this line contains structured data
+                    let enhanced_line = format!("__JSONL__{}", serde_json::to_string(&data)?);
+                    enhanced_lines.push(enhanced_line);
+                }
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match config.error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "logfmt parse error on line {}: {}",
+                                line_number, parse_error
+                            )
+                            .into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            if config.debug {
+                                eprintln!(
+                                    "stelp: line {}: logfmt parse error: {}",
+                                    line_number, parse_error
+                                );
+                            }
+                            // Skip the malformed line entirely to maintain output format consistency
+                            continue;
+                        }
+                    }
+                }
             }
         }
 
