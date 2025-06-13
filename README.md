@@ -136,8 +136,9 @@ echo "name=alice age=25" | stelp -f logfmt -F logfmt -e 'data["name"].upper()'
 # Syslog format (Unix system logs)
 echo '<165>Oct 11 22:14:15 server01 sshd[1234]: Failed password' | stelp -f syslog -e 'data["prog"]'
 
-# Combined Log Format (Apache/Nginx access logs)
+# Combined Log Format (Apache/Nginx access logs - supports standard and extended variants)
 echo '192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET / HTTP/1.1" 200 1234' | stelp -f combined -e 'data["ip"]'
+echo '48.178.166.185 www.buttercup.com - user 443 [01/Aug/2018:12:39:39] "GET /api HTTP/1.1" "?q=test" 200 1234 "https://example.com/" "Mozilla/5.0" 101 2396' | stelp -f combined -e 'data["host"]'
 
 # Restrict output to specific keys
 echo '{"name": "alice", "age": 25, "city": "NYC"}' | \
@@ -292,7 +293,7 @@ cat /var/log/syslog | stelp -f syslog --filter 'data["severity"] <= 3' -e 'data[
 
 ### Apache/Nginx Log Processing
 ```bash
-# Process Apache/Nginx access logs in Combined Log Format
+# Process standard Combined Log Format
 echo '192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api HTTP/1.1" 200 1234 "https://example.com" "Mozilla/5.0"' | \
 stelp -f combined -e '
 ip = data["ip"]
@@ -303,15 +304,30 @@ size = data["size"]
 f"{ip} {method} {path} -> {status} ({size} bytes)"
 '
 
-# Filter for errors and analyze traffic
-cat /var/log/nginx/access.log | \
+# Process extended Apache format with additional fields (hostname, port, query, timing)
+echo '48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018 12:39:39] "GET /search HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396 5002278' | \
+stelp -f combined -e '
+ip = data["ip"]
+host = data["host"]
+port = data["port"]
+user = data["user"]
+method = data["method"]
+query = data["query"]
+status = data["status"]
+timing = data["timing"]
+f"User {user} from {ip}@{host}:{port} {method} -> {status} query={query} timing={timing}"
+'
+
+# Filter for errors and analyze traffic (works with both standard and extended formats)
+cat /var/log/apache2/access.log | \
 stelp -f combined --filter 'data["status"] >= 400' -e '
 ip = data["ip"]
 method = data["method"]
 path = data["path"]
 status = data["status"]
+host = data.get("host", "unknown")
 ua = data.get("ua", "unknown")
-f"ERROR {status}: {method} {path} from {ip} using {ua}"
+f"ERROR {status}: {method} {path} from {ip}@{host} using {ua}"
 '
 
 # Count requests by path

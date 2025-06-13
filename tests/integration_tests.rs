@@ -907,3 +907,89 @@ fn test_combined_invalid_format_error_handling() {
     assert_eq!(stats.parse_errors.len(), 2);
     assert_eq!(stats.parse_errors[0].format_name, "combined");
 }
+
+#[test]
+fn test_combined_extended_apache_format() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Test extended Apache format with additional fields
+    let processor = StarlarkProcessor::from_script(
+        "extended_test",
+        r#"
+ip = data["ip"]
+host = data["host"]
+port = data["port"]
+method = data["method"]
+path = data["path"]
+query = data["query"]
+status = data["status"]
+timing = data["timing"]
+f"{ip}@{host}:{port} {method} {path} -> {status} query={query} timing={timing}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Extended Apache format log entry
+    let input = std::io::Cursor::new(r#"48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018 12:39:39:258969] "GET /search?q=test HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396 5002278
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("apache.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "48.178.166.185@www.buttercup.com:443 GET /search?q=test -> 503 query=?q=test timing=101 2396 5002278\n");
+}
+
+#[test]
+fn test_combined_format_compatibility() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Test that optional fields are handled gracefully
+    let processor = StarlarkProcessor::from_script(
+        "compatibility_test",
+        r#"
+ip = data["ip"]
+method = data["method"]
+status = data["status"]
+has_host = "host" in data
+has_port = "port" in data
+has_query = "query" in data
+has_timing = "timing" in data
+f"{ip} {method} -> {status} (host={has_host} port={has_port} query={has_query} timing={has_timing})"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Test multiple format variants
+    let input = std::io::Cursor::new(r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api HTTP/1.1" 200 1234 "https://example.com" "Mozilla/5.0"
+48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018:12:39:39:258969] "POST /api HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396
+127.0.0.1 - - [01/Jan/2024:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 2048
+"#);
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("mixed.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 3);
+    assert_eq!(stats.records_output, 3);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines[0], "192.168.1.1 GET -> 200 (host=False port=False query=False timing=False)");  // Standard combined
+    assert_eq!(lines[1], "48.178.166.185 POST -> 503 (host=True port=True query=True timing=True)");    // Extended Apache
+    assert_eq!(lines[2], "127.0.0.1 GET -> 200 (host=False port=False query=False timing=False)");    // Common format
+}

@@ -15,7 +15,7 @@ pub enum InputFormat {
     Logfmt,
     #[value(name = "syslog", help = "Syslog format (RFC3164/RFC5424)")]
     Syslog,
-    #[value(name = "combined", help = "Apache/Nginx Combined Log Format")]
+    #[value(name = "combined", help = "Apache/Nginx Combined Log Format (supports standard and extended variants)")]
     Combined,
 }
 
@@ -354,24 +354,31 @@ impl LineParser for SyslogParser {
 }
 
 pub struct CombinedParser {
-    combined_regex: Regex,
+    extended_regex: Regex,
+    standard_combined_regex: Regex,
     common_regex: Regex,
 }
 
 impl CombinedParser {
     pub fn new() -> Self {
-        // Combined Log Format: IP - user [timestamp] "request" status size "referer" "user_agent"
-        let combined_regex = Regex::new(
-            r#"^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\d+) (\S+) "([^"]*)" "([^"]*)"$"#
-        ).expect("Combined log format regex should compile");
+        // Extended Apache format: IP hostname - user port [timestamp] "request" "query" status size "referer" "user_agent" timing...
+        let extended_regex = Regex::new(
+            r#"^(\S+)\s+(\S+)\s+-\s+(\S+)\s+(\d+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+"([^"]*)"\s+(\d+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"(?:\s+(.*))?$"#
+        ).expect("Extended combined format regex should compile");
+        
+        // Standard Combined Log Format: IP - user [timestamp] "request" status size "referer" "user_agent"
+        let standard_combined_regex = Regex::new(
+            r#"^(\S+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"$"#
+        ).expect("Standard combined format regex should compile");
 
         // Common Log Format: IP - user [timestamp] "request" status size
         let common_regex = Regex::new(
-            r#"^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"]*)" (\d+) (\S+)$"#
+            r#"^(\S+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d+)\s+(\S+)$"#
         ).expect("Common log format regex should compile");
 
         Self {
-            combined_regex,
+            extended_regex,
+            standard_combined_regex,
             common_regex,
         }
     }
@@ -403,27 +410,100 @@ impl LineParser for CombinedParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let line = line.trim();
         
-        // Try Combined Log Format first (with referer and user_agent)
-        if let Some(captures) = self.combined_regex.captures(line) {
+        // Try Extended Apache format first (IP hostname - user port [timestamp] "request" "query" status size "referer" "user_agent" timing...)
+        if let Some(captures) = self.extended_regex.captures(line) {
             let ip = captures.get(1).unwrap().as_str();
-            let ident = captures.get(2).unwrap().as_str();
+            let hostname = captures.get(2).unwrap().as_str();
             let user = captures.get(3).unwrap().as_str();
-            let timestamp = captures.get(4).unwrap().as_str();
-            let request = captures.get(5).unwrap().as_str();
-            let status = captures.get(6).unwrap().as_str();
-            let size = captures.get(7).unwrap().as_str();
-            let referer = captures.get(8).unwrap().as_str();
-            let user_agent = captures.get(9).unwrap().as_str();
+            let port = captures.get(4).unwrap().as_str();
+            let timestamp = captures.get(5).unwrap().as_str();
+            let request = captures.get(6).unwrap().as_str();
+            let query = captures.get(7).unwrap().as_str();
+            let status = captures.get(8).unwrap().as_str();
+            let size = captures.get(9).unwrap().as_str();
+            let referer = captures.get(10).unwrap().as_str();
+            let user_agent = captures.get(11).unwrap().as_str();
+            let timing = captures.get(12).map(|m| m.as_str());
             
             let (method, path, protocol) = Self::parse_request(request);
             
             let mut map = serde_json::Map::new();
             map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
             
-            // Only include non-dash values for optional fields
-            if ident != "-" {
-                map.insert("ident".to_string(), serde_json::Value::String(ident.to_string()));
+            // Extended format fields
+            if hostname != "-" {
+                map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
             }
+            if user != "-" {
+                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+            }
+            if let Ok(port_num) = port.parse::<u32>() {
+                map.insert("port".to_string(), serde_json::Value::Number(port_num.into()));
+            }
+            
+            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
+            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
+            
+            if !query.is_empty() && query != "-" {
+                map.insert("query".to_string(), serde_json::Value::String(query.to_string()));
+            }
+            
+            if let Some(m) = method {
+                map.insert("method".to_string(), serde_json::Value::String(m));
+            }
+            if let Some(p) = path {
+                map.insert("path".to_string(), serde_json::Value::String(p));
+            }
+            if let Some(proto) = protocol {
+                map.insert("proto".to_string(), serde_json::Value::String(proto));
+            }
+            
+            if let Ok(status_num) = status.parse::<u32>() {
+                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+            } else {
+                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+            }
+            
+            if size != "-" {
+                if let Ok(size_num) = size.parse::<u64>() {
+                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                } else {
+                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                }
+            }
+            
+            if referer != "-" {
+                map.insert("referer".to_string(), serde_json::Value::String(referer.to_string()));
+            }
+            if user_agent != "-" {
+                map.insert("ua".to_string(), serde_json::Value::String(user_agent.to_string()));
+            }
+            
+            if let Some(timing_data) = timing {
+                if !timing_data.trim().is_empty() {
+                    map.insert("timing".to_string(), serde_json::Value::String(timing_data.to_string()));
+                }
+            }
+            
+            return Ok(serde_json::Value::Object(map));
+        }
+        
+        // Try Standard Combined Log Format (IP - user [timestamp] "request" status size "referer" "user_agent")
+        if let Some(captures) = self.standard_combined_regex.captures(line) {
+            let ip = captures.get(1).unwrap().as_str();
+            let user = captures.get(2).unwrap().as_str();
+            let timestamp = captures.get(3).unwrap().as_str();
+            let request = captures.get(4).unwrap().as_str();
+            let status = captures.get(5).unwrap().as_str();
+            let size = captures.get(6).unwrap().as_str();
+            let referer = captures.get(7).unwrap().as_str();
+            let user_agent = captures.get(8).unwrap().as_str();
+            
+            let (method, path, protocol) = Self::parse_request(request);
+            
+            let mut map = serde_json::Map::new();
+            map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
+            
             if user != "-" {
                 map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
             }
@@ -465,24 +545,20 @@ impl LineParser for CombinedParser {
             return Ok(serde_json::Value::Object(map));
         }
         
-        // Try Common Log Format (without referer and user_agent)
+        // Try Common Log Format (IP - user [timestamp] "request" status size)
         if let Some(captures) = self.common_regex.captures(line) {
             let ip = captures.get(1).unwrap().as_str();
-            let ident = captures.get(2).unwrap().as_str();
-            let user = captures.get(3).unwrap().as_str();
-            let timestamp = captures.get(4).unwrap().as_str();
-            let request = captures.get(5).unwrap().as_str();
-            let status = captures.get(6).unwrap().as_str();
-            let size = captures.get(7).unwrap().as_str();
+            let user = captures.get(2).unwrap().as_str();
+            let timestamp = captures.get(3).unwrap().as_str();
+            let request = captures.get(4).unwrap().as_str();
+            let status = captures.get(5).unwrap().as_str();
+            let size = captures.get(6).unwrap().as_str();
             
             let (method, path, protocol) = Self::parse_request(request);
             
             let mut map = serde_json::Map::new();
             map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
             
-            if ident != "-" {
-                map.insert("ident".to_string(), serde_json::Value::String(ident.to_string()));
-            }
             if user != "-" {
                 map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
             }
@@ -517,7 +593,7 @@ impl LineParser for CombinedParser {
             return Ok(serde_json::Value::Object(map));
         }
         
-        Err("Line does not match Combined or Common Log Format".to_string())
+        Err("Line does not match any supported Combined Log Format variant".to_string())
     }
 }
 
