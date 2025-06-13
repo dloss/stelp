@@ -79,6 +79,14 @@ pub enum ProcessResult {
     Error(ProcessingError),
 }
 
+/// Parse error details for deferred reporting
+#[derive(Debug, Clone)]
+pub struct ParseErrorInfo {
+    pub line_number: usize,
+    pub format_name: String,
+    pub error: String,
+}
+
 /// Runtime statistics
 #[derive(Debug, Default, Clone)]
 pub struct ProcessingStats {
@@ -87,6 +95,7 @@ pub struct ProcessingStats {
     pub records_skipped: usize,
     pub errors: usize,
     pub processing_time: Duration,
+    pub parse_errors: Vec<ParseErrorInfo>,
 }
 
 /// Shared context across all processors

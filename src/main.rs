@@ -336,6 +336,7 @@ fn main() {
                 total_stats.records_skipped += stats.records_skipped;
                 total_stats.errors += stats.errors;
                 total_stats.processing_time += stats.processing_time;
+                total_stats.parse_errors.extend(stats.parse_errors);
             }
 
             // Reset pipeline state between files (but keep globals)
@@ -363,6 +364,20 @@ fn main() {
             total_stats.errors,
             total_stats.processing_time
         );
+        
+        // Report parse errors at the end
+        if !total_stats.parse_errors.is_empty() {
+            if total_stats.parse_errors.len() <= 5 {
+                // Show individual errors for small counts
+                for error in &total_stats.parse_errors {
+                    eprintln!("stelp: line {}: {} parse error: {}", 
+                             error.line_number, error.format_name, error.error);
+                }
+            } else {
+                // Show summary for large counts
+                eprintln!("stelp: {} parse errors encountered", total_stats.parse_errors.len());
+            }
+        }
     }
 
     // Determine exit code based on results

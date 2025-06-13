@@ -256,23 +256,6 @@ impl<'a> InputFormatWrapper<'a> {
         Self { format }
     }
 
-    /// Report parse error summary to stderr if debug mode is enabled
-    fn report_parse_errors(format_name: &str, errors: &[ParseError], debug: bool) {
-        if !debug || errors.is_empty() {
-            return;
-        }
-
-        if errors.len() <= 5 {
-            // Show individual errors for small counts
-            for error in errors {
-                eprintln!("stelp: line {}: {} parse error: {}", 
-                         error.line_number, format_name, error.error);
-            }
-        } else {
-            // Show summary for large counts
-            eprintln!("stelp: {} {} parse errors encountered", errors.len(), format_name);
-        }
-    }
     pub fn process_with_pipeline<R: Read, W: Write>(
         &self,
         reader: R,
@@ -350,13 +333,19 @@ impl<'a> InputFormatWrapper<'a> {
         }
 
         // Process records directly
-        let debug = config.debug;
-        let result = pipeline.process_records(records, output, filename);
+        let mut result = pipeline.process_records(records, output, filename)?;
         
-        // Report parse errors after processing is complete
-        Self::report_parse_errors("JSON", &parse_errors, debug);
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "JSON".to_string(),
+                error: parse_error.error,
+            });
+        }
         
-        result
+        Ok(result)
     }
 
     fn process_csv<R: BufRead, W: Write>(
@@ -422,13 +411,19 @@ impl<'a> InputFormatWrapper<'a> {
         }
 
         // Process records directly
-        let debug = config.debug;
-        let result = pipeline.process_records(records, output, filename);
+        let mut result = pipeline.process_records(records, output, filename)?;
         
-        // Report parse errors after processing is complete
-        Self::report_parse_errors("CSV", &parse_errors, debug);
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "CSV".to_string(),
+                error: parse_error.error,
+            });
+        }
         
-        result
+        Ok(result)
     }
 
     fn process_logfmt<R: BufRead, W: Write>(
@@ -484,12 +479,18 @@ impl<'a> InputFormatWrapper<'a> {
         }
 
         // Process records directly
-        let debug = config.debug;
-        let result = pipeline.process_records(records, output, filename);
+        let mut result = pipeline.process_records(records, output, filename)?;
         
-        // Report parse errors after processing is complete
-        Self::report_parse_errors("logfmt", &parse_errors, debug);
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "logfmt".to_string(),
+                error: parse_error.error,
+            });
+        }
         
-        result
+        Ok(result)
     }
 }
