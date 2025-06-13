@@ -1,7 +1,7 @@
 # Stelp - Starlark Event and Line Processor
 
 > [!WARNING]
-> Experimental tool. Vibe-coded. APIs may change without notice.
+> Experimental tool. [Vibe-coded](https://en.wikipedia.org/wiki/Vibe_coding). APIs may change without notice.
 
 A command-line tool that processes text streams using [Starlark](https://github.com/bazelbuild/starlark) scripts (a Python-like configuration language). Transform, filter, and analyze data with familiar Python syntax in streaming pipelines.
 
