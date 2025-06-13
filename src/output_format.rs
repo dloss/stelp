@@ -47,6 +47,7 @@ impl OutputFormatter {
     fn filter_keys(&self, data: &serde_json::Value) -> serde_json::Value {
         if let Some(ref key_list) = self.keys {
             if let serde_json::Value::Object(obj) = data {
+                // Use IndexMap to preserve insertion order for JSON serialization
                 let mut filtered = serde_json::Map::new();
                 for key in key_list {
                     if let Some(value) = obj.get(key) {
@@ -57,6 +58,20 @@ impl OutputFormatter {
             }
         }
         data.clone()
+    }
+
+    
+    fn get_key_order(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+        if let Some(ref key_list) = self.keys {
+            // Use the order specified in --keys, but only include keys that exist in the object
+            key_list.iter()
+                .filter(|key| obj.contains_key(*key))
+                .cloned()
+                .collect()
+        } else {
+            // Use natural iteration order when no --keys specified
+            obj.keys().cloned().collect()
+        }
     }
 
     pub fn write_record<W: Write>(
@@ -78,16 +93,39 @@ impl OutputFormatter {
     ) -> Result<(), ProcessingError> {
         match record {
             RecordData::Text(text) => {
-                // For text records in jsonl, output as plain text (not JSON-encoded)
-                // This maintains backward compatibility with existing behavior
                 writeln!(output, "{}", text)?;
             }
             RecordData::Structured(data) => {
-                let data = self.filter_keys(data);
-                let json_line = serde_json::to_string(&data).map_err(|e| {
-                    ProcessingError::OutputError(format!("JSON encoding error: {}", e))
-                })?;
-                writeln!(output, "{}", json_line)?;
+                if let Some(ref key_list) = self.keys {
+                    if let serde_json::Value::Object(obj) = data {
+                        // Manually construct JSON to preserve key order
+                        let mut json_parts = Vec::new();
+                        for key in key_list {
+                            if let Some(value) = obj.get(key) {
+                                let key_json = serde_json::to_string(key).map_err(|e| {
+                                    ProcessingError::OutputError(format!("JSON key encoding error: {}", e))
+                                })?;
+                                let value_json = serde_json::to_string(value).map_err(|e| {
+                                    ProcessingError::OutputError(format!("JSON value encoding error: {}", e))
+                                })?;
+                                json_parts.push(format!("{}:{}", key_json, value_json));
+                            }
+                        }
+                        writeln!(output, "{{{}}}", json_parts.join(","))?;
+                    } else {
+                        // Not an object, just serialize normally
+                        let json_line = serde_json::to_string(data).map_err(|e| {
+                            ProcessingError::OutputError(format!("JSON encoding error: {}", e))
+                        })?;
+                        writeln!(output, "{}", json_line)?;
+                    }
+                } else {
+                    // Normal JSON serialization when no key ordering needed
+                    let json_line = serde_json::to_string(data).map_err(|e| {
+                        ProcessingError::OutputError(format!("JSON encoding error: {}", e))
+                    })?;
+                    writeln!(output, "{}", json_line)?;
+                }
             }
         }
         Ok(())
@@ -100,7 +138,6 @@ impl OutputFormatter {
     ) -> Result<(), ProcessingError> {
         match record {
             RecordData::Text(text) => {
-                // For text records, treat as single column
                 if !self.csv_headers_written {
                     writeln!(output, "text")?;
                     self.csv_headers_written = true;
@@ -110,16 +147,17 @@ impl OutputFormatter {
             RecordData::Structured(data) => {
                 let data = self.filter_keys(data);
                 if let serde_json::Value::Object(obj) = data {
+                    let key_order = self.get_key_order(&obj);
+                    
                     // Write headers if not written yet
                     if !self.csv_headers_written {
-                        let headers: Vec<String> = obj.keys().cloned().collect();
-                        writeln!(output, "{}", headers.join(","))?;
+                        writeln!(output, "{}", key_order.join(","))?;
                         self.csv_headers_written = true;
                     }
 
-                    // Write values in key order (consistent with headers)
+                    // Write values in the specified key order
                     let mut values = Vec::new();
-                    for key in obj.keys() {
+                    for key in &key_order {
                         let value_str = match &obj[key] {
                             serde_json::Value::String(s) => s.clone(),
                             serde_json::Value::Number(n) => n.to_string(),
@@ -127,7 +165,7 @@ impl OutputFormatter {
                             serde_json::Value::Null => String::new(),
                             other => {
                                 serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
-                            } // Handle the Result
+                            }
                         };
                         values.push(self.csv_escape(&value_str));
                     }
@@ -149,15 +187,16 @@ impl OutputFormatter {
     ) -> Result<(), ProcessingError> {
         match record {
             RecordData::Text(text) => {
-                // For text records, use 'text' as the key
                 writeln!(output, "text={}", self.logfmt_escape(text))?;
             }
             RecordData::Structured(data) => {
                 let data = self.filter_keys(data);
                 if let Value::Object(obj) = data {
+                    let key_order = self.get_key_order(&obj);
                     let mut pairs = Vec::new();
-                    for (key, value) in &obj {
-                        // Add & here to iterate by reference
+                    
+                    for key in &key_order {
+                        let value = &obj[key];
                         let value_str = match value {
                             serde_json::Value::String(s) => s.clone(),
                             serde_json::Value::Number(n) => n.to_string(),
@@ -165,7 +204,7 @@ impl OutputFormatter {
                             serde_json::Value::Null => String::new(),
                             other => {
                                 serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
-                            } // Handle the Result
+                            }
                         };
                         let key_clean = self.logfmt_escape_key(key);
                         let value_clean = self.logfmt_escape(&value_str);
@@ -199,12 +238,10 @@ impl OutputFormatter {
     }
 
     fn logfmt_escape_key(&self, key: &str) -> String {
-        // Keys in logfmt should not contain spaces or special chars
         key.replace(' ', "_").replace('=', "_")
     }
 
     pub fn reset(&mut self) {
-        // Reset state for new stream (e.g., CSV headers)
         self.csv_headers_written = false;
     }
 }

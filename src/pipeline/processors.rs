@@ -1,3 +1,4 @@
+// src/pipeline/processors.rs - Fixed version
 use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
@@ -23,6 +24,7 @@ enum StarlarkResult {
     None,
     Text(String),
     List(Vec<String>),
+    Structured(serde_json::Value), // NEW: Add structured data support
 }
 
 impl StarlarkProcessor {
@@ -114,43 +116,56 @@ impl StarlarkProcessor {
         // Convert the result to our owned type before returning
         let starlark_result = if result.is_none() {
             StarlarkResult::None
-        } else if let Ok(mut iterator) = result.iterate(module.heap()) {
-            // NEW: Handle any iterable (including ranges)
-            let mut strings = Vec::new();
-            loop {
-                match iterator.next() {
-                    Some(item) => {
-                        let item_str = if item.is_none() {
-                            String::new()
-                        } else if let Some(s) = item.unpack_str() {
-                            s.to_string()
-                        } else {
-                            let s = item.to_string();
-                            if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                                s[1..s.len() - 1].to_string()
-                            } else {
-                                s
-                            }
-                        };
-                        strings.push(item_str);
-                    }
-                    None => break,
-                }
-            }
-            StarlarkResult::List(strings)
         } else {
-            // Single value
-            let text = if let Some(s) = result.unpack_str() {
-                s.to_string()
-            } else {
-                let s = result.to_string();
-                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                    s[1..s.len() - 1].to_string()
-                } else {
-                    s
+            // NEW: Check if it's a dictionary first
+            use starlark::values::dict::DictRef;
+            if let Some(_dict) = DictRef::from_value(result) {
+                // Convert Starlark dict to JSON
+                match starlark_to_json_value(result) {
+                    Ok(json_value) => StarlarkResult::Structured(json_value),
+                    Err(_) => {
+                        // Fallback to string representation
+                        StarlarkResult::Text(result.to_string())
+                    }
                 }
-            };
-            StarlarkResult::Text(text)
+            } else if let Ok(mut iterator) = result.iterate(module.heap()) {
+                // Handle any iterable (including ranges)
+                let mut strings = Vec::new();
+                loop {
+                    match iterator.next() {
+                        Some(item) => {
+                            let item_str = if item.is_none() {
+                                String::new()
+                            } else if let Some(s) = item.unpack_str() {
+                                s.to_string()
+                            } else {
+                                let s = item.to_string();
+                                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                                    s[1..s.len() - 1].to_string()
+                                } else {
+                                    s
+                                }
+                            };
+                            strings.push(item_str);
+                        }
+                        None => break,
+                    }
+                }
+                StarlarkResult::List(strings)
+            } else {
+                // Single value
+                let text = if let Some(s) = result.unpack_str() {
+                    s.to_string()
+                } else {
+                    let s = result.to_string();
+                    if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                        s[1..s.len() - 1].to_string()
+                    } else {
+                        s
+                    }
+                };
+                StarlarkResult::Text(text)
+            }
         };
 
         Ok(starlark_result)
@@ -190,7 +205,7 @@ impl StarlarkProcessor {
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     ProcessResult::Exit(final_output)
                 } else {
-                    // NEW: Check if result is a list for fan-out
+                    // Handle different result types
                     match starlark_result {
                         StarlarkResult::List(strings) => {
                             // Fan-out: convert each string to a RecordData
@@ -224,6 +239,17 @@ impl StarlarkProcessor {
                                 },
                             }
                         }
+                        // NEW: Handle structured data
+                        StarlarkResult::Structured(json_value) => {
+                            let clean_result = RecordData::structured(json_value);
+                            match emissions.is_empty() {
+                                true => ProcessResult::Transform(clean_result),
+                                false => ProcessResult::TransformWithEmissions {
+                                    primary: Some(clean_result),
+                                    emissions,
+                                },
+                            }
+                        }
                     }
                 }
             }
@@ -245,23 +271,7 @@ impl StarlarkProcessor {
 
 impl RecordProcessor for StarlarkProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
-        let result = match self.process_standalone(record, ctx) {
-            ProcessResult::Transform(output_record) => ProcessResult::Transform(output_record),
-            ProcessResult::FanOut(output_records) => ProcessResult::FanOut(output_records),
-            ProcessResult::TransformWithEmissions { primary, emissions } => {
-                ProcessResult::TransformWithEmissions { primary, emissions }
-            }
-            ProcessResult::Skip => ProcessResult::Skip,
-            ProcessResult::Exit(final_output) => ProcessResult::Exit(final_output),
-            ProcessResult::Error(err) => ProcessResult::Error(err),
-        };
-
-        // Clear context
-        CURRENT_CONTEXT.with(|current_ctx| {
-            *current_ctx.borrow_mut() = None;
-        });
-
-        result
+        self.process_standalone(record, ctx)
     }
 
     fn name(&self) -> &str {
@@ -269,7 +279,7 @@ impl RecordProcessor for StarlarkProcessor {
     }
 }
 
-/// Simple filter processor
+/// Filter processor that uses Starlark expressions
 pub struct FilterProcessor {
     globals: Globals,
     script_source: String,
@@ -277,47 +287,43 @@ pub struct FilterProcessor {
 }
 
 impl FilterProcessor {
-    /// Create from filter expression
-    pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
+    pub fn from_script(name: &str, script: &str) -> Result<Self, CompilationError> {
+        // Create globals with built-in functions
         let globals = GlobalsBuilder::standard().with(global_functions).build();
 
+        // Validate syntax by parsing with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
-        let _ast = AstModule::parse("filter", expression.to_string(), &dialect)?;
+        let _ast = AstModule::parse("filter", script.to_string(), &dialect)?;
 
         Ok(FilterProcessor {
             globals,
-            script_source: expression.to_string(),
+            script_source: script.to_string(),
             name: name.to_string(),
         })
     }
 
-    fn filter_matches(
-        &self,
-        record: &RecordData,
-        ctx: &RecordContext,
-    ) -> Result<bool, anyhow::Error> {
-        // Set up context
-        CURRENT_CONTEXT.with(|current_ctx| {
-            *current_ctx.borrow_mut() = Some((
+    // Keep the old from_expression method for backward compatibility
+    pub fn from_expression(name: &str, expression: &str) -> Result<Self, CompilationError> {
+        Self::from_script(name, expression)
+    }
+
+    fn filter_matches(&self, record: &RecordData, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
+        // Set up context for global functions
+        CURRENT_CONTEXT.with(|ctx_cell| {
+            *ctx_cell.borrow_mut() = Some((
                 ctx.global_vars as *const GlobalVariables,
                 ctx.line_number,
                 ctx.file_name.map(|s| s.to_string()),
             ));
         });
 
-        // Clear thread-local state
-        EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
-        SKIP_FLAG.with(|flag| flag.set(false));
-        EXIT_FLAG.with(|flag| flag.set(false));
-        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
-
-        // Create fresh module
+        // Create fresh module for each record
         let module = Module::new();
 
-        // ADD: Create glob dictionary - this was missing!
+        // Create glob dictionary using the existing function
         let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
         module.set("glob", glob_dict);
 
@@ -361,7 +367,7 @@ impl FilterProcessor {
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Filter execution error: {}", e))?;
 
-        // ADD: Sync glob dictionary back to global variables after execution
+        // Sync glob dictionary back to global variables after execution
         if let Some(glob_value) = module.get("glob") {
             sync_glob_dict_to_globals(glob_value, ctx.global_vars);
         }
@@ -387,6 +393,7 @@ impl FilterProcessor {
         }
     }
 }
+
 impl RecordProcessor for FilterProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
         let result = match self.filter_matches(record, ctx) {
@@ -460,5 +467,37 @@ fn json_to_starlark_value(
             let dict = Dict::new(content);
             Ok(heap.alloc(dict))
         }
+    }
+}
+
+fn starlark_to_json_value(value: starlark::values::Value) -> anyhow::Result<serde_json::Value> {
+    use starlark::values::{dict::DictRef, list::ListRef};
+
+    if value.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Some(b) = value.unpack_bool() {
+        Ok(serde_json::Value::Bool(b))
+    } else if let Some(i) = value.unpack_i32() {
+        Ok(serde_json::Value::Number(serde_json::Number::from(i)))
+    } else if let Some(s) = value.unpack_str() {
+        Ok(serde_json::Value::String(s.to_string()))
+    } else if let Some(list) = ListRef::from_value(value) {
+        let arr: Result<Vec<serde_json::Value>, _> =
+            list.iter().map(starlark_to_json_value).collect();
+        Ok(serde_json::Value::Array(arr?))
+    } else if let Some(dict) = DictRef::from_value(value) {
+        let mut obj = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            // FIX: Use unpack_str() to get the actual string value without quotes
+            let key = if let Some(s) = k.unpack_str() {
+                s.to_string()
+            } else {
+                k.to_string()
+            };
+            obj.insert(key, starlark_to_json_value(v)?);
+        }
+        Ok(serde_json::Value::Object(obj))
+    } else {
+        Ok(serde_json::Value::String(value.to_string()))
     }
 }
