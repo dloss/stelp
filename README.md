@@ -28,7 +28,7 @@ f"Even #{count}: {line}"
 
 - **Pipeline Processing**: Chain multiple transformation and filter steps
 - **Python-like Syntax**: Familiar Starlark (Python subset) scripting
-- **Data Format Support**: JSON Lines, CSV, logfmt input/output formats
+- **Data Format Support**: JSON Lines, CSV, logfmt, syslog, Apache/Nginx logs
 - **Global State**: Accumulate counters, track state across lines
 - **Side Effects**: Emit additional output, skip lines, early exit
 - **Meta Variables**: Access line numbers, filenames, record counts
@@ -45,7 +45,7 @@ Options:
   -I, --include <FILE>        Include Starlark files (processed in order)
       --begin <EXPRESSION>    Expression to run before processing any input
       --end <EXPRESSION>      Expression to run after processing all input
-  -f, --input-format <FORMAT> Input format for structured parsing (jsonl, csv, logfmt)
+  -f, --input-format <FORMAT> Input format for structured parsing (jsonl, csv, logfmt, syslog, combined)
   -F, --output-format <FORMAT> Output format (jsonl, csv, logfmt)
   -k, --keys <KEYS>           Specify output columns for structured data (comma-separated)
   -o, --output <FILE>         Output file (default: stdout)
@@ -121,7 +121,7 @@ inc("counter")           # Increment counter, returns new value
 
 ### Structured Data Formats
 
-Stelp supports structured input and output formats:
+Stelp supports multiple structured input formats that parse into a `data` dictionary:
 
 ```bash
 # JSON Lines input/output
@@ -130,8 +130,14 @@ echo '{"name": "alice", "age": 25}' | stelp -f jsonl -F jsonl -e 'data["name"].u
 # CSV input/output
 printf "name,age\nalice,25\n" | stelp -f csv -F csv -e 'data["name"].upper()'
 
-# logfmt input/output
+# logfmt input/output (key=value pairs)
 echo "name=alice age=25" | stelp -f logfmt -F logfmt -e 'data["name"].upper()'
+
+# Syslog format (Unix system logs)
+echo '<165>Oct 11 22:14:15 server01 sshd[1234]: Failed password' | stelp -f syslog -e 'data["prog"]'
+
+# Combined Log Format (Apache/Nginx access logs)
+echo '192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET / HTTP/1.1" 200 1234' | stelp -f combined -e 'data["ip"]'
 
 # Restrict output to specific keys
 echo '{"name": "alice", "age": 25, "city": "NYC"}' | \
@@ -266,6 +272,50 @@ user = data["user"]
 duration = data["duration"]
 f"[{level.upper()}] {user} - {duration}"
 '
+```
+
+### Syslog Processing
+```bash
+# Process syslog files (RFC3164/RFC5424 formats)
+echo "<165>1 2023-10-11T22:14:15.003Z server01 sshd 1234 ID47 - Failed password" | \
+stelp -f syslog -e '
+host = data["host"]
+prog = data["prog"]
+severity = data["severity"]
+msg = data["msg"]
+f"[{prog}@{host}] SEV={severity}: {msg}"
+'
+
+# Filter by facility or severity
+cat /var/log/syslog | stelp -f syslog --filter 'data["severity"] <= 3' -e 'data["msg"]'
+```
+
+### Apache/Nginx Log Processing
+```bash
+# Process Apache/Nginx access logs in Combined Log Format
+echo '192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api HTTP/1.1" 200 1234 "https://example.com" "Mozilla/5.0"' | \
+stelp -f combined -e '
+ip = data["ip"]
+method = data["method"]
+path = data["path"]
+status = data["status"]
+size = data["size"]
+f"{ip} {method} {path} -> {status} ({size} bytes)"
+'
+
+# Filter for errors and analyze traffic
+cat /var/log/nginx/access.log | \
+stelp -f combined --filter 'data["status"] >= 400' -e '
+ip = data["ip"]
+method = data["method"]
+path = data["path"]
+status = data["status"]
+ua = data.get("ua", "unknown")
+f"ERROR {status}: {method} {path} from {ip} using {ua}"
+'
+
+# Count requests by path
+cat access.log | stelp -f combined -e 'data["path"]' | sort | uniq -c | sort -nr
 ```
 
 ### Key Options for Structured Data

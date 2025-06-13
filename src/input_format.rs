@@ -7,15 +7,15 @@ use crate::chunking::{ChunkConfig, chunk_lines};
 
 #[derive(Clone, Debug, clap::ValueEnum)]
 pub enum InputFormat {
-    #[value(name = "jsonl")]
+    #[value(name = "jsonl", help = "JSON Lines format (one JSON object per line)")]
     Jsonl,
-    #[value(name = "csv")]
+    #[value(name = "csv", help = "Comma-separated values with headers")]
     Csv,
-    #[value(name = "logfmt")]
+    #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
     Logfmt,
-    #[value(name = "syslog")]
+    #[value(name = "syslog", help = "Syslog format (RFC3164/RFC5424)")]
     Syslog,
-    #[value(name = "combined")]
+    #[value(name = "combined", help = "Apache/Nginx Combined Log Format")]
     Combined,
 }
 

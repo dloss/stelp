@@ -51,7 +51,7 @@ struct Args {
     #[arg(long = "end")]
     end: Option<String>,
 
-    /// Input format for structured parsing (jsonl, csv)
+    /// Input format for structured parsing
     #[arg(short = 'f', long = "input-format", value_enum)]
     input_format: Option<InputFormat>,
 
