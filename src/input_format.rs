@@ -239,6 +239,13 @@ impl LineParser for LogfmtParser {
     }
 }
 
+/// Simple parse error info for summary reporting
+#[derive(Debug)]
+struct ParseError {
+    line_number: usize,
+    error: String,
+}
+
 /// Wrapper that integrates input format parsing with existing StreamPipeline
 pub struct InputFormatWrapper<'a> {
     format: Option<&'a InputFormat>,
@@ -247,6 +254,24 @@ pub struct InputFormatWrapper<'a> {
 impl<'a> InputFormatWrapper<'a> {
     pub fn new(format: Option<&'a InputFormat>) -> Self {
         Self { format }
+    }
+
+    /// Report parse error summary to stderr if debug mode is enabled
+    fn report_parse_errors(format_name: &str, errors: &[ParseError], debug: bool) {
+        if !debug || errors.is_empty() {
+            return;
+        }
+
+        if errors.len() <= 5 {
+            // Show individual errors for small counts
+            for error in errors {
+                eprintln!("stelp: line {}: {} parse error: {}", 
+                         error.line_number, format_name, error.error);
+            }
+        } else {
+            // Show summary for large counts
+            eprintln!("stelp: {} {} parse errors encountered", errors.len(), format_name);
+        }
     }
     pub fn process_with_pipeline<R: Read, W: Write>(
         &self,
@@ -283,6 +308,7 @@ impl<'a> InputFormatWrapper<'a> {
         let mut enhanced_lines = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 0;
+        let mut parse_errors = Vec::new();
 
         // Read all lines and parse them
         for line_result in reader.lines() {
@@ -313,12 +339,11 @@ impl<'a> InputFormatWrapper<'a> {
                             .into());
                         }
                         crate::config::ErrorStrategy::Skip => {
-                            if config.debug {
-                                eprintln!(
-                                    "stelp: line {}: JSON parse error: {}",
-                                    line_number, parse_error
-                                );
-                            }
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
                             // Skip the malformed line entirely to maintain output format consistency
                             continue;
                         }
@@ -335,7 +360,13 @@ impl<'a> InputFormatWrapper<'a> {
         };
 
         let enhanced_reader = std::io::Cursor::new(combined);
-        pipeline.process_stream_with_data(enhanced_reader, output, filename)
+        let debug = config.debug;
+        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        
+        // Report parse errors after processing is complete
+        Self::report_parse_errors("JSON", &parse_errors, debug);
+        
+        result
     }
 
     fn process_csv<R: BufRead, W: Write>(
@@ -359,6 +390,7 @@ impl<'a> InputFormatWrapper<'a> {
         let mut enhanced_lines = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 1; // Start at 1 since we already read the header line
+        let mut parse_errors = Vec::new();
 
         // Read and parse remaining lines
         for line_result in reader.lines() {
@@ -389,12 +421,11 @@ impl<'a> InputFormatWrapper<'a> {
                             .into());
                         }
                         crate::config::ErrorStrategy::Skip => {
-                            if config.debug {
-                                eprintln!(
-                                    "stelp: line {}: CSV parse error: {}",
-                                    line_number, parse_error
-                                );
-                            }
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
                             // Skip the malformed line entirely to maintain output format consistency
                             continue;
                         }
@@ -411,7 +442,13 @@ impl<'a> InputFormatWrapper<'a> {
         };
 
         let enhanced_reader = std::io::Cursor::new(combined);
-        pipeline.process_stream_with_data(enhanced_reader, output, filename)
+        let debug = config.debug;
+        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        
+        // Report parse errors after processing is complete
+        Self::report_parse_errors("CSV", &parse_errors, debug);
+        
+        result
     }
 
     fn process_logfmt<R: BufRead, W: Write>(
@@ -425,6 +462,7 @@ impl<'a> InputFormatWrapper<'a> {
         let mut enhanced_lines = Vec::new();
         let config = pipeline.get_config();
         let mut line_number = 0;
+        let mut parse_errors = Vec::new();
 
         // Read all lines and parse them
         for line_result in reader.lines() {
@@ -455,12 +493,11 @@ impl<'a> InputFormatWrapper<'a> {
                             .into());
                         }
                         crate::config::ErrorStrategy::Skip => {
-                            if config.debug {
-                                eprintln!(
-                                    "stelp: line {}: logfmt parse error: {}",
-                                    line_number, parse_error
-                                );
-                            }
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
                             // Skip the malformed line entirely to maintain output format consistency
                             continue;
                         }
@@ -477,6 +514,12 @@ impl<'a> InputFormatWrapper<'a> {
         };
 
         let enhanced_reader = std::io::Cursor::new(combined);
-        pipeline.process_stream_with_data(enhanced_reader, output, filename)
+        let debug = config.debug;
+        let result = pipeline.process_stream_with_data(enhanced_reader, output, filename);
+        
+        // Report parse errors after processing is complete
+        Self::report_parse_errors("logfmt", &parse_errors, debug);
+        
+        result
     }
 }
