@@ -33,6 +33,8 @@ pub struct OutputFormatter {
     format: OutputFormat,
     keys: Option<Vec<String>>,
     csv_headers_written: bool,
+    csv_schema_keys: Option<Vec<String>>, // Keys from first record (for warning)
+    missing_keys_warned: std::collections::HashSet<String>, // Track warned keys
 }
 
 impl OutputFormatter {
@@ -41,6 +43,8 @@ impl OutputFormatter {
             format,
             csv_headers_written: false,
             keys,
+            csv_schema_keys: None,
+            missing_keys_warned: std::collections::HashSet::new(),
         }
     }
 
@@ -63,11 +67,8 @@ impl OutputFormatter {
     
     fn get_key_order(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
         if let Some(ref key_list) = self.keys {
-            // Use the order specified in --keys, but only include keys that exist in the object
-            key_list.iter()
-                .filter(|key| obj.contains_key(*key))
-                .cloned()
-                .collect()
+            // Use the order specified in --keys, including ALL keys (missing ones become empty cells)
+            key_list.clone()
         } else {
             // Use natural iteration order when no --keys specified
             obj.keys().cloned().collect()
@@ -153,19 +154,43 @@ impl OutputFormatter {
                     if !self.csv_headers_written {
                         writeln!(output, "{}", key_order.join(","))?;
                         self.csv_headers_written = true;
+                        // Store schema keys for warning purposes (only when --keys not specified)
+                        if self.keys.is_none() {
+                            self.csv_schema_keys = Some(key_order.clone());
+                        }
+                    }
+                    
+                    // Check for missing keys and warn (only when --keys not specified)
+                    if self.keys.is_none() {
+                        if let Some(ref schema_keys) = self.csv_schema_keys {
+                            let current_keys: std::collections::HashSet<String> = obj.keys().map(|s| s.clone()).collect();
+                            let schema_keys_set: std::collections::HashSet<String> = schema_keys.iter().cloned().collect();
+                            
+                            let missing_keys: Vec<String> = current_keys.difference(&schema_keys_set)
+                                .filter(|key| !self.missing_keys_warned.contains(*key))
+                                .cloned()
+                                .collect();
+                            
+                            if !missing_keys.is_empty() {
+                                for key in &missing_keys {
+                                    self.missing_keys_warned.insert(key.clone());
+                                }
+                            }
+                        }
                     }
 
                     // Write values in the specified key order
                     let mut values = Vec::new();
                     for key in &key_order {
-                        let value_str = match &obj[key] {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            serde_json::Value::Null => String::new(),
-                            other => {
+                        let value_str = match obj.get(key) {
+                            Some(serde_json::Value::String(s)) => s.clone(),
+                            Some(serde_json::Value::Number(n)) => n.to_string(),
+                            Some(serde_json::Value::Bool(b)) => b.to_string(),
+                            Some(serde_json::Value::Null) => String::new(),
+                            Some(other) => {
                                 serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
                             }
+                            None => String::new(), // Missing key - use empty value
                         };
                         values.push(self.csv_escape(&value_str));
                     }
@@ -243,5 +268,25 @@ impl OutputFormatter {
 
     pub fn reset(&mut self) {
         self.csv_headers_written = false;
+        self.csv_schema_keys = None;
+        self.missing_keys_warned.clear();
+    }
+    
+    /// Report final CSV warnings about missing keys (call at end of processing)
+    pub fn report_csv_warnings(&self) {
+        if self.format == OutputFormat::Csv && self.keys.is_none() && !self.missing_keys_warned.is_empty() {
+            if let Some(ref schema_keys) = self.csv_schema_keys {
+                let mut all_keys = schema_keys.clone();
+                let mut missing_keys: Vec<_> = self.missing_keys_warned.iter().cloned().collect();
+                missing_keys.sort();
+                all_keys.extend(missing_keys.iter().cloned());
+                all_keys.sort();
+                
+                eprintln!("stelp: warning: keys '{}' found but not in CSV schema (based on first record)", 
+                         missing_keys.join("', '"));
+                eprintln!("stelp: suggestion: use --keys {} to include all data", 
+                         all_keys.join(","));
+            }
+        }
     }
 }

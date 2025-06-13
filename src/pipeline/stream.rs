@@ -49,6 +49,10 @@ impl StreamPipeline {
     pub fn get_config(&self) -> &PipelineConfig {
         &self.config
     }
+    
+    pub fn get_output_formatter(&self) -> &OutputFormatter {
+        &self.output_formatter
+    }
 
     /// Reset processor state between files (but keep global variables)
     pub fn reset_processors(&mut self) {

@@ -354,6 +354,9 @@ fn main() {
         }
     }
 
+    // Report CSV warnings about missing keys
+    pipeline.get_output_formatter().report_csv_warnings();
+    
     // Print final stats if debug mode
     if args.debug {
         // Report parse errors first
