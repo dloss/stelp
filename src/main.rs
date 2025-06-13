@@ -356,16 +356,7 @@ fn main() {
 
     // Print final stats if debug mode
     if args.debug {
-        eprintln!(
-            "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
-            total_stats.records_processed,
-            total_stats.records_output,
-            total_stats.records_skipped,
-            total_stats.errors,
-            total_stats.processing_time
-        );
-        
-        // Report parse errors at the end
+        // Report parse errors first
         if !total_stats.parse_errors.is_empty() {
             if total_stats.parse_errors.len() <= 5 {
                 // Show individual errors for small counts
@@ -378,6 +369,15 @@ fn main() {
                 eprintln!("stelp: {} parse errors encountered", total_stats.parse_errors.len());
             }
         }
+        
+        eprintln!(
+            "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+            total_stats.records_processed,
+            total_stats.records_output,
+            total_stats.records_skipped,
+            total_stats.errors,
+            total_stats.processing_time
+        );
     }
 
     // Determine exit code based on results
