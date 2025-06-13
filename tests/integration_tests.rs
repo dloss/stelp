@@ -537,3 +537,183 @@ fn test_begin_end_empty_input() {
     assert_eq!(stats.records_output, 2); // BEGIN + END
     assert_eq!(output_str, "Start\nEnd\n");
 }
+
+#[test]
+fn test_syslog_rfc5424_parsing() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Script to extract key fields
+    let processor = StarlarkProcessor::from_script(
+        "syslog_test",
+        r#"
+pri = data["pri"]
+facility = data["facility"] 
+severity = data["severity"]
+host = data["host"]
+prog = data["prog"]
+msg = data["msg"]
+f"PRI={pri} FAC={facility} SEV={severity} HOST={host} PROG={prog} MSG={msg}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // RFC5424 syslog message
+    let input = std::io::Cursor::new("<165>1 2023-10-11T22:14:15.003Z server01 sshd 1234 ID47 - Failed password for user\n");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "PRI=165 FAC=20 SEV=5 HOST=server01 PROG=sshd MSG=Failed password for user\n");
+}
+
+#[test]
+fn test_syslog_rfc3164_parsing() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Script to extract key fields
+    let processor = StarlarkProcessor::from_script(
+        "syslog_test",
+        r#"
+ts = data["ts"]
+host = data["host"]
+prog = data["prog"]
+pid = data.get("pid", "none")
+msg = data["msg"]
+f"TS={ts} HOST={host} PROG={prog} PID={pid} MSG={msg}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // RFC3164 syslog message
+    let input = std::io::Cursor::new("Oct 11 22:14:15 server01 sshd[1234]: Failed password for user from 192.168.1.100\n");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "TS=Oct 11 22:14:15 HOST=server01 PROG=sshd PID=1234 MSG=Failed password for user from 192.168.1.100\n");
+}
+
+#[test]
+fn test_syslog_rfc3164_no_pid() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Script to check for optional PID field
+    let processor = StarlarkProcessor::from_script(
+        "syslog_test",
+        r#"
+host = data["host"]
+prog = data["prog"]
+has_pid = "pid" in data
+msg = data["msg"]
+f"HOST={host} PROG={prog} HAS_PID={has_pid} MSG={msg}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // RFC3164 syslog message without PID
+    let input = std::io::Cursor::new("Oct 11 22:14:15 server01 kernel: Out of memory: Kill process 1234\n");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 1);
+    assert_eq!(stats.records_output, 1);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(output_str, "HOST=server01 PROG=kernel HAS_PID=False MSG=Out of memory: Kill process 1234\n");
+}
+
+#[test]
+fn test_syslog_facility_severity_calculation() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Test various priority values
+    let processor = StarlarkProcessor::from_script(
+        "syslog_test", 
+        r#"
+pri = data["pri"]
+facility = data["facility"]
+severity = data["severity"] 
+f"PRI={pri} FAC={facility} SEV={severity}"
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Test different priority values:
+    // <0> = facility 0, severity 0 (kernel, emergency)
+    // <33> = facility 4, severity 1 (security, alert) 
+    // <165> = facility 20, severity 5 (local4, notice)
+    let input = std::io::Cursor::new(
+        "<0>1 2023-10-11T22:14:15Z host prog - - - kernel emergency\n<33>1 2023-10-11T22:14:15Z host prog - - - security alert\n<165>1 2023-10-11T22:14:15Z host prog - - - local4 notice\n"
+    );
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+
+    assert_eq!(stats.records_processed, 3);
+    assert_eq!(stats.records_output, 3);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines[0], "PRI=0 FAC=0 SEV=0");      // kernel.emergency
+    assert_eq!(lines[1], "PRI=33 FAC=4 SEV=1");     // security.alert  
+    assert_eq!(lines[2], "PRI=165 FAC=20 SEV=5");   // local4.notice
+}
+
+#[test]
+fn test_syslog_invalid_format_error_handling() {
+    use stelp::input_format::{InputFormat, InputFormatWrapper};
+    
+    let config = stelp::config::PipelineConfig::default();
+    let mut pipeline = stelp::StreamPipeline::new(config);
+
+    // Simple pass-through processor
+    let processor = StarlarkProcessor::from_script("test", r#"data["msg"]"#).unwrap();
+    pipeline.add_processor(Box::new(processor));
+
+    // Invalid syslog format
+    let input = std::io::Cursor::new("This is not a valid syslog message\nNor is this\n");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+
+    // Should skip invalid lines according to default error strategy
+    assert_eq!(stats.records_processed, 0);
+    assert_eq!(stats.records_output, 0);
+    assert_eq!(stats.errors, 2); // Two parse errors
+    assert_eq!(stats.parse_errors.len(), 2);
+    assert_eq!(stats.parse_errors[0].format_name, "syslog");
+}

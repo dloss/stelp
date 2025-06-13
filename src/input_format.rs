@@ -2,6 +2,7 @@
 
 use serde_json;
 use std::io::{BufRead, BufReader, Read, Write};
+use regex::Regex;
 use crate::chunking::{ChunkConfig, chunk_lines};
 
 #[derive(Clone, Debug, clap::ValueEnum)]
@@ -12,6 +13,8 @@ pub enum InputFormat {
     Csv,
     #[value(name = "logfmt")]
     Logfmt,
+    #[value(name = "syslog")]
+    Syslog,
 }
 
 pub trait LineParser {
@@ -240,6 +243,114 @@ impl LineParser for LogfmtParser {
     }
 }
 
+pub struct SyslogParser {
+    rfc5424_regex: Regex,
+    rfc3164_regex: Regex,
+}
+
+impl SyslogParser {
+    pub fn new() -> Self {
+        // RFC5424: <165>1 2023-10-11T22:14:15.003Z hostname appname 1234 msgid structured_data message
+        let rfc5424_regex = Regex::new(
+            r"^<(\d{1,3})>(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$"
+        ).expect("RFC5424 regex should compile");
+
+        // RFC3164: Oct 11 22:14:15 hostname appname[1234]: message
+        let rfc3164_regex = Regex::new(
+            r"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^:\[\s]+)(?:\[(\d+)\])?\s*:\s*(.*)$"
+        ).expect("RFC3164 regex should compile");
+
+        Self {
+            rfc5424_regex,
+            rfc3164_regex,
+        }
+    }
+
+    fn parse_priority(priority: u32) -> (u32, u32) {
+        let facility = priority >> 3;
+        let severity = priority & 7;
+        (facility, severity)
+    }
+}
+
+impl LineParser for SyslogParser {
+    fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
+        let line = line.trim();
+        
+        // Try RFC5424 format first
+        if let Some(captures) = self.rfc5424_regex.captures(line) {
+            let priority_str = captures.get(1).unwrap().as_str();
+            let priority = priority_str.parse::<u32>()
+                .map_err(|_| format!("Invalid priority value: {}", priority_str))?;
+            
+            if priority > 191 {
+                return Err(format!("Priority value {} out of range (0-191)", priority));
+            }
+            
+            let (facility, severity) = Self::parse_priority(priority);
+            
+            let _version = captures.get(2).unwrap().as_str();
+            let timestamp = captures.get(3).unwrap().as_str();
+            let hostname = captures.get(4).unwrap().as_str();
+            let appname = captures.get(5).unwrap().as_str();
+            let procid = captures.get(6).unwrap().as_str();
+            let msgid = captures.get(7).unwrap().as_str();
+            let _structured_data = captures.get(8).unwrap().as_str();
+            let message = captures.get(9).map(|m| m.as_str()).unwrap_or("");
+            
+            let mut map = serde_json::Map::new();
+            map.insert("pri".to_string(), serde_json::Value::Number(priority.into()));
+            map.insert("facility".to_string(), serde_json::Value::Number(facility.into()));
+            map.insert("severity".to_string(), serde_json::Value::Number(severity.into()));
+            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
+            map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
+            
+            // Handle optional fields
+            if appname != "-" {
+                map.insert("prog".to_string(), serde_json::Value::String(appname.to_string()));
+            }
+            if procid != "-" {
+                if let Ok(pid) = procid.parse::<u32>() {
+                    map.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                }
+            }
+            if msgid != "-" {
+                map.insert("msgid".to_string(), serde_json::Value::String(msgid.to_string()));
+            }
+            
+            map.insert("msg".to_string(), serde_json::Value::String(message.to_string()));
+            
+            return Ok(serde_json::Value::Object(map));
+        }
+        
+        // Try RFC3164 format
+        if let Some(captures) = self.rfc3164_regex.captures(line) {
+            let timestamp = captures.get(1).unwrap().as_str();
+            let hostname = captures.get(2).unwrap().as_str();
+            let appname = captures.get(3).unwrap().as_str();
+            let procid = captures.get(4).map(|m| m.as_str());
+            let message = captures.get(5).unwrap().as_str();
+            
+            let mut map = serde_json::Map::new();
+            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
+            map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
+            map.insert("prog".to_string(), serde_json::Value::String(appname.to_string()));
+            
+            if let Some(pid_str) = procid {
+                if let Ok(pid) = pid_str.parse::<u32>() {
+                    map.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                }
+            }
+            
+            map.insert("msg".to_string(), serde_json::Value::String(message.to_string()));
+            
+            return Ok(serde_json::Value::Object(map));
+        }
+        
+        Err("Line does not match RFC5424 or RFC3164 syslog format".to_string())
+    }
+}
+
 /// Simple parse error info for summary reporting
 #[derive(Debug)]
 struct ParseError {
@@ -282,6 +393,9 @@ impl<'a> InputFormatWrapper<'a> {
             }
             Some(InputFormat::Logfmt) => {
                 self.process_logfmt(BufReader::new(reader), pipeline, output, filename)
+            }
+            Some(InputFormat::Syslog) => {
+                self.process_syslog(BufReader::new(reader), pipeline, output, filename)
             }
             None => {
                 // Raw text - apply chunking if configured
@@ -502,6 +616,74 @@ impl<'a> InputFormatWrapper<'a> {
             result.parse_errors.push(crate::context::ParseErrorInfo {
                 line_number: parse_error.line_number,
                 format_name: "logfmt".to_string(),
+                error: parse_error.error,
+            });
+        }
+        
+        Ok(result)
+    }
+
+    fn process_syslog<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let parser = SyslogParser::new();
+        let mut records = Vec::new();
+        let config = pipeline.get_config();
+        let mut line_number = 0;
+        let mut parse_errors = Vec::new();
+
+        // Read all lines and parse them
+        for line_result in reader.lines() {
+            let line = line_result?;
+            line_number += 1;
+            let line_content = line.trim();
+
+            if line_content.is_empty() {
+                continue;
+            }
+
+            // Parse syslog and create structured record
+            match parser.parse_line(&line_content) {
+                Ok(data) => {
+                    records.push(crate::context::RecordData::structured(data));
+                }
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match config.error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "syslog parse error on line {}: {}",
+                                line_number, parse_error
+                            )
+                            .into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
+                            // Skip the malformed line entirely to maintain output format consistency
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process records directly
+        let mut result = pipeline.process_records(records, output, filename)?;
+        
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "syslog".to_string(),
                 error: parse_error.error,
             });
         }

@@ -248,6 +248,7 @@ fn main() {
                 Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
                 Some(InputFormat::Csv) => OutputFormat::Csv,
                 Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
+                Some(InputFormat::Syslog) => OutputFormat::Jsonl,
                 None => OutputFormat::Jsonl, // Default when no input format
             }
         }
