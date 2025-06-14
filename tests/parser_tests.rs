@@ -1,6 +1,6 @@
 // tests/parser_tests.rs - Unit tests for format parsers
 
-use stelp::input_format::{CsvParser, JsonlParser, LineParser, LogfmtParser};
+use stelp::input_format::{CsvParser, FieldsParser, JsonlParser, LineParser, LogfmtParser};
 
 #[test]
 fn test_jsonl_parser_valid() {
@@ -221,6 +221,61 @@ fn test_logfmt_parser_invalid_format() {
 #[test]
 fn test_logfmt_parser_empty_line() {
     let parser = LogfmtParser::new();
+    let line = "";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert!(data.as_object().unwrap().is_empty());
+}
+
+#[test]
+fn test_fields_parser_basic() {
+    let parser = FieldsParser::new();
+    let line = "hello world test 123";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["f1"], "hello");
+    assert_eq!(data["f2"], "world");
+    assert_eq!(data["f3"], "test");
+    assert_eq!(data["f4"], "123");
+}
+
+#[test]
+fn test_fields_parser_single_field() {
+    let parser = FieldsParser::new();
+    let line = "single";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["f1"], "single");
+    assert_eq!(data.as_object().unwrap().len(), 1);
+}
+
+#[test]
+fn test_fields_parser_whitespace_handling() {
+    let parser = FieldsParser::new();
+    let line = "  hello   world   test  ";
+
+    let result = parser.parse_line(line);
+    assert!(result.is_ok());
+
+    let data = result.unwrap();
+    assert_eq!(data["f1"], "hello");
+    assert_eq!(data["f2"], "world");
+    assert_eq!(data["f3"], "test");
+    assert_eq!(data.as_object().unwrap().len(), 3);
+}
+
+#[test]
+fn test_fields_parser_empty_line() {
+    let parser = FieldsParser::new();
     let line = "";
 
     let result = parser.parse_line(line);

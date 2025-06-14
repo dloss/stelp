@@ -255,6 +255,7 @@ fn main() {
                 Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
                 Some(InputFormat::Syslog) => OutputFormat::Jsonl,
                 Some(InputFormat::Combined) => OutputFormat::Jsonl,
+                Some(InputFormat::Fields) => OutputFormat::Fields,
                 None => OutputFormat::Line, // Default when no input format (backwards compatibility)
             }
         }

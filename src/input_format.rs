@@ -20,6 +20,8 @@ pub enum InputFormat {
     Syslog,
     #[value(name = "combined", help = "Apache/Nginx Combined Log Format (supports standard and extended variants)")]
     Combined,
+    #[value(name = "fields", help = "Whitespace-separated fields (like AWK) with f1, f2, etc. key names")]
+    Fields,
 }
 
 impl InputFormat {
@@ -46,6 +48,7 @@ pub struct JsonlParser;
 pub struct CsvParser {
     headers: Option<Vec<String>>,
 }
+pub struct FieldsParser;
 
 impl JsonlParser {
     pub fn new() -> Self {
@@ -258,6 +261,26 @@ impl LineParser for LogfmtParser {
         let mut map = serde_json::Map::new();
         for (key, value) in pairs {
             map.insert(key, serde_json::Value::String(value));
+        }
+
+        Ok(serde_json::Value::Object(map))
+    }
+}
+
+impl FieldsParser {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl LineParser for FieldsParser {
+    fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
+        let fields: Vec<&str> = line.trim().split_whitespace().collect();
+
+        let mut map = serde_json::Map::new();
+        for (index, field) in fields.iter().enumerate() {
+            let key = format!("f{}", index + 1);
+            map.insert(key, serde_json::Value::String(field.to_string()));
         }
 
         Ok(serde_json::Value::Object(map))
@@ -673,6 +696,9 @@ impl<'a> InputFormatWrapper<'a> {
             Some(InputFormat::Combined) => {
                 self.process_combined(BufReader::new(reader), pipeline, output, filename)
             }
+            Some(InputFormat::Fields) => {
+                self.process_fields(BufReader::new(reader), pipeline, output, filename)
+            }
             None => {
                 // Raw text - apply chunking if configured
                 if self.chunk_config.is_some() {
@@ -1028,6 +1054,74 @@ impl<'a> InputFormatWrapper<'a> {
             result.parse_errors.push(crate::context::ParseErrorInfo {
                 line_number: parse_error.line_number,
                 format_name: "combined".to_string(),
+                error: parse_error.error,
+            });
+        }
+        
+        Ok(result)
+    }
+
+    fn process_fields<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let parser = FieldsParser::new();
+        let mut records = Vec::new();
+        let config = pipeline.get_config();
+        let mut line_number = 0;
+        let mut parse_errors = Vec::new();
+
+        // Read all lines and parse them
+        for line_result in reader.lines() {
+            let line = line_result?;
+            line_number += 1;
+            let line_content = line.trim();
+
+            if line_content.is_empty() {
+                continue;
+            }
+
+            // Parse fields and create structured record
+            match parser.parse_line(&line_content) {
+                Ok(data) => {
+                    records.push(crate::context::RecordData::structured(data));
+                }
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match config.error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "fields parse error on line {}: {}",
+                                line_number, parse_error
+                            )
+                            .into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
+                            // Skip the malformed line entirely to maintain output format consistency
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process records directly
+        let mut result = pipeline.process_records(records, output, filename)?;
+        
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "fields".to_string(),
                 error: parse_error.error,
             });
         }

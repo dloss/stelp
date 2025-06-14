@@ -13,6 +13,8 @@ pub enum OutputFormat {
     Csv,
     #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
     Logfmt,
+    #[value(name = "fields", help = "Whitespace-separated fields (like AWK output)")]
+    Fields,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -24,6 +26,7 @@ impl std::str::FromStr for OutputFormat {
             "jsonl" => Ok(OutputFormat::Jsonl),
             "csv" => Ok(OutputFormat::Csv),
             "logfmt" => Ok(OutputFormat::Logfmt),
+            "fields" => Ok(OutputFormat::Fields),
             _ => Err(format!("Unknown output format: {}", s)),
         }
     }
@@ -91,6 +94,7 @@ impl OutputFormatter {
             OutputFormat::Jsonl => self.write_jsonl(output, record),
             OutputFormat::Csv => self.write_csv(output, record),
             OutputFormat::Logfmt => self.write_logfmt(output, record),
+            OutputFormat::Fields => self.write_fields(output, record),
         }
     }
 
@@ -264,6 +268,46 @@ impl OutputFormatter {
                 } else {
                     return Err(ProcessingError::OutputError(
                         "Logfmt format requires object records".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_fields<W: Write>(
+        &mut self,
+        output: &mut W,
+        record: &RecordData,
+    ) -> Result<(), ProcessingError> {
+        match record {
+            RecordData::Text(text) => {
+                writeln!(output, "{}", text)?;
+            }
+            RecordData::Structured(data) => {
+                let data = self.filter_keys(data);
+                if let Value::Object(obj) = data {
+                    let key_order = self.get_key_order(&obj);
+                    let mut values = Vec::new();
+                    
+                    for key in &key_order {
+                        if let Some(value) = obj.get(key) {
+                            let value_str = match value {
+                                serde_json::Value::String(s) => s.clone(),
+                                serde_json::Value::Number(n) => n.to_string(),
+                                serde_json::Value::Bool(b) => b.to_string(),
+                                serde_json::Value::Null => String::new(),
+                                other => {
+                                    serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
+                                }
+                            };
+                            values.push(value_str);
+                        }
+                    }
+                    writeln!(output, "{}", values.join(" "))?;
+                } else {
+                    return Err(ProcessingError::OutputError(
+                        "Fields format requires object records".to_string(),
                     ));
                 }
             }
