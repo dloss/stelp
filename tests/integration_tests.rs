@@ -16,6 +16,7 @@ fn test_exit_working() {
         record_count: 1,
         file_name: None,
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(

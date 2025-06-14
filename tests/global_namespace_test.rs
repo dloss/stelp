@@ -40,6 +40,7 @@ fn test_meta_variables_alluppercase() {
         record_count: 10,
         file_name: Some("test.txt"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
@@ -108,6 +109,7 @@ fn test_meta_with_none_filename() {
         record_count: 1,
         file_name: None,
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(

@@ -16,6 +16,7 @@ fn test_meta_linenum_syntax() {
         record_count: 10,
         file_name: Some("test.txt"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor =
@@ -50,6 +51,7 @@ fn test_meta_dot_notation() {
         record_count: 10,
         file_name: Some("test.txt"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
@@ -91,6 +93,7 @@ fn test_meta_properties() {
         record_count: 3,
         file_name: Some("data.log"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
@@ -166,6 +169,7 @@ fn test_meta_with_structured_data() {
         record_count: 1,
         file_name: Some("data.json"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
@@ -219,6 +223,7 @@ fn test_meta_none_filename() {
         record_count: 1,
         file_name: None, // No filename (e.g., stdin)
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(

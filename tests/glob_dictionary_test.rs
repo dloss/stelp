@@ -54,6 +54,7 @@ fn test_glob_dictionary_methods() {
         record_count: 1,
         file_name: Some("test.txt"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
@@ -205,6 +206,7 @@ fn test_glob_basic_access() {
         record_count: 1,
         file_name: Some("test.txt"),
         global_vars: &globals,
+        debug: false,
     };
 
     let processor = StarlarkProcessor::from_script(
