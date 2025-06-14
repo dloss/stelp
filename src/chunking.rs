@@ -4,16 +4,12 @@ use regex::Regex;
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
     pub strategy: ChunkStrategy,
-    pub max_chunk_lines: usize,
-    pub max_chunk_size: usize,
 }
 
 impl Default for ChunkConfig {
     fn default() -> Self {
         Self {
             strategy: ChunkStrategy::Line,
-            max_chunk_lines: 1000,
-            max_chunk_size: 1024 * 1024, // 1MB
         }
     }
 }
@@ -68,7 +64,7 @@ impl LineChunker {
                 let size = *size; // Copy the value to avoid borrow conflicts
                 self.add_line_to_chunk(&line);
                 
-                if self.current_lines >= size || self.exceeds_safety_limits() {
+                if self.current_lines >= size {
                     Some(self.emit_current_chunk())
                 } else {
                     None
@@ -82,11 +78,7 @@ impl LineChunker {
                     Some(chunk)
                 } else {
                     self.add_line_to_chunk(&line);
-                    if self.exceeds_safety_limits() {
-                        Some(self.emit_current_chunk())
-                    } else {
-                        None
-                    }
+                    None
                 }
             }
             
@@ -99,11 +91,7 @@ impl LineChunker {
                     }
                 } else {
                     self.add_line_to_chunk(&line);
-                    if self.exceeds_safety_limits() {
-                        Some(self.emit_current_chunk())
-                    } else {
-                        None
-                    }
+                    None
                 }
             }
         }
@@ -138,10 +126,6 @@ impl LineChunker {
         chunk
     }
 
-    fn exceeds_safety_limits(&self) -> bool {
-        self.current_lines >= self.config.max_chunk_lines 
-            || self.current_chunk.len() >= self.config.max_chunk_size
-    }
 }
 
 pub fn chunk_lines<R: BufRead>(
@@ -255,19 +239,4 @@ mod tests {
         assert_eq!(chunks[2], "section3");
     }
 
-    #[test]
-    fn test_safety_limits() {
-        let input = "line1\nline2\nline3\nline4\nline5";
-        let config = ChunkConfig {
-            strategy: ChunkStrategy::FixedLines(10), // Won't trigger
-            max_chunk_lines: 2, // This will trigger
-            ..Default::default()
-        };
-
-        let chunks = chunk_lines(Cursor::new(input), config).unwrap();
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0], "line1\nline2");
-        assert_eq!(chunks[1], "line3\nline4");
-        assert_eq!(chunks[2], "line5");
-    }
 }

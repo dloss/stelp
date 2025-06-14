@@ -25,8 +25,7 @@ java.lang.RuntimeException: Something went wrong
         strategy: ChunkStrategy::StartPattern(
             Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap()
         ),
-        max_chunk_lines: 100,
-        max_chunk_size: 10000,
+        ..Default::default()
     };
 
     let mut pipeline = StreamPipeline::new(config);
@@ -91,8 +90,7 @@ line7";
 
     let chunk_config = ChunkConfig {
         strategy: ChunkStrategy::FixedLines(3),
-        max_chunk_lines: 100,
-        max_chunk_size: 10000,
+        ..Default::default()
     };
 
     let mut pipeline = StreamPipeline::new(config);
@@ -153,8 +151,7 @@ data3";
 
     let chunk_config = ChunkConfig {
         strategy: ChunkStrategy::Delimiter("---".to_string()),
-        max_chunk_lines: 100,
-        max_chunk_size: 10000,
+        ..Default::default()
     };
 
     let mut pipeline = StreamPipeline::new(config);
@@ -217,8 +214,7 @@ item5";
 
     let chunk_config = ChunkConfig {
         strategy: ChunkStrategy::Delimiter("---".to_string()),
-        max_chunk_lines: 100,
-        max_chunk_size: 10000,
+        ..Default::default()
     };
 
     let mut pipeline = StreamPipeline::new(config);
@@ -263,72 +259,6 @@ item_count = len(line.split('\n'))
     assert_eq!(stats.records_output, 3);
 }
 
-#[test]
-fn test_chunking_safety_limits() {
-    // Create input that would exceed line limit
-    let long_input = "line1
-line2
-line3
-line4
-line5
-line6
-line7
-line8
-line9
-line10";
-
-    let config = PipelineConfig {
-        error_strategy: ErrorStrategy::Skip,
-        debug: false,
-        ..Default::default()
-    };
-
-    let chunk_config = ChunkConfig {
-        strategy: ChunkStrategy::FixedLines(20), // Would normally take all lines
-        max_chunk_lines: 3, // But safety limit kicks in
-        max_chunk_size: 10000,
-    };
-
-    let mut pipeline = StreamPipeline::new(config);
-    
-    let processor = StarlarkProcessor::from_script(
-        "line_counter",
-        r#"
-line_count = len(line.split('\n'))
-result = f"Lines: {line_count}"
-result
-        "#,
-    ).unwrap();
-    
-    pipeline.add_processor(Box::new(processor));
-
-    let format_wrapper = InputFormatWrapper::new(None).with_chunking(chunk_config);
-    let mut output = Vec::new();
-
-    let stats = format_wrapper
-        .process_with_pipeline(
-            Cursor::new(long_input),
-            &mut pipeline,
-            &mut output,
-            Some("test.txt"),
-        )
-        .unwrap();
-
-    let output_str = String::from_utf8(output).unwrap();
-    let lines: Vec<&str> = output_str.trim().split('\n').collect();
-
-    // Should break into chunks of max 3 lines each
-    assert!(lines.len() >= 3); // At least 3 chunks due to safety limit
-    
-    // Each chunk should have at most 3 lines
-    for line in &lines {
-        let line_count: usize = line.split(' ').last().unwrap().parse().unwrap();
-        assert!(line_count <= 3);
-    }
-
-    assert_eq!(stats.records_processed, lines.len());
-    assert_eq!(stats.records_output, lines.len());
-}
 
 #[test]
 fn test_no_chunking_compatibility() {

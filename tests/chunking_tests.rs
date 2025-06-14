@@ -68,21 +68,6 @@ fn test_delimiter_strategy() {
     assert!(!chunks[2].contains("---"));
 }
 
-#[test]
-fn test_safety_limits_line_count() {
-    let input = "line1\nline2\nline3\nline4\nline5\nline6";
-    let config = ChunkConfig {
-        strategy: ChunkStrategy::FixedLines(10), // Won't trigger normally
-        max_chunk_lines: 2, // This will trigger safety limit
-        ..Default::default()
-    };
-
-    let chunks = chunk_lines(Cursor::new(input), config).unwrap();
-    assert_eq!(chunks.len(), 3);
-    assert_eq!(chunks[0], "line1\nline2");
-    assert_eq!(chunks[1], "line3\nline4");
-    assert_eq!(chunks[2], "line5\nline6");
-}
 
 #[test]
 fn test_java_stacktrace_pattern() {

@@ -79,25 +79,17 @@ struct Args {
     #[arg(long)]
     fail_fast: bool,
 
-    /// Enable multiline chunking with fixed number of lines per chunk
+    /// Process N lines at a time
     #[arg(long)]
     chunk_lines: Option<usize>,
 
-    /// Enable multiline chunking with a start pattern (regex)
+    /// Start new chunk on pattern match (regex)
     #[arg(long)]
-    chunk_start_pattern: Option<String>,
+    chunk_start: Option<String>,
 
-    /// Enable multiline chunking with a delimiter
+    /// Chunks separated by delimiter
     #[arg(long)]
-    chunk_delimiter: Option<String>,
-
-    /// Maximum lines per chunk (safety limit)
-    #[arg(long, default_value = "1000")]
-    chunk_max_lines: usize,
-
-    /// Maximum bytes per chunk (safety limit)
-    #[arg(long, default_value = "1048576")]
-    chunk_max_size: usize,
+    chunk_delim: Option<String>,
 }
 
 impl Args {
@@ -109,14 +101,14 @@ impl Args {
         let has_input_format = self.input_format.is_some();
         let has_output_format = self.output_format.is_some();
         let has_chunking = self.chunk_lines.is_some() || 
-                          self.chunk_start_pattern.is_some() || 
-                          self.chunk_delimiter.is_some();
+                          self.chunk_start.is_some() || 
+                          self.chunk_delim.is_some();
 
         // Check for mutually exclusive chunking options
         let chunk_options_count = [
             self.chunk_lines.is_some(),
-            self.chunk_start_pattern.is_some(),
-            self.chunk_delimiter.is_some(),
+            self.chunk_start.is_some(),
+            self.chunk_delim.is_some(),
         ].iter().filter(|&&x| x).count();
 
         if chunk_options_count > 1 {
@@ -176,20 +168,17 @@ impl Args {
         if let Some(lines) = self.chunk_lines {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("lines:{}", lines))?,
-                max_chunk_lines: self.chunk_max_lines,
-                max_chunk_size: self.chunk_max_size,
+                ..Default::default()
             }))
-        } else if let Some(pattern) = &self.chunk_start_pattern {
+        } else if let Some(pattern) = &self.chunk_start {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("start-pattern:{}", pattern))?,
-                max_chunk_lines: self.chunk_max_lines,
-                max_chunk_size: self.chunk_max_size,
+                ..Default::default()
             }))
-        } else if let Some(delimiter) = &self.chunk_delimiter {
+        } else if let Some(delimiter) = &self.chunk_delim {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("delimiter:{}", delimiter))?,
-                max_chunk_lines: self.chunk_max_lines,
-                max_chunk_size: self.chunk_max_size,
+                ..Default::default()
             }))
         } else {
             Ok(None)
