@@ -17,16 +17,12 @@ cargo build --release
 ## Quick Examples
 
 ```bash
-# Text transformation (auto-detects line format)
+# Text transformation
 echo "hello world" | stelp -e 'line.upper()'                    # → HELLO WORLD
 seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'  # Filter + transform
 
-# Auto-detection by file extension
-stelp -e 'data["user"].upper()' users.jsonl                     # Auto-detects JSONL
-stelp -e 'data["name"].upper()' employees.csv                   # Auto-detects CSV
-stelp -e 'data["level"]' app.logfmt                            # Auto-detects logfmt
-
-# Manual format override
+# Structured data processing
+stelp -e 'data["user"].upper()' users.jsonl                     # JSONL format
 echo '{"user":"alice","age":25}' | stelp -f jsonl -e 'data["user"].upper()'
 
 # Log analysis with counters
