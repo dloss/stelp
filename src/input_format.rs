@@ -2,11 +2,14 @@
 
 use serde_json;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
 use regex::Regex;
 use crate::chunking::{ChunkConfig, chunk_lines};
 
 #[derive(Clone, Debug, clap::ValueEnum)]
 pub enum InputFormat {
+    #[value(name = "line", help = "Line-based text format (unstructured data)")]
+    Line,
     #[value(name = "jsonl", help = "JSON Lines format (one JSON object per line)")]
     Jsonl,
     #[value(name = "csv", help = "Comma-separated values with headers")]
@@ -17,6 +20,22 @@ pub enum InputFormat {
     Syslog,
     #[value(name = "combined", help = "Apache/Nginx Combined Log Format (supports standard and extended variants)")]
     Combined,
+}
+
+impl InputFormat {
+    /// Detect input format from file extension
+    pub fn from_extension(path: &Path) -> Option<InputFormat> {
+        if let Some(extension) = path.extension() {
+            match extension.to_str()?.to_lowercase().as_str() {
+                "jsonl" => Some(InputFormat::Jsonl),
+                "csv" => Some(InputFormat::Csv),
+                "logfmt" => Some(InputFormat::Logfmt),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
 }
 
 pub trait LineParser {
@@ -631,6 +650,14 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         match self.format {
+            Some(InputFormat::Line) => {
+                // Line format is the same as raw text processing
+                if self.chunk_config.is_some() {
+                    self.process_text_with_chunking(BufReader::new(reader), pipeline, output, filename)
+                } else {
+                    pipeline.process_stream_with_data(BufReader::new(reader), output, filename)
+                }
+            }
             Some(InputFormat::Jsonl) => {
                 self.process_jsonl(BufReader::new(reader), pipeline, output, filename)
             }

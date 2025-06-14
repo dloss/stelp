@@ -55,7 +55,7 @@ struct Args {
     #[arg(short = 'f', long = "input-format", value_enum)]
     input_format: Option<InputFormat>,
 
-    /// Output format (jsonl, csv, logfmt)
+    /// Output format
     #[arg(short = 'F', long = "output-format", value_enum)]
     output_format: Option<OutputFormat>,
 
@@ -223,8 +223,19 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Extract input format before creating config
-    let input_format = args.input_format.clone();
+    // Extract or auto-detect input format before creating config
+    let input_format = match args.input_format.clone() {
+        Some(format) => Some(format), // User explicitly specified format
+        None => {
+            // Auto-detect from first input file if available
+            if let Some(first_file) = args.input_files.first() {
+                InputFormat::from_extension(first_file)
+            } else {
+                // No input files or no detectable format, default to Line
+                Some(InputFormat::Line)
+            }
+        }
+    };
 
     // Extract chunking config before moving args
     let chunk_config = args.get_chunk_config().unwrap_or_else(|e| {
@@ -238,12 +249,13 @@ fn main() {
         None => {
             // Default output format based on input format
             match input_format {
+                Some(InputFormat::Line) => OutputFormat::Line, // Line format defaults to line output
                 Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
                 Some(InputFormat::Csv) => OutputFormat::Csv,
                 Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
                 Some(InputFormat::Syslog) => OutputFormat::Jsonl,
                 Some(InputFormat::Combined) => OutputFormat::Jsonl,
-                None => OutputFormat::Jsonl, // Default when no input format
+                None => OutputFormat::Line, // Default when no input format (backwards compatibility)
             }
         }
     };

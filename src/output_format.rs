@@ -5,8 +5,13 @@ use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum OutputFormat {
+    #[value(name = "line", help = "Line-based text output (unstructured data)")]
+    Line,
+    #[value(name = "jsonl", help = "JSON Lines format (one JSON object per line)")]
     Jsonl,
+    #[value(name = "csv", help = "Comma-separated values")]
     Csv,
+    #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
     Logfmt,
 }
 
@@ -15,6 +20,7 @@ impl std::str::FromStr for OutputFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "line" => Ok(OutputFormat::Line),
             "jsonl" => Ok(OutputFormat::Jsonl),
             "csv" => Ok(OutputFormat::Csv),
             "logfmt" => Ok(OutputFormat::Logfmt),
@@ -25,7 +31,7 @@ impl std::str::FromStr for OutputFormat {
 
 impl Default for OutputFormat {
     fn default() -> Self {
-        OutputFormat::Jsonl
+        OutputFormat::Line
     }
 }
 
@@ -81,10 +87,29 @@ impl OutputFormatter {
         record: &RecordData,
     ) -> Result<(), ProcessingError> {
         match self.format {
+            OutputFormat::Line => self.write_line(output, record),
             OutputFormat::Jsonl => self.write_jsonl(output, record),
             OutputFormat::Csv => self.write_csv(output, record),
             OutputFormat::Logfmt => self.write_logfmt(output, record),
         }
+    }
+
+    fn write_line<W: Write>(
+        &mut self,
+        output: &mut W,
+        record: &RecordData,
+    ) -> Result<(), ProcessingError> {
+        match record {
+            RecordData::Text(text) => {
+                writeln!(output, "{}", text)?;
+            }
+            RecordData::Structured(_) => {
+                return Err(ProcessingError::OutputError(
+                    "Line format cannot output structured data - use jsonl, csv, or logfmt format instead".to_string(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn write_jsonl<W: Write>(
