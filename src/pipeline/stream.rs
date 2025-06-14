@@ -173,9 +173,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(Box::new(err)),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: BEGIN error: {}", err);
-                        }
+                        eprintln!("stelp: BEGIN error: {}", err);
                     }
                 },
                 ProcessResult::Skip => {
@@ -251,9 +249,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(Box::new(err)),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: line {}: {}", self.context.line_number, err);
-                        }
+                        eprintln!("stelp: line {}: {}", self.context.line_number, err);
                         continue;
                     }
                 },
@@ -331,9 +327,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(Box::new(err)),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: END error: {}", err);
-                        }
+                        eprintln!("stelp: END error: {}", err);
                     }
                 },
                 ProcessResult::Skip => {
@@ -440,9 +434,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(err),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: BEGIN error: {}", err);
-                        }
+                        eprintln!("stelp: BEGIN error: {}", err);
                     }
                 },
                 ProcessResult::Skip => {
@@ -530,9 +522,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(err),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: line {}: {}", self.context.line_number, err);
-                        }
+                        eprintln!("stelp: line {}: {}", self.context.line_number, err);
                         continue;
                     }
                 },
@@ -610,9 +600,7 @@ impl StreamPipeline {
                     ErrorStrategy::FailFast => return Err(err),
                     ErrorStrategy::Skip => {
                         file_stats.errors += 1;
-                        if self.config.debug {
-                            eprintln!("stelp: END error: {}", err);
-                        }
+                        eprintln!("stelp: END error: {}", err);
                     }
                 },
                 ProcessResult::Skip => {
