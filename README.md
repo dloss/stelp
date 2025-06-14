@@ -1,4 +1,4 @@
-# Stelp - Starlark Event and Line Processor
+# Stelp
 
 Stream processing tool using [Starlark](https://github.com/bazelbuild/starlark) (Python-like) scripts. Transform, filter, and analyze text/structured data with familiar syntax.
 
@@ -258,3 +258,7 @@ dump_csv(list)                     # Serialize list → CSV line
 ## License
 
 MIT
+
+---
+
+*Stelp: Starlark Event and Line Processor*
