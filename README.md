@@ -17,15 +17,17 @@ cargo build --release
 ## Quick Examples
 
 ```bash
-# Text transformation
+# Text transformation (auto-detects line format)
 echo "hello world" | stelp -e 'line.upper()'                    # → HELLO WORLD
 seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'  # Filter + transform
 
-# JSON processing  
-echo '{"user":"alice","age":25}' | stelp -f jsonl -e 'data["user"].upper()'
+# Auto-detection by file extension
+stelp -e 'data["user"].upper()' users.jsonl                     # Auto-detects JSONL
+stelp -e 'data["name"].upper()' employees.csv                   # Auto-detects CSV
+stelp -e 'data["level"]' app.logfmt                            # Auto-detects logfmt
 
-# CSV processing with headers
-echo -e "name,age\nalice,25" | stelp -f csv -F csv -e 'data["name"].upper()'
+# Manual format override
+echo '{"user":"alice","age":25}' | stelp -f jsonl -e 'data["user"].upper()'
 
 # Log analysis with counters
 stelp -e 'count = inc("total"); f"[{count}] {line}"' server.log
@@ -46,8 +48,8 @@ stelp [OPTIONS] [FILES...]
     --begin/--end <EXPR>    Run before/after input processing
 
 # Data formats  
--f, --input-format <FMT>    Input: jsonl, csv, logfmt, syslog, combined
--F, --output-format <FMT>   Output: jsonl, csv, logfmt  
+-f, --input-format <FMT>    Input: line, jsonl, csv, logfmt, syslog, combined (auto-detects by extension)
+-F, --output-format <FMT>   Output: line, jsonl, csv, logfmt  
 -k, --keys <KEYS>           Select/order output columns (comma-separated)
 
 # Control
@@ -55,6 +57,30 @@ stelp [OPTIONS] [FILES...]
     --debug                 Show processing details
     --fail-fast             Stop on first error (default: skip errors)
 ```
+
+## Format Auto-Detection
+
+Stelp automatically detects input format from file extensions:
+
+- `*.jsonl` → JSON Lines format
+- `*.csv` → CSV format with headers  
+- `*.logfmt` → logfmt key=value format
+- Other extensions/stdin → Line format (unstructured text)
+
+```bash
+# These are equivalent:
+stelp -e 'data["name"]' users.jsonl
+stelp -f jsonl -e 'data["name"]' users.jsonl
+
+# Override auto-detection when needed:
+stelp -f line -e 'line.upper()' data.jsonl    # Treat JSONL as raw text
+```
+
+Output format defaults to match input format, or use `-F` to override:
+- `line` → `line` (plain text output)
+- `jsonl` → `jsonl` 
+- `csv` → `csv`
+- `logfmt` → `logfmt`
 
 ## Core Concepts
 
@@ -97,7 +123,10 @@ f"User: {user}, Count: {count}"
 Input formats parse into `data` dictionary. Use `-k/--keys` to select/order output columns.
 
 ```bash
-# JSON Lines
+# JSON Lines (auto-detected from .jsonl extension)
+stelp -e 'data["name"].upper()' users.jsonl
+
+# Manual format specification
 echo '{"name":"alice","age":25}' | stelp -f jsonl -e 'data["name"].upper()'
 
 # CSV (auto-detects headers)
