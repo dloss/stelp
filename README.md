@@ -60,27 +60,7 @@ stelp [OPTIONS] [FILES...]
 
 ## Format Auto-Detection
 
-Stelp automatically detects input format from file extensions:
-
-- `*.jsonl` → JSON Lines format
-- `*.csv` → CSV format with headers  
-- `*.logfmt` → logfmt key=value format
-- Other extensions/stdin → Line format (unstructured text)
-
-```bash
-# These are equivalent:
-stelp -e 'data["name"]' users.jsonl
-stelp -f jsonl -e 'data["name"]' users.jsonl
-
-# Override auto-detection when needed:
-stelp -f line -e 'line.upper()' data.jsonl    # Treat JSONL as raw text
-```
-
-Output format defaults to match input format, or use `-F` to override:
-- `line` → `line` (plain text output)
-- `jsonl` → `jsonl` 
-- `csv` → `csv`
-- `logfmt` → `logfmt`
+Auto-detects format from file extensions: `*.jsonl`, `*.csv`, `*.logfmt` (otherwise treats as plain text). Use `-f` to override.
 
 ## Core Concepts
 
