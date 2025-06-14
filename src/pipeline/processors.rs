@@ -11,6 +11,9 @@ use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
 
+// Prelude code that provides helper functions like inc()
+const PRELUDE_CODE: &str = include_str!("../prelude.star");
+
 /// Starlark-based record processor with global namespace
 pub struct StarlarkProcessor {
     globals: Globals,
@@ -95,11 +98,19 @@ impl StarlarkProcessor {
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
-        // Parse and execute script
+        // Parse and execute script with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
+
+        // Load and execute prelude to provide helper functions like inc()
+        let prelude_ast = AstModule::parse("prelude", PRELUDE_CODE.to_string(), &dialect)
+            .map_err(|e| anyhow::anyhow!("Prelude parse error: {}", e))?;
+        let mut prelude_eval = Evaluator::new(&module);
+        prelude_eval
+            .eval_module(prelude_ast, &self.globals)
+            .map_err(|e| anyhow::anyhow!("Prelude execution error: {}", e))?;
         let ast = AstModule::parse("script", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Script parse error: {}", e))?;
 
@@ -352,11 +363,19 @@ impl FilterProcessor {
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
-        // Execute filter
+        // Execute filter with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
             ..Dialect::Extended
         };
+
+        // Load and execute prelude to provide helper functions like inc()
+        let prelude_ast = AstModule::parse("prelude", PRELUDE_CODE.to_string(), &dialect)
+            .map_err(|e| anyhow::anyhow!("Prelude parse error: {}", e))?;
+        let mut prelude_eval = Evaluator::new(&module);
+        prelude_eval
+            .eval_module(prelude_ast, &self.globals)
+            .map_err(|e| anyhow::anyhow!("Prelude execution error: {}", e))?;
         let ast = AstModule::parse("filter", self.script_source.clone(), &dialect)
             .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
 

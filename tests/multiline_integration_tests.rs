@@ -200,7 +200,6 @@ result
 }
 
 #[test]
-#[ignore] // TODO: Global state preservation needs further investigation with batch processing
 fn test_chunking_with_global_state() {
     let input = "item1
 item2
