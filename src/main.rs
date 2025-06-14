@@ -71,6 +71,10 @@ struct Args {
     #[arg(long)]
     debug: bool,
 
+    /// Show processing statistics
+    #[arg(long)]
+    stats: bool,
+
     /// Fail on first error instead of skipping lines
     #[arg(long)]
     fail_fast: bool,
@@ -465,29 +469,37 @@ fn main() {
     // Report CSV warnings about missing keys
     pipeline.get_output_formatter().report_csv_warnings();
     
-    // Print final stats if debug mode
-    if args.debug {
-        // Report parse errors first
-        if !total_stats.parse_errors.is_empty() {
-            if total_stats.parse_errors.len() <= 5 {
-                // Show individual errors for small counts
-                for error in &total_stats.parse_errors {
-                    eprintln!("stelp: line {}: {} parse error: {}", 
-                             error.line_number, error.format_name, error.error);
-                }
-            } else {
-                // Show summary for large counts
-                eprintln!("stelp: {} parse errors encountered", total_stats.parse_errors.len());
+    // Report parse errors in debug mode
+    if args.debug && !total_stats.parse_errors.is_empty() {
+        if total_stats.parse_errors.len() <= 5 {
+            // Show individual errors for small counts
+            for error in &total_stats.parse_errors {
+                eprintln!("stelp: line {}: {} parse error: {}", 
+                         error.line_number, error.format_name, error.error);
             }
+        } else {
+            // Show summary for large counts
+            eprintln!("stelp: {} parse errors encountered", total_stats.parse_errors.len());
         }
+    }
+    
+    // Print performance stats if requested
+    if args.stats {
+        let processing_ms = total_stats.processing_time.as_secs_f64() * 1000.0;
+        let records_per_sec = if processing_ms > 0.0 {
+            (total_stats.records_processed as f64) / (processing_ms / 1000.0)
+        } else {
+            0.0
+        };
         
         eprintln!(
-            "stelp: processing complete: {} records processed, {} output, {} skipped, {} errors in {:?}",
+            "stelp: {} records processed, {} output, {} skipped, {} errors in {:.2}ms ({:.0} records/s)",
             total_stats.records_processed,
             total_stats.records_output,
             total_stats.records_skipped,
             total_stats.errors,
-            total_stats.processing_time
+            processing_ms,
+            records_per_sec
         );
     }
 

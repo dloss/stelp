@@ -71,7 +71,7 @@ fn test_stderr_stdout_separation() {
         .success()
         .stdout("HELLO\n")
         .stderr(predicate::str::contains("stelp: reading from stdin"))
-        .stderr(predicate::str::contains("processing complete"));
+        .stderr(predicate::str::contains("eval_1:"));
 }
 
 #[test]
