@@ -10,6 +10,7 @@ thread_local! {
     pub(crate) static EXIT_FLAG: Cell<bool> = const { Cell::new(false) };
     pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
     pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = const { RefCell::new(None) };
+    pub(crate) static DEBUG_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 #[starlark_module]

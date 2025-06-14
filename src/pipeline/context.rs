@@ -57,6 +57,7 @@ pub struct RecordContext<'a> {
     pub record_count: usize, // Records processed in current file
     pub file_name: Option<&'a str>,
     pub global_vars: &'a GlobalVariables,
+    pub debug: bool,
 }
 
 /// Result of processing a single record

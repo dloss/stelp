@@ -110,6 +110,7 @@ impl StreamPipeline {
                 record_count: 0,
                 file_name: self.context.file_name.as_deref(),
                 global_vars: &self.context.global_vars,
+                debug: self.config.debug,
             };
             
             // Create empty record for BEGIN (no actual input data)
@@ -265,6 +266,7 @@ impl StreamPipeline {
                 record_count: self.context.record_count,
                 file_name: self.context.file_name.as_deref(),
                 global_vars: &self.context.global_vars,
+                debug: self.config.debug,
             };
             
             // Create empty record for END (no actual input data)
@@ -371,6 +373,7 @@ impl StreamPipeline {
                 record_count: 0,
                 file_name: self.context.file_name.as_deref(),
                 global_vars: &self.context.global_vars,
+                debug: self.config.debug,
             };
             
             // Create empty record for BEGIN (no actual input data)
@@ -538,6 +541,7 @@ impl StreamPipeline {
                 record_count: self.context.record_count,
                 file_name: self.context.file_name.as_deref(),
                 global_vars: &self.context.global_vars,
+                debug: self.config.debug,
             };
             
             // Create empty record for END (no actual input data)
@@ -629,6 +633,7 @@ impl StreamPipeline {
             record_count: self.context.record_count,
             file_name: self.context.file_name.as_deref(),
             global_vars: &self.context.global_vars,
+            debug: self.config.debug,
         };
 
         // Process through all processors in sequence

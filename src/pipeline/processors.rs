@@ -10,7 +10,7 @@ use crate::{CompilationError, ProcessingError};
 use starlark::environment::{Globals, GlobalsBuilder, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
-
+use std::io::Write;
 // Prelude code that provides helper functions like inc()
 const PRELUDE_CODE: &str = include_str!("../prelude.star");
 
@@ -269,6 +269,40 @@ impl StarlarkProcessor {
             }),
         };
 
+        // Debug logging - immediate printing with flush
+        if ctx.debug {
+            eprintln!("  {}:", self.name);
+            
+            // Show emit() calls
+            let emissions = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
+            for emission in &emissions {
+                eprintln!("    + emit: {:?}", emission);
+            }
+            
+            // Show final decision  
+            match &result {
+                ProcessResult::Skip => eprintln!("    → SKIP"),
+                ProcessResult::Exit(final_output) => {
+                    if let Some(output) = final_output {
+                        eprintln!("    → EXIT with {:?}", output);
+                    } else {
+                        eprintln!("    → EXIT");
+                    }
+                },
+                ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),
+                ProcessResult::Transform(record) => eprintln!("    → {:?}", record),
+                ProcessResult::FanOut(records) => eprintln!("    → FAN-OUT ({} records)", records.len()),
+                ProcessResult::TransformWithEmissions { primary, emissions } => {
+                    if let Some(p) = primary {
+                        eprintln!("    → {:?} + {} emissions", p, emissions.len());
+                    } else {
+                        eprintln!("    → {} emissions", emissions.len());
+                    }
+                }
+            }
+            std::io::stderr().flush().ok();
+        }
+
         // Clear context
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = None;
@@ -427,6 +461,17 @@ impl RecordProcessor for FilterProcessor {
                 source: error,
             }),
         };
+
+        // Debug logging - immediate printing with flush
+        if ctx.debug {
+            match &result {
+                ProcessResult::Transform(_) => eprintln!("  {}: → PASS", self.name),
+                ProcessResult::Skip => eprintln!("  {}: → SKIP", self.name),
+                ProcessResult::Error(err) => eprintln!("  {}: → ERROR: {}", self.name, err),
+                _ => eprintln!("  {}: → {:?}", self.name, result),
+            }
+            std::io::stderr().flush().ok();
+        }
 
         // Clear context
         CURRENT_CONTEXT.with(|current_ctx| {
