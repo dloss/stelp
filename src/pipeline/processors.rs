@@ -27,7 +27,8 @@ enum StarlarkResult {
     None,
     Text(String),
     List(Vec<String>),
-    Structured(serde_json::Value), // NEW: Add structured data support
+    Structured(serde_json::Value),
+    DataModeResult(RecordData), // NEW: For data mode, return the data variable content
 }
 
 impl StarlarkProcessor {
@@ -141,8 +142,34 @@ impl StarlarkProcessor {
             sync_glob_dict_to_globals(glob_value, ctx.global_vars);
         }
 
-        // Convert the result to our owned type before returning
-        let starlark_result = if result.is_none() {
+        // NEW POLICY: In data mode, return the data variable content
+        let is_data_mode = IS_DATA_MODE.with(|flag| flag.get());
+        let starlark_result = if is_data_mode {
+            // In data mode, get the final value of the data variable
+            if let Some(data_value) = module.get("data") {
+                if data_value.is_none() {
+                    // data is None, use original record
+                    StarlarkResult::DataModeResult(record.clone())
+                } else {
+                    // Convert data variable to appropriate RecordData
+                    match starlark_to_json_value(data_value) {
+                        Ok(json_value) => StarlarkResult::DataModeResult(RecordData::structured(json_value)),
+                        Err(_) => {
+                            // Fallback to text representation
+                            let text = if let Some(s) = data_value.unpack_str() {
+                                s.to_string()
+                            } else {
+                                data_value.to_string()
+                            };
+                            StarlarkResult::DataModeResult(RecordData::text(text))
+                        }
+                    }
+                }
+            } else {
+                // No data variable, shouldn't happen but use original as fallback
+                StarlarkResult::DataModeResult(record.clone())
+            }
+        } else if result.is_none() {
             StarlarkResult::None
         } else {
             // NEW: Check if it's a dictionary first
@@ -235,6 +262,16 @@ impl StarlarkProcessor {
                 } else {
                     // Handle different result types
                     match starlark_result {
+                        StarlarkResult::DataModeResult(data_record) => {
+                            // NEW POLICY: In data mode, use the data variable content
+                            match emissions.is_empty() {
+                                true => ProcessResult::Transform(data_record),
+                                false => ProcessResult::TransformWithEmissions {
+                                    primary: Some(data_record),
+                                    emissions,
+                                },
+                            }
+                        }
                         StarlarkResult::List(strings) => {
                             // Convert list to string representation (no implicit fan-out)
                             let list_str = format!("[{}]", strings.join(", "));
@@ -248,16 +285,9 @@ impl StarlarkProcessor {
                             }
                         }
                         StarlarkResult::None => {
-                            // None means no output - but implicit SKIP only applies in line mode
-                            let is_data_mode = IS_DATA_MODE.with(|flag| flag.get());
+                            // In line mode, None means skip
                             if emissions.is_empty() {
-                                if is_data_mode {
-                                    // In data mode, None means pass through original record
-                                    ProcessResult::Transform(record.clone())
-                                } else {
-                                    // In line mode, None means skip
-                                    ProcessResult::Skip
-                                }
+                                ProcessResult::Skip
                             } else {
                                 ProcessResult::FanOut(emissions)
                             }
@@ -272,7 +302,6 @@ impl StarlarkProcessor {
                                 },
                             }
                         }
-                        // NEW: Handle structured data
                         StarlarkResult::Structured(json_value) => {
                             let clean_result = RecordData::structured(json_value);
                             match emissions.is_empty() {

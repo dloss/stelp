@@ -75,10 +75,9 @@ fn test_json_functions_global() {
     let processor = StarlarkProcessor::from_script(
         "json_test",
         r#"
-data = parse_json(line)
-result = f"User: {data}"
-# Explicit return
-result
+# Parse JSON but don't assign to data to stay in line mode
+parsed = parse_json(line)
+f"User: {parsed}"
         "#,
     )
     .unwrap();

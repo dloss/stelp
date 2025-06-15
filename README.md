@@ -92,9 +92,9 @@ exit("reason")           # Stop processing with message
 emit("text")             # Output additional line + continue processing
 emit_all(["a","b"])      # Output each item as separate line  
 
-# Implicit behavior when script returns None:
-# • Line mode: skip the record (no output)
-# • Data mode: pass through original record unchanged
+# Processing modes:
+# • Line mode: return value becomes output (None = skip)
+# • Data mode: `data` variable passes through (return value ignored)
 ```
 
 ### F-String Limitations ⚠️
