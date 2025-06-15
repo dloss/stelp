@@ -3,7 +3,8 @@ use crate::variables::GlobalVariables;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
+use dateparser;
 
 thread_local! {
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -348,6 +349,154 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     fn ts_add(timestamp: i64, seconds: i64) -> anyhow::Result<i64> {
         Ok(timestamp + seconds)
     }
+
+    fn guess_ts(text: String) -> anyhow::Result<i64> {
+        // Try dateparser first - handles most common formats automatically
+        match dateparser::parse(&text) {
+            Ok(dt) => Ok(dt.timestamp()),
+            Err(_) => {
+                // Fallback to our manual format attempts for edge cases
+                // Try RFC3339/ISO 8601 first
+                if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
+                    return Ok(dt.timestamp());
+                }
+                
+                // Try ISO 8601 without timezone (assume UTC)
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try common log format
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try date only
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try Apache/Nginx log format (e.g., "25/Dec/2021:10:24:56 +0000")
+                if let Ok(dt) = DateTime::parse_from_str(&text, "%d/%b/%Y:%H:%M:%S %z") {
+                    return Ok(dt.timestamp());
+                }
+                
+                // Try syslog format (e.g., "Dec 25 10:24:56")
+                // Note: This assumes current year since syslog doesn't include year
+                let current_year = Utc::now().year();
+                let text_with_year = format!("{} {}", current_year, text);
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text_with_year, "%Y %b %d %H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try compact format YYYYMMDDTHHMMSS (e.g., "20030925T104941")
+                if text.len() == 15 && text.chars().nth(8) == Some('T') {
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y%m%dT%H%M%S") {
+                        return Ok(dt.and_utc().timestamp());
+                    }
+                }
+                
+                // Try compact format YYYYMMDDHHMM (e.g., "199709020900")
+                if text.len() == 12 && text.chars().all(|c| c.is_ascii_digit()) {
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y%m%d%H%M") {
+                        return Ok(dt.and_utc().timestamp());
+                    }
+                }
+                
+                // Try German format DD.MM.YYYY HH:MM:SS (e.g., "27.01.2025 14:30:45")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d.%m.%Y %H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try German date only DD.MM.YYYY (e.g., "27.01.2025")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d.%m.%Y") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try BGL format YYYY-MM-DD-HH.MM.SS.ffffff (e.g., "2025-01-27-14.30.45.123456")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d-%H.%M.%S.%f") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try DD-MM-YYYY format (e.g., "27-01-2025")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d-%m-%Y") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try DD-MM-YYYY HH:MM:SS format (e.g., "27-01-2025 14:30:45")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d-%m-%Y %H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try Spark format YY/MM/DD HH:MM:SS (e.g., "25/01/27 14:30:45")
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%y/%m/%d %H:%M:%S") {
+                    return Ok(dt.and_utc().timestamp());
+                }
+                
+                // Try Apache bracket format [Day Mon DD HH:MM:SS YYYY] (e.g., "[Mon Jan 27 14:30:45 2025]")
+                if text.starts_with('[') && text.ends_with(']') {
+                    let inner = &text[1..text.len()-1];
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(inner, "%a %b %d %H:%M:%S %Y") {
+                        return Ok(dt.and_utc().timestamp());
+                    }
+                }
+                
+                // Try Zookeeper format with comma separator (e.g., "2025-01-27 14:30:45,123")
+                if text.contains(',') {
+                    let comma_replaced = text.replace(',', ".");
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(&comma_replaced, "%Y-%m-%d %H:%M:%S.%f") {
+                        return Ok(dt.and_utc().timestamp());
+                    }
+                }
+                
+                // Try nanosecond precision handling (truncate to microseconds)
+                // Handle formats like "2024-01-15T10:30:45.123456789Z" or "2024-01-15T10:30:45.123456789+01:00"
+                if text.contains('.') && (text.ends_with('Z') || text.contains('+') || text.contains('-')) {
+                    // Find the fractional seconds part
+                    if let Some(dot_pos) = text.rfind('.') {
+                        let before_dot = &text[..dot_pos];
+                        let after_dot = &text[dot_pos+1..];
+                        
+                        // Find where timezone info starts
+                        let mut tz_start = after_dot.len();
+                        for (i, c) in after_dot.chars().enumerate() {
+                            if c == 'Z' || c == '+' || c == '-' {
+                                tz_start = i;
+                                break;
+                            }
+                        }
+                        
+                        let fractional = &after_dot[..tz_start];
+                        let tz_part = &after_dot[tz_start..];
+                        
+                        // Truncate fractional seconds to 6 digits (microseconds)
+                        let truncated_fractional = if fractional.len() > 6 {
+                            &fractional[..6]
+                        } else {
+                            fractional
+                        };
+                        
+                        let reconstructed = format!("{}.{}{}", before_dot, truncated_fractional, tz_part);
+                        
+                        // Try parsing the reconstructed timestamp
+                        if let Ok(dt) = DateTime::parse_from_rfc3339(&reconstructed) {
+                            return Ok(dt.timestamp());
+                        }
+                        
+                        // Try without timezone (assume UTC)
+                        if tz_part == "Z" || tz_part.is_empty() {
+                            let utc_format = format!("{}.{}", before_dot, truncated_fractional);
+                            if let Ok(dt) = NaiveDateTime::parse_from_str(&utc_format, "%Y-%m-%dT%H:%M:%S.%f") {
+                                return Ok(dt.and_utc().timestamp());
+                            }
+                        }
+                    }
+                }
+                
+                Err(anyhow::anyhow!("Failed to parse timestamp '{}' - no recognized format", text))
+            }
+        }
+    }
 }
 
 // Helper functions for JSON conversion
@@ -667,5 +816,199 @@ mod tests {
         // Just check it's a reasonable timestamp (after 2020)
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1577836800); // 2020-01-01
+    }
+
+    // guess_ts() function tests
+    #[test]
+    fn test_guess_ts_unix_timestamp() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("1511648546")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        assert_eq!(result.unpack_i32().unwrap() as i64, 1511648546);
+    }
+
+    #[test]
+    fn test_guess_ts_rfc3339() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("2021-05-01T01:17:02.604456Z")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse successfully
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1619827022); // Around 2021-05-01
+    }
+
+    #[test]
+    fn test_guess_ts_postgres_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("2019-11-29 08:08-08")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse successfully
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1574000000); // Around 2019-11-29
+    }
+
+    #[test]
+    fn test_guess_ts_natural_language() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("May 25, 2021")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse successfully
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1621900000); // Around May 25, 2021
+    }
+
+    #[test]
+    fn test_guess_ts_slash_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("4/8/2014 22:05")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse successfully
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1396900000); // Around April 2014
+    }
+
+    #[test]
+    fn test_guess_ts_apache_log_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"guess_ts("25/Dec/2021:10:24:56 +0000")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse successfully 
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1640420000); // Around Dec 25, 2021
+    }
+
+    #[test]
+    fn test_guess_ts_fallback_formats() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test formats that might not be in dateparser but in our fallback
+        let script = r#"guess_ts("2024-01-15")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1705276800); // Around Jan 15, 2024
+    }
+
+    #[test]
+    fn test_guess_ts_compact_formats() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test compact YYYYMMDDTHHMMSS format
+        let script = r#"guess_ts("20030925T104941")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1064000000); // Around Sept 25, 2003
+    }
+
+    #[test]
+    fn test_guess_ts_german_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test German DD.MM.YYYY HH:MM:SS format
+        let script = r#"guess_ts("27.01.2025 14:30:45")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1737900000); // Around Jan 27, 2025
+    }
+
+    #[test]
+    fn test_guess_ts_bgl_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test BGL YYYY-MM-DD-HH.MM.SS.ffffff format
+        let script = r#"guess_ts("2025-01-27-14.30.45.123456")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1737900000); // Around Jan 27, 2025
+    }
+
+    #[test]
+    fn test_guess_ts_nanosecond_precision() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test nanosecond precision (should truncate to microseconds)
+        let script = r#"guess_ts("2024-01-15T10:30:45.123456789Z")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert_eq!(timestamp, 1705314645); // Should parse correctly
+    }
+
+    #[test]
+    fn test_guess_ts_zookeeper_comma_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test Zookeeper comma separator format
+        let script = r#"guess_ts("2025-01-27 14:30:45,123")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1737900000); // Around Jan 27, 2025
+    }
+
+    #[test]
+    fn test_guess_ts_apache_bracket_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test Apache bracket format
+        let script = r#"guess_ts("[Mon Jan 27 14:30:45 2025]")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
 }
