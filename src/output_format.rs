@@ -11,6 +11,8 @@ pub enum OutputFormat {
     Jsonl,
     #[value(name = "csv", help = "Comma-separated values")]
     Csv,
+    #[value(name = "tsv", help = "Tab-separated values")]
+    Tsv,
     #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
     Logfmt,
     #[value(name = "fields", help = "Whitespace-separated fields (like AWK output)")]
@@ -25,6 +27,7 @@ impl std::str::FromStr for OutputFormat {
             "line" => Ok(OutputFormat::Line),
             "jsonl" => Ok(OutputFormat::Jsonl),
             "csv" => Ok(OutputFormat::Csv),
+            "tsv" => Ok(OutputFormat::Tsv),
             "logfmt" => Ok(OutputFormat::Logfmt),
             "fields" => Ok(OutputFormat::Fields),
             _ => Err(format!("Unknown output format: {}", s)),
@@ -93,6 +96,7 @@ impl OutputFormatter {
             OutputFormat::Line => self.write_line(output, record),
             OutputFormat::Jsonl => self.write_jsonl(output, record),
             OutputFormat::Csv => self.write_csv(output, record),
+            OutputFormat::Tsv => self.write_tsv(output, record),
             OutputFormat::Logfmt => self.write_logfmt(output, record),
             OutputFormat::Fields => self.write_fields(output, record),
         }
@@ -166,13 +170,32 @@ impl OutputFormatter {
         output: &mut W,
         record: &RecordData,
     ) -> Result<(), ProcessingError> {
+        self.write_separated_values(output, record, ',')
+    }
+
+    fn write_tsv<W: Write>(
+        &mut self,
+        output: &mut W,
+        record: &RecordData,
+    ) -> Result<(), ProcessingError> {
+        self.write_separated_values(output, record, '\t')
+    }
+
+    fn write_separated_values<W: Write>(
+        &mut self,
+        output: &mut W,
+        record: &RecordData,
+        separator: char,
+    ) -> Result<(), ProcessingError> {
+        let separator_str = separator.to_string();
+        
         match record {
             RecordData::Text(text) => {
                 if !self.csv_headers_written {
                     writeln!(output, "text")?;
                     self.csv_headers_written = true;
                 }
-                writeln!(output, "{}", self.csv_escape(text))?;
+                writeln!(output, "{}", self.field_escape(text, separator))?;
             }
             RecordData::Structured(data) => {
                 let data = self.filter_keys(data);
@@ -181,7 +204,7 @@ impl OutputFormatter {
                     
                     // Write headers if not written yet
                     if !self.csv_headers_written {
-                        writeln!(output, "{}", key_order.join(","))?;
+                        writeln!(output, "{}", key_order.join(&separator_str))?;
                         self.csv_headers_written = true;
                         // Store schema keys for warning purposes (only when --keys not specified)
                         if self.keys.is_none() {
@@ -221,12 +244,13 @@ impl OutputFormatter {
                             }
                             None => String::new(), // Missing key - use empty value
                         };
-                        values.push(self.csv_escape(&value_str));
+                        values.push(self.field_escape(&value_str, separator));
                     }
-                    writeln!(output, "{}", values.join(","))?;
+                    writeln!(output, "{}", values.join(&separator_str))?;
                 } else {
+                    let format_name = if separator == '\t' { "TSV" } else { "CSV" };
                     return Err(ProcessingError::OutputError(
-                        "CSV format requires object records".to_string(),
+                        format!("{} format requires object records", format_name),
                     ));
                 }
             }
@@ -315,8 +339,8 @@ impl OutputFormatter {
         Ok(())
     }
 
-    fn csv_escape(&self, value: &str) -> String {
-        if value.contains(',') || value.contains('"') || value.contains('\n') {
+    fn field_escape(&self, value: &str, separator: char) -> String {
+        if value.contains(separator) || value.contains('"') || value.contains('\n') {
             format!("\"{}\"", value.replace('"', "\"\""))
         } else {
             value.to_string()
@@ -341,9 +365,9 @@ impl OutputFormatter {
         self.missing_keys_warned.clear();
     }
     
-    /// Report final CSV warnings about missing keys (call at end of processing)
+    /// Report final CSV/TSV warnings about missing keys (call at end of processing)
     pub fn report_csv_warnings(&self) {
-        if self.format == OutputFormat::Csv && self.keys.is_none() && !self.missing_keys_warned.is_empty() {
+        if (self.format == OutputFormat::Csv || self.format == OutputFormat::Tsv) && self.keys.is_none() && !self.missing_keys_warned.is_empty() {
             if let Some(ref schema_keys) = self.csv_schema_keys {
                 let mut all_keys = schema_keys.clone();
                 let mut missing_keys: Vec<_> = self.missing_keys_warned.iter().cloned().collect();

@@ -14,6 +14,8 @@ pub enum InputFormat {
     Jsonl,
     #[value(name = "csv", help = "Comma-separated values with headers")]
     Csv,
+    #[value(name = "tsv", help = "Tab-separated values with headers")]
+    Tsv,
     #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
     Logfmt,
     #[value(name = "syslog", help = "Syslog format (RFC3164/RFC5424)")]
@@ -31,6 +33,7 @@ impl InputFormat {
             match extension.to_str()?.to_lowercase().as_str() {
                 "jsonl" => Some(InputFormat::Jsonl),
                 "csv" => Some(InputFormat::Csv),
+                "tsv" => Some(InputFormat::Tsv),
                 "logfmt" => Some(InputFormat::Logfmt),
                 _ => None,
             }
@@ -47,6 +50,7 @@ pub trait LineParser {
 pub struct JsonlParser;
 pub struct CsvParser {
     headers: Option<Vec<String>>,
+    separator: char,
 }
 pub struct FieldsParser;
 
@@ -64,28 +68,33 @@ impl LineParser for JsonlParser {
 
 impl CsvParser {
     pub fn new() -> Self {
-        Self { headers: None }
+        Self { headers: None, separator: ',' }
+    }
+
+    pub fn new_tsv() -> Self {
+        Self { headers: None, separator: '\t' }
     }
 
     pub fn parse_headers(&mut self, header_line: &str) -> Result<(), String> {
+        let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
         let headers: Vec<String> = self
-            .parse_csv_fields(header_line.trim())
-            .map_err(|e| format!("Failed to parse CSV headers: {}", e))?
+            .parse_fields(header_line.trim())
+            .map_err(|e| format!("Failed to parse {} headers: {}", format_name, e))?
             .into_iter()
             .map(|h| h.trim().trim_matches('"').to_string())
             .filter(|h| !h.is_empty()) // Remove empty headers after trimming
             .collect();
 
         if headers.is_empty() {
-            return Err("CSV headers cannot be empty".to_string());
+            return Err(format!("{} headers cannot be empty", format_name));
         }
 
         self.headers = Some(headers);
         Ok(())
     }
 
-    // Proper CSV field parsing that handles quoted fields with commas
-    fn parse_csv_fields(&self, line: &str) -> Result<Vec<String>, String> {
+    // Proper field parsing that handles quoted fields with separators
+    fn parse_fields(&self, line: &str) -> Result<Vec<String>, String> {
         let mut fields = Vec::new();
         let mut current_field = String::new();
         let mut in_quotes = false;
@@ -103,12 +112,12 @@ impl CsvParser {
                         in_quotes = !in_quotes;
                     }
                 }
-                ',' => {
+                ch if ch == self.separator => {
                     if in_quotes {
-                        // Inside quotes, comma is part of the field
-                        current_field.push(',');
+                        // Inside quotes, separator is part of the field
+                        current_field.push(ch);
                     } else {
-                        // Outside quotes, comma is field separator
+                        // Outside quotes, separator is field separator
                         fields.push(current_field.trim().to_string());
                         current_field.clear();
                     }
@@ -123,7 +132,8 @@ impl CsvParser {
         fields.push(current_field.trim().to_string());
 
         if in_quotes {
-            return Err("Unclosed quote in CSV line".to_string());
+            let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
+            return Err(format!("Unclosed quote in {} line", format_name));
         }
 
         Ok(fields)
@@ -132,13 +142,15 @@ impl CsvParser {
 
 impl LineParser for CsvParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
-        let headers = self.headers.as_ref().ok_or("CSV headers not initialized")?;
+        let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
+        let headers = self.headers.as_ref().ok_or(format!("{} headers not initialized", format_name))?;
 
-        let values = self.parse_csv_fields(line)?;
+        let values = self.parse_fields(line)?;
 
         if values.len() != headers.len() {
             return Err(format!(
-                "CSV line has {} fields but expected {} headers",
+                "{} line has {} fields but expected {} headers",
+                format_name,
                 values.len(),
                 headers.len()
             ));
@@ -687,6 +699,9 @@ impl<'a> InputFormatWrapper<'a> {
             Some(InputFormat::Csv) => {
                 self.process_csv(BufReader::new(reader), pipeline, output, filename)
             }
+            Some(InputFormat::Tsv) => {
+                self.process_tsv(BufReader::new(reader), pipeline, output, filename)
+            }
             Some(InputFormat::Logfmt) => {
                 self.process_logfmt(BufReader::new(reader), pipeline, output, filename)
             }
@@ -850,6 +865,84 @@ impl<'a> InputFormatWrapper<'a> {
             result.parse_errors.push(crate::context::ParseErrorInfo {
                 line_number: parse_error.line_number,
                 format_name: "CSV".to_string(),
+                error: parse_error.error,
+            });
+        }
+        
+        Ok(result)
+    }
+
+    fn process_tsv<R: BufRead, W: Write>(
+        &self,
+        mut reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        // Read headers
+        let mut header_line = String::new();
+        reader.read_line(&mut header_line)?;
+
+        if header_line.trim().is_empty() {
+            return Err("TSV file is empty".into());
+        }
+
+        let mut parser = CsvParser::new_tsv();
+        parser.parse_headers(&header_line).map_err(|e| e)?;
+
+        let mut records = Vec::new();
+        let config = pipeline.get_config();
+        let mut line_number = 1; // Start at 1 since we already read the header line
+        let mut parse_errors = Vec::new();
+
+        // Read and parse remaining lines
+        for line_result in reader.lines() {
+            let line = line_result?;
+            line_number += 1;
+            let line_content = line.trim();
+
+            if line_content.is_empty() {
+                continue;
+            }
+
+            // Parse TSV and create structured record
+            match parser.parse_line(&line) {
+                Ok(data) => {
+                    records.push(crate::context::RecordData::structured(data));
+                }
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match config.error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "TSV parse error on line {}: {}",
+                                line_number, parse_error
+                            )
+                            .into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            // Collect error for later reporting
+                            parse_errors.push(ParseError {
+                                line_number,
+                                error: parse_error,
+                            });
+                            // Skip the malformed line entirely to maintain output format consistency
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process records directly
+        let mut result = pipeline.process_records(records, output, filename)?;
+        
+        // Add parse errors to the statistics
+        result.errors += parse_errors.len();
+        for parse_error in parse_errors {
+            result.parse_errors.push(crate::context::ParseErrorInfo {
+                line_number: parse_error.line_number,
+                format_name: "TSV".to_string(),
                 error: parse_error.error,
             });
         }

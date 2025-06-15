@@ -252,6 +252,7 @@ fn main() {
                 Some(InputFormat::Line) => OutputFormat::Line, // Line format defaults to line output
                 Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
                 Some(InputFormat::Csv) => OutputFormat::Csv,
+                Some(InputFormat::Tsv) => OutputFormat::Tsv,
                 Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
                 Some(InputFormat::Syslog) => OutputFormat::Jsonl,
                 Some(InputFormat::Combined) => OutputFormat::Jsonl,

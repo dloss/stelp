@@ -2,6 +2,8 @@
 use std::io::Cursor;
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::{RecordContext, RecordData};
+use stelp::input_format::{InputFormat, InputFormatWrapper};
+use stelp::output_format::OutputFormat;
 use stelp::processors::{FilterProcessor, StarlarkProcessor};
 use stelp::variables::GlobalVariables;
 use stelp::StreamPipeline;
@@ -1021,4 +1023,98 @@ data = {"formatted": f"{ip} {method} -> {status} (host={has_host} port={has_port
     assert!(output_str.contains("192.168.1.1 GET -> 200 (host=False port=False query=False timing=False)"));  // Standard combined
     assert!(output_str.contains("48.178.166.185 POST -> 503 (host=True port=True query=True timing=True)"));    // Extended Apache
     assert!(output_str.contains("127.0.0.1 GET -> 200 (host=False port=False query=False timing=False)"));    // Common format
+}
+
+#[test]
+fn test_tsv_input_output() {
+    println!("=== Testing TSV input and output ===");
+    
+    let config = PipelineConfig {
+        output_format: OutputFormat::Tsv,
+        ..Default::default()
+    };
+    let mut pipeline = StreamPipeline::new(config);
+    
+    // Add a simple transformation processor
+    let processor = StarlarkProcessor::from_script(
+        "test_transform",
+        r#"
+# Transform age to be +1
+if "age" in data:
+    data["age"] = str(int(data["age"]) + 1)
+data
+        "#,
+    ).unwrap();
+    
+    pipeline.add_processor(Box::new(processor));
+
+    // Test TSV input with tabs and quoted fields
+    let input = std::io::Cursor::new("name\tage\tdescription\nJohn\t25\t\"Lives in:\tNew York\"\nJane\t30\t\"Age:\t30\"");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Tsv));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv")).unwrap();
+
+    assert_eq!(stats.records_processed, 2);
+    assert_eq!(stats.records_output, 2);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    println!("TSV output:\n{}", output_str);
+    
+    // Check that TSV output format is correct
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines.len(), 3); // headers + 2 data rows
+    
+    // Check headers (order may vary based on get_key_order)
+    assert!(lines[0].contains("age") && lines[0].contains("description") && lines[0].contains("name"));
+    
+    // Check that ages were incremented
+    assert!(output_str.contains("26")); // John's age: 25 + 1
+    assert!(output_str.contains("31")); // Jane's age: 30 + 1
+    
+    // Check that quoted fields with tabs are handled correctly
+    assert!(output_str.contains("Lives in:\tNew York"));
+    assert!(output_str.contains("Age:\t30"));
+}
+
+#[test] 
+fn test_tsv_to_jsonl() {
+    println!("=== Testing TSV to JSONL conversion ===");
+    
+    let config = PipelineConfig {
+        output_format: OutputFormat::Jsonl,
+        ..Default::default()
+    };
+    let mut pipeline = StreamPipeline::new(config);
+
+    // Test TSV input
+    let input = std::io::Cursor::new("name\tage\tcity\nJohn\t25\tNew York\nJane\t30\tBoston");
+    let mut output = Vec::new();
+
+    let wrapper = InputFormatWrapper::new(Some(&InputFormat::Tsv));
+    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv")).unwrap();
+
+    assert_eq!(stats.records_processed, 2);
+    assert_eq!(stats.records_output, 2);
+    assert_eq!(stats.errors, 0);
+    
+    let output_str = String::from_utf8(output).unwrap();
+    println!("JSONL output:\n{}", output_str);
+    
+    // Check that JSONL output format is correct
+    let lines: Vec<&str> = output_str.trim().split('\n').collect();
+    assert_eq!(lines.len(), 2);
+    
+    // Parse JSON lines to verify structure
+    let json1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    let json2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    
+    assert_eq!(json1["name"], "John");
+    assert_eq!(json1["age"], "25");
+    assert_eq!(json1["city"], "New York");
+    
+    assert_eq!(json2["name"], "Jane");
+    assert_eq!(json2["age"], "30");
+    assert_eq!(json2["city"], "Boston");
 }
