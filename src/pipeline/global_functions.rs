@@ -34,8 +34,8 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             }
         });
         
-        if !is_data_mode {
-            return Err(anyhow::anyhow!("emit() can only be used in data mode (when 'data' is not None)"));
+        if is_data_mode {
+            return Err(anyhow::anyhow!("emit() can only be used in line mode (when 'data' is None)"));
         }
         EMIT_BUFFER.with(|buffer| {
             buffer.borrow_mut().push(text);
@@ -59,8 +59,8 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             }
         });
         
-        if !is_data_mode {
-            return Err(anyhow::anyhow!("emit_all() can only be used in data mode (when 'data' is not None)"));
+        if is_data_mode {
+            return Err(anyhow::anyhow!("emit_all() can only be used in line mode (when 'data' is None)"));
         }
         match items.iterate(heap) {
             Ok(mut iterable) => {
