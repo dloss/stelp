@@ -3,6 +3,7 @@ use crate::variables::GlobalVariables;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 
 thread_local! {
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -287,6 +288,66 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             ))
         }
     }
+
+    // Timestamp functions
+    fn parse_ts(text: String, format: Option<String>) -> anyhow::Result<i64> {
+        if let Some(fmt) = format {
+            // Parse with custom format
+            let dt = NaiveDateTime::parse_from_str(&text, &fmt)
+                .map_err(|e| anyhow::anyhow!("Failed to parse timestamp '{}' with format '{}': {}", text, fmt, e))?;
+            Ok(dt.and_utc().timestamp())
+        } else {
+            // Auto-detect common formats
+            // Try RFC3339/ISO 8601 first
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
+                return Ok(dt.timestamp());
+            }
+            
+            // Try ISO 8601 without timezone (assume UTC)
+            if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
+                return Ok(dt.and_utc().timestamp());
+            }
+            
+            // Try common log format
+            if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
+                return Ok(dt.and_utc().timestamp());
+            }
+            
+            // Try date only
+            if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d") {
+                return Ok(dt.and_utc().timestamp());
+            }
+            
+            Err(anyhow::anyhow!("Failed to parse timestamp '{}' - unsupported format", text))
+        }
+    }
+
+    fn format_ts<'v>(heap: &'v Heap, timestamp: i64, format: Option<String>) -> anyhow::Result<Value<'v>> {
+        let dt = Utc.timestamp_opt(timestamp, 0)
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("Invalid timestamp: {}", timestamp))?;
+        
+        let formatted = if let Some(fmt) = format {
+            dt.format(&fmt).to_string()
+        } else {
+            // Default to ISO 8601
+            dt.to_rfc3339()
+        };
+        
+        Ok(heap.alloc(formatted))
+    }
+
+    fn now() -> anyhow::Result<i64> {
+        Ok(Utc::now().timestamp())
+    }
+
+    fn ts_diff(ts1: i64, ts2: i64) -> anyhow::Result<i64> {
+        Ok(ts1 - ts2)
+    }
+
+    fn ts_add(timestamp: i64, seconds: i64) -> anyhow::Result<i64> {
+        Ok(timestamp + seconds)
+    }
 }
 
 // Helper functions for JSON conversion
@@ -494,5 +555,117 @@ mod tests {
 
         assert_eq!(len, 1);
         assert_eq!(entries, vec![("col1".to_string(), "alice".to_string()),]);
+    }
+
+    // Timestamp function tests
+    #[test]
+    fn test_parse_ts_rfc3339() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"parse_ts("2015-03-26T01:27:38-04:00")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Expected timestamp for 2015-03-26T01:27:38-04:00 (UTC)
+        let expected = 1427347658i64;
+        assert_eq!(result.unpack_i32().unwrap() as i64, expected);
+    }
+
+    #[test]
+    fn test_parse_ts_iso_no_tz() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"parse_ts("2024-01-15T10:30:45")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Should parse as UTC
+        let expected = 1705314645i64;
+        assert_eq!(result.unpack_i32().unwrap() as i64, expected);
+    }
+
+    #[test]
+    fn test_parse_ts_log_format() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"parse_ts("2024-01-15 10:30:45")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let expected = 1705314645i64;
+        assert_eq!(result.unpack_i32().unwrap() as i64, expected);
+    }
+
+    #[test]
+    fn test_format_ts_default() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"format_ts(1427347658)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        assert_eq!(result.unpack_str().unwrap(), "2015-03-26T05:27:38+00:00");
+    }
+
+    #[test]
+    fn test_format_ts_custom() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"format_ts(1427347658, "%Y-%m-%d %H:%M:%S")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        assert_eq!(result.unpack_str().unwrap(), "2015-03-26 05:27:38");
+    }
+
+    #[test]
+    fn test_ts_diff() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"ts_diff(1427354858, 1427354800)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        assert_eq!(result.unpack_i32().unwrap(), 58);
+    }
+
+    #[test]
+    fn test_ts_add() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"ts_add(1427354800, 58)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        assert_eq!(result.unpack_i32().unwrap(), 1427354858);
+    }
+
+    #[test]
+    fn test_now() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"now()"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        // Just check it's a reasonable timestamp (after 2020)
+        let timestamp = result.unpack_i32().unwrap() as i64;
+        assert!(timestamp > 1577836800); // 2020-01-01
     }
 }

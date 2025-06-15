@@ -48,6 +48,9 @@ cargo run -- -s examples/log_processor.star sample.log
 
 # Filter and transform pipeline
 seq 1 10 | cargo run -- --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'
+
+# Timestamp processing example
+echo "2024-01-15T10:30:45 INFO: Server started" | cargo run -- -e 'format_ts(parse_ts("2024-01-15T10:30:45"), "%Y-%m-%d %H:%M:%S") + " - " + line'
 ```
 
 ## Architecture Overview
@@ -139,6 +142,7 @@ Scripts have access to:
 - Regex functions: `regex_match()`, `regex_replace()`, `regex_find_all()`
 - JSON functions: `parse_json()`, `dump_json()`
 - CSV functions: `parse_csv()`, `dump_csv()`
+- Timestamp functions: `parse_ts()`, `format_ts()`, `now()`, `ts_diff()`, `ts_add()`
 - Global state via `glob` dictionary
 - Meta variables: `LINENUM`, `FILENAME`, `RECNUM`
 
