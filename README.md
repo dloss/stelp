@@ -159,6 +159,9 @@ stelp --filter 'len(line) > 50' -e 'count = inc("long"); f"[{count}] {line.upper
 # Regex processing with line numbers
 stelp -e 'regex_replace(r"ERROR", "🔴", line)' -e 'f"[{LINENUM}] {line}"' error.log
 
+# Log timestamp normalization
+cat access.log | stelp -e 'ts_str = regex_replace(r".*\[([^\]]+)\].*", r"\1", line); epoch = guess_ts(ts_str); f"{format_ts(epoch, \"%Y-%m-%d %H:%M:%S\")} {line}"'
+
 # Global state tracking
 stelp -e 'count = inc("total"); error_count = inc("errors") if "ERROR" in line else glob.get("errors", 0); f"Total: {count}, Errors: {error_count}"' server.log
 ```
@@ -238,6 +241,14 @@ parse_json(text)                   # Parse JSON string → dict
 dump_json(obj)                     # Serialize dict → JSON string
 parse_csv(text)                    # Parse CSV line → list
 dump_csv(list)                     # Serialize list → CSV line
+
+# Timestamps
+parse_ts(text, format=None)        # Parse timestamp to Unix epoch
+format_ts(timestamp, format=None)  # Format Unix timestamp to string
+guess_ts(text)                     # Auto-detect timestamp format
+now()                              # Current Unix timestamp
+ts_diff(ts1, ts2)                  # Calculate time difference
+ts_add(timestamp, seconds)         # Add/subtract time
 ```
 
 ## Variable Scopes & Exit Codes
