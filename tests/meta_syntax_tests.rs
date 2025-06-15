@@ -175,14 +175,12 @@ fn test_meta_with_structured_data() {
     let processor = StarlarkProcessor::from_script(
         "structured_meta",
         r#"
-result = ""
 if data:
-    # For now, just show that we have structured data
-    result = f"Record {LINENUM}: structured data from {FILENAME}"
+    # In data mode, modify the data variable to include meta info
+    data = {"meta": f"Record {LINENUM}: structured data from {FILENAME}", "original": data}
 else:
-    result = f"Text {LINENUM}: {line}"
-
-result
+    # This would be line mode - return formatted text
+    f"Text {LINENUM}: {line}"
         "#,
     )
     .unwrap();
@@ -199,14 +197,16 @@ result
                 output.is_text(),
                 output.is_structured()
             );
-            if let Some(text) = output.as_text() {
-                assert_eq!(text, "Record 1: structured data from data.json");
-                println!("✅ Meta works with structured data: {}", text);
-            } else if let Some(structured) = output.as_structured() {
-                println!("Got structured output: {:?}", structured);
-                panic!("Expected text output, got structured data");
+            if let Some(structured) = output.as_structured() {
+                // Should now have meta field with expected content
+                assert_eq!(structured["meta"], "Record 1: structured data from data.json");
+                assert_eq!(structured["original"]["name"], "Alice");
+                assert_eq!(structured["original"]["age"], 30);
+                println!("✅ Meta works with structured data: {:?}", structured);
+            } else if let Some(text) = output.as_text() {
+                panic!("Expected structured output, got text: {}", text);
             } else {
-                panic!("Expected text output, got unknown type");
+                panic!("Expected structured output, got unknown type");
             }
         }
         other => panic!("Expected Transform result, got: {:?}", other),

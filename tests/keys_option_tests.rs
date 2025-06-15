@@ -105,7 +105,7 @@ fn test_keys_option_with_transform() {
     cmd.arg("-f")
         .arg("jsonl")
         .arg("-e")
-        .arg(r#"{"name": data["name"].upper(), "age": data["age"]}"#)
+        .arg(r#"data = {"name": data["name"].upper(), "age": data["age"]}"#)
         .arg("-k")
         .arg("name")
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}"#)

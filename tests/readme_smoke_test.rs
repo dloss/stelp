@@ -25,8 +25,9 @@ fn test_comprehensive_readme_smoke_test() {
     cmd2.arg("-e")
         .arg(
             r#"
-data = parse_json(line)
-f"User: {data}, Action: processed"
+# Parse JSON but don't assign to data to stay in line mode
+parsed = parse_json(line)
+f"User: {parsed}, Action: processed"
         "#,
         )
         .write_stdin(r#"{"user": "alice", "action": "login"}"#)

@@ -22,8 +22,8 @@ echo "hello world" | stelp -e 'line.upper()'                    # → HELLO WORL
 seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'  # Filter + transform
 
 # Structured data processing
-stelp -e 'data["user"].upper()' users.jsonl                     # JSONL format
-echo '{"user":"alice","age":25}' | stelp -f jsonl -e 'data["user"].upper()'
+stelp -e 'data["user"] = data["user"].upper()' -F jsonl users.jsonl   # Modify data variable
+echo '{"user":"alice","age":25}' | stelp -f jsonl -F jsonl -e 'data["user"] = data["user"].upper()'
 
 # Log analysis with counters
 stelp -e 'count = inc("total"); f"[{count}] {line}"' server.log
@@ -101,10 +101,12 @@ emit_all(["a","b"])      # Output each item as separate line
 F-strings only work with simple variables. Extract complex expressions first:
 ```python
 # ❌ Wrong: f"User: {data['user']}, Count: {glob.get('total')}"
-# ✅ Right:
-user = data["user"]
+# ✅ Right (line mode):
+user = data["user"] if data else "none"
 count = glob.get("total", 0)
 f"User: {user}, Count: {count}"
+# ✅ Right (data mode):
+data = {"formatted": f"User: {data['user']}, Count: {glob.get('total', 0)}"}
 ```
 
 ### Structured Data Formats
@@ -113,22 +115,22 @@ Input formats parse into `data` dictionary. Use `-k/--keys` to select/order outp
 
 ```bash
 # JSON Lines (auto-detected from .jsonl extension)
-stelp -e 'data["name"].upper()' users.jsonl
+stelp -e 'data["name"] = data["name"].upper()' -F jsonl users.jsonl
 
 # Manual format specification
-echo '{"name":"alice","age":25}' | stelp -f jsonl -e 'data["name"].upper()'
+echo '{"name":"alice","age":25}' | stelp -f jsonl -F jsonl -e 'data["name"] = data["name"].upper()'
 
 # CSV (auto-detects headers)
-echo -e "name,age\nalice,25" | stelp -f csv -F jsonl -e 'data["name"].upper()'
+echo -e "name,age\nalice,25" | stelp -f csv -F jsonl -e 'data["name"] = data["name"].upper()'
 
-# logfmt (key=value pairs)  
-echo "user=alice level=info msg='login success'" | stelp -f logfmt -e 'data["user"]'
+# logfmt (key=value pairs) - show specific field
+echo "user=alice level=info msg='login success'" | stelp -f logfmt -F jsonl -k user
 
-# Syslog (RFC3164/5424)
-echo 'Oct 11 22:14:15 srv sshd[1234]: Failed login' | stelp -f syslog -e 'data["prog"]'
+# Syslog (RFC3164/5424) - show program name
+echo 'Oct 11 22:14:15 srv sshd[1234]: Failed login' | stelp -f syslog -F jsonl -k prog
 
-# Apache/Nginx logs (standard & extended combined format)
-echo '192.168.1.1 - - [10/Oct/2023:13:55:36] "GET / HTTP/1.1" 200 1234' | stelp -f combined -e 'data["ip"]'
+# Apache/Nginx logs (standard & extended combined format) - show IP
+echo '192.168.1.1 - - [10/Oct/2023:13:55:36] "GET / HTTP/1.1" 200 1234' | stelp -f combined -F jsonl -k ip
 
 # Column selection/ordering
 echo '{"name":"alice","age":25,"city":"NYC"}' | stelp -f jsonl -F csv -k "name,city"
@@ -182,16 +184,16 @@ stelp --begin 'exit("No processing needed")' -e 'line.upper()' input.txt
 ### Structured Data Processing
 ```bash
 # JSON processing with validation
-echo '{"user":"alice","status":"active"}' | stelp -f jsonl -e 'data["user"] if data["status"] == "active" else skip()'
+echo '{"user":"alice","status":"active"}' | stelp -f jsonl -F jsonl --filter 'data["status"] == "active"' -k user
 
-# CSV transformation
-stelp -f csv -F csv -e 'data["name"] if int(data["age"]) >= 18 else skip()' users.csv
+# CSV transformation  
+stelp -f csv -F csv --filter 'int(data["age"]) >= 18' -k name users.csv
 
-# Log format analysis
-cat /var/log/nginx/access.log | stelp -f combined --filter 'data["status"] >= 400' -e 'data["ip"]' | sort | uniq -c
+# Log format analysis - extract IPs from 4xx/5xx responses
+cat /var/log/nginx/access.log | stelp -f combined -F jsonl --filter 'data["status"] >= 400' -k ip | sort | uniq -c
 
-# Syslog filtering  
-cat /var/log/syslog | stelp -f syslog --filter 'data.get("severity", 0) <= 3' -e 'msg = data["msg"]; f"CRITICAL: {msg}"'
+# Syslog filtering - show critical messages  
+cat /var/log/syslog | stelp -f syslog -F jsonl --filter 'data.get("severity", 0) <= 3' -e 'data = {"alert": f"CRITICAL: {data["msg"]}"}'
 ```
 
 ### Multi-file Processing
