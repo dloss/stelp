@@ -28,8 +28,8 @@ echo '{"user":"alice","age":25}' | stelp -f jsonl -e 'data["user"].upper()'
 # Log analysis with counters
 stelp -e 'count = inc("total"); f"[{count}] {line}"' server.log
 
-# Multi-output with emit()
-echo "user1,user2" | stelp -e 'emit_all(line.split(","))'       # → user1\nuser2
+# Multi-output with emit() (requires data mode)
+echo "user1,user2" | stelp -e 'data = {"users": line.split(",")}; emit_all(data["users"]); data'
 ```
 
 ## Usage
@@ -76,12 +76,25 @@ stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
 # 1. Filter: keep long lines  2. Uppercase  3. Add prefix
 ```
 
-### Control Flow
+### Control Flow & Data Modes
+
+**Line Mode** (processing text): `data` is None, `line` contains text
+**Data Mode** (processing structured data): `data` contains parsed data, `line` is None
+
+Data mode is automatically enabled with `--input-format` options (jsonl, csv, etc.) or when you assign to `data` in your script.
+
 ```python
-emit("text")             # Output additional line + continue processing
-emit_all(["a","b"])      # Output each item as separate line  
+# Available in both modes
 skip()                   # Skip current line (no output)
 exit("reason")           # Stop processing with message
+
+# Only available in data mode (when data is not None)
+emit("text")             # Output additional line + continue processing
+emit_all(["a","b"])      # Output each item as separate line  
+
+# Implicit behavior when script returns None:
+# • Line mode: skip the record (no output)
+# • Data mode: pass through original record unchanged
 ```
 
 ### F-String Limitations ⚠️
@@ -150,11 +163,11 @@ stelp -e 'count = inc("total"); error_count = inc("errors") if "ERROR" in line e
 
 ### Fan-out Processing  
 ```bash
-# Split lines into multiple outputs
-echo "user:alice,bob" | stelp -e 'emit_all(line.split(":")[1].split(","))'  # → alice\nbob
+# Split lines into multiple outputs (requires data mode)
+echo "user:alice,bob" | stelp -e 'data = {"users": line.split(":")[1].split(",")}; emit_all(data["users"]); None'
 
-# Conditional emit
-stelp -e 'if "ERROR" in line: emit(f"🚨 {line}"); line' server.log
+# Conditional emit with structured data
+echo '{"level":"ERROR","msg":"failed"}' | stelp -f jsonl -e 'if data["level"] == "ERROR": emit(f"🚨 {data['msg']}"); data'
 ```
 
 ### BEGIN/END Processing
@@ -198,6 +211,9 @@ def categorize_level(line):
 
 category = categorize_level(line)
 count = inc(f"{category}_count")
+
+# Create data structure for emit() to work
+data = {"category": category, "line": line, "count": count}
 
 if category == "error":
     emit(f"🔴 Error #{count}: {line}")

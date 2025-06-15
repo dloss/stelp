@@ -11,12 +11,32 @@ thread_local! {
     pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
     pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = const { RefCell::new(None) };
     pub(crate) static DEBUG_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static IS_DATA_MODE: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static CURRENT_MODULE: RefCell<Option<*const starlark::environment::Module>> = const { RefCell::new(None) };
 }
 
 #[starlark_module]
 pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuilder) {
     // Control flow functions
     fn emit(text: String) -> anyhow::Result<starlark::values::none::NoneType> {
+        // Check if we're in data mode by looking at the current data variable
+        let is_data_mode = CURRENT_MODULE.with(|module_ptr| {
+            if let Some(module_ptr) = *module_ptr.borrow() {
+                unsafe {
+                    if let Some(data_value) = (*module_ptr).get("data") {
+                        !data_value.is_none()
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                IS_DATA_MODE.with(|flag| flag.get()) // fallback to thread-local flag
+            }
+        });
+        
+        if !is_data_mode {
+            return Err(anyhow::anyhow!("emit() can only be used in data mode (when 'data' is not None)"));
+        }
         EMIT_BUFFER.with(|buffer| {
             buffer.borrow_mut().push(text);
         });
@@ -24,6 +44,24 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     }
 
     fn emit_all<'v>(heap: &'v Heap, items: Value<'v>) -> anyhow::Result<starlark::values::none::NoneType> {
+        // Check if we're in data mode by looking at the current data variable
+        let is_data_mode = CURRENT_MODULE.with(|module_ptr| {
+            if let Some(module_ptr) = *module_ptr.borrow() {
+                unsafe {
+                    if let Some(data_value) = (*module_ptr).get("data") {
+                        !data_value.is_none()
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                IS_DATA_MODE.with(|flag| flag.get()) // fallback to thread-local flag
+            }
+        });
+        
+        if !is_data_mode {
+            return Err(anyhow::anyhow!("emit_all() can only be used in data mode (when 'data' is not None)"));
+        }
         match items.iterate(heap) {
             Ok(mut iterable) => {
                 EMIT_BUFFER.with(|buffer| {
@@ -42,6 +80,11 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
 
     fn skip() -> anyhow::Result<starlark::values::none::NoneType> {
         SKIP_FLAG.with(|flag| flag.set(true));
+        Ok(starlark::values::none::NoneType)
+    }
+
+    fn set_data_mode() -> anyhow::Result<starlark::values::none::NoneType> {
+        IS_DATA_MODE.with(|flag| flag.set(true));
         Ok(starlark::values::none::NoneType)
     }
 

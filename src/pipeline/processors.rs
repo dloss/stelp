@@ -2,7 +2,7 @@
 use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
-    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG,
+    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -67,6 +67,11 @@ impl StarlarkProcessor {
         // Create fresh module for each record
         let module = Module::new();
 
+        // Set current module pointer for emit functions
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = Some(&module as *const Module);
+        });
+
         // Create glob dictionary using the existing function
         let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
         module.set("glob", glob_dict);
@@ -81,17 +86,21 @@ impl StarlarkProcessor {
         }
 
         // Set record-specific variables based on type
-        match record {
+        // Initial data mode is set based on whether we have structured data
+        let initial_data_mode = match record {
             RecordData::Text(text) => {
                 module.set("line", module.heap().alloc(text.clone()));
                 module.set("data", starlark::values::Value::new_none());
+                false // Start in line mode for text
             }
             RecordData::Structured(data) => {
                 module.set("line", starlark::values::Value::new_none());
                 let starlark_data = json_to_starlark_value(module.heap(), data.clone())?;
                 module.set("data", starlark_data);
+                true // Start in data mode for structured data
             }
-        }
+        };
+        IS_DATA_MODE.with(|flag| flag.set(initial_data_mode));
 
         // Add constants
         module.set("True", starlark::values::Value::new_bool(true));
@@ -118,6 +127,14 @@ impl StarlarkProcessor {
         let result = eval
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Script execution error: {}", e))?;
+
+        // Check if user assigned to 'data' variable after script execution
+        if let Some(data_value) = module.get("data") {
+            if !data_value.is_none() {
+                // User assigned to data, switch to data mode
+                IS_DATA_MODE.with(|flag| flag.set(true));
+            }
+        }
 
         // Sync glob dictionary back to global variables after execution
         if let Some(glob_value) = module.get("glob") {
@@ -231,9 +248,16 @@ impl StarlarkProcessor {
                             }
                         }
                         StarlarkResult::None => {
-                            // None means no output
+                            // None means no output - but implicit SKIP only applies in line mode
+                            let is_data_mode = IS_DATA_MODE.with(|flag| flag.get());
                             if emissions.is_empty() {
-                                ProcessResult::Skip
+                                if is_data_mode {
+                                    // In data mode, None means pass through original record
+                                    ProcessResult::Transform(record.clone())
+                                } else {
+                                    // In line mode, None means skip
+                                    ProcessResult::Skip
+                                }
                             } else {
                                 ProcessResult::FanOut(emissions)
                             }
@@ -307,6 +331,9 @@ impl StarlarkProcessor {
         CURRENT_CONTEXT.with(|current_ctx| {
             *current_ctx.borrow_mut() = None;
         });
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = None;
+        });
 
         result
     }
@@ -366,6 +393,11 @@ impl FilterProcessor {
         // Create fresh module for each record
         let module = Module::new();
 
+        // Set current module pointer for emit functions
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = Some(&module as *const Module);
+        });
+
         // Create glob dictionary using the existing function
         let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
         module.set("glob", glob_dict);
@@ -380,17 +412,21 @@ impl FilterProcessor {
         }
 
         // Set record-specific variables
-        match record {
+        // Initial data mode is set based on whether we have structured data
+        let initial_data_mode = match record {
             RecordData::Text(text) => {
                 module.set("line", module.heap().alloc(text.clone()));
                 module.set("data", starlark::values::Value::new_none());
+                false // Start in line mode for text
             }
             RecordData::Structured(data) => {
                 module.set("line", starlark::values::Value::new_none());
                 let starlark_data = json_to_starlark_value(module.heap(), data.clone())?;
                 module.set("data", starlark_data);
+                true // Start in data mode for structured data
             }
-        }
+        };
+        IS_DATA_MODE.with(|flag| flag.set(initial_data_mode));
 
         // Add constants
         module.set("True", starlark::values::Value::new_bool(true));
@@ -418,6 +454,14 @@ impl FilterProcessor {
             .eval_module(ast, &self.globals)
             .map_err(|e| anyhow::anyhow!("Filter execution error: {}", e))?;
 
+        // Check if user assigned to 'data' variable after script execution
+        if let Some(data_value) = module.get("data") {
+            if !data_value.is_none() {
+                // User assigned to data, switch to data mode
+                IS_DATA_MODE.with(|flag| flag.set(true));
+            }
+        }
+
         // Sync glob dictionary back to global variables after execution
         if let Some(glob_value) = module.get("glob") {
             sync_glob_dict_to_globals(glob_value, ctx.global_vars);
@@ -426,9 +470,18 @@ impl FilterProcessor {
         // Check for control flow
         let should_exit = EXIT_FLAG.with(|flag| flag.get());
         if should_exit {
+            // Clear module context before early return
+            CURRENT_MODULE.with(|module_ptr| {
+                *module_ptr.borrow_mut() = None;
+            });
             let msg = EXIT_MESSAGE.with(|msg| msg.borrow().clone());
             return Err(anyhow::anyhow!("Filter exit: {}", msg.unwrap_or_default()));
         }
+
+        // Clear module context
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = None;
+        });
 
         // Convert result to boolean
         if result.is_none() {
