@@ -134,6 +134,9 @@ impl StarlarkProcessor {
             if !data_value.is_none() {
                 // User assigned to data, switch to data mode
                 IS_DATA_MODE.with(|flag| flag.set(true));
+            } else {
+                // User set data to None, switch out of data mode
+                IS_DATA_MODE.with(|flag| flag.set(false));
             }
         }
 
@@ -488,6 +491,9 @@ impl FilterProcessor {
             if !data_value.is_none() {
                 // User assigned to data, switch to data mode
                 IS_DATA_MODE.with(|flag| flag.set(true));
+            } else {
+                // User set data to None, switch out of data mode
+                IS_DATA_MODE.with(|flag| flag.set(false));
             }
         }
 
@@ -623,6 +629,13 @@ fn starlark_to_json_value(value: starlark::values::Value) -> anyhow::Result<serd
         Ok(serde_json::Value::Bool(b))
     } else if let Some(i) = value.unpack_i32() {
         Ok(serde_json::Value::Number(serde_json::Number::from(i)))
+    } else if value.get_type() == "float" {
+        // Use to_string and parse back to ensure we get the right value
+        let s = value.to_string();
+        let f: f64 = s.parse().map_err(|_| anyhow::anyhow!("Failed to parse float value"))?;
+        serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| anyhow::anyhow!("Float value cannot be represented as JSON number"))
     } else if let Some(s) = value.unpack_str() {
         Ok(serde_json::Value::String(s.to_string()))
     } else if let Some(list) = ListRef::from_value(value) {
@@ -945,6 +958,110 @@ impl RecordProcessor for DeriveProcessor {
         }
 
         result
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Extract processor that converts text to structured data using named patterns
+pub struct ExtractProcessor {
+    extractor: crate::pattern_extraction::PatternExtractor,
+    name: String,
+}
+
+impl ExtractProcessor {
+    pub fn new(name: &str, pattern: &str) -> Result<Self, CompilationError> {
+        let extractor = crate::pattern_extraction::PatternExtractor::new(pattern)
+            .map_err(|e| CompilationError::ValidationError(format!("Invalid pattern: {}", e)))?;
+        
+        Ok(ExtractProcessor {
+            extractor,
+            name: name.to_string(),
+        })
+    }
+}
+
+impl RecordProcessor for ExtractProcessor {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        // Only process text records
+        match record {
+            RecordData::Text(text) => {
+                // Create a temporary module just for the heap
+                let module = Module::new();
+                
+                match self.extractor.extract(module.heap(), text) {
+                    Ok(Some(extracted_data)) => {
+                        // Convert Starlark value back to JSON for RecordData
+                        match starlark_to_json_value(extracted_data) {
+                            Ok(json_value) => {
+                                let result = ProcessResult::Transform(RecordData::Structured(json_value));
+                                
+                                // Debug logging
+                                if ctx.debug {
+                                    eprintln!("  {}: → EXTRACTED", self.name);
+                                    std::io::stderr().flush().ok();
+                                }
+                                
+                                result
+                            }
+                            Err(e) => {
+                                let result = ProcessResult::Error(ProcessingError::ScriptError {
+                                    step: self.name.clone(),
+                                    line: ctx.line_number,
+                                    source: anyhow::anyhow!("Failed to convert extracted data: {}", e),
+                                });
+                                
+                                // Debug logging
+                                if ctx.debug {
+                                    eprintln!("  {}: → CONVERSION ERROR: {}", self.name, e);
+                                    std::io::stderr().flush().ok();
+                                }
+                                
+                                result
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // No match - pass through unchanged
+                        let result = ProcessResult::Transform(record.clone());
+                        
+                        // Debug logging
+                        if ctx.debug {
+                            eprintln!("  {}: → NO MATCH", self.name);
+                            std::io::stderr().flush().ok();
+                        }
+                        
+                        result
+                    }
+                    Err(e) => {
+                        // Type conversion error or other extraction error
+                        // Log in debug mode but pass through unchanged (graceful handling)
+                        let result = ProcessResult::Transform(record.clone());
+                        
+                        if ctx.debug {
+                            eprintln!("  {}: → TYPE ERROR: {}, passing through", self.name, e);
+                            std::io::stderr().flush().ok();
+                        }
+                        
+                        result
+                    }
+                }
+            }
+            RecordData::Structured(_) => {
+                // Already structured data - pass through unchanged
+                let result = ProcessResult::Transform(record.clone());
+                
+                // Debug logging
+                if ctx.debug {
+                    eprintln!("  {}: → ALREADY STRUCTURED", self.name);
+                    std::io::stderr().flush().ok();
+                }
+                
+                result
+            }
+        }
     }
 
     fn name(&self) -> &str {

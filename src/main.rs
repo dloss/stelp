@@ -8,11 +8,12 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::processors::{DeriveProcessor, FilterProcessor, StarlarkProcessor};
+use stelp::processors::{DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor};
 use stelp::StreamPipeline;
 
 #[derive(Debug, Clone)]
 enum PipelineStep {
+    Extract(String),
     Eval(String),
     Filter(String),
     Derive(String),
@@ -27,6 +28,10 @@ struct Args {
     /// Input files to process (default: stdin if none provided)
     #[arg(value_name = "FILE")]
     input_files: Vec<PathBuf>,
+
+    /// Extract structured data using named patterns like '{field}' or '{field:type}'
+    #[arg(long = "extract")]
+    extract_pattern: Option<String>,
 
     /// Include Starlark files (processed in order)
     #[arg(short = 'I', long = "include", action = ArgAction::Append)]
@@ -104,6 +109,7 @@ struct Args {
 impl Args {
     fn validate(&self) -> Result<(), String> {
         let has_script_file = self.script_file.is_some();
+        let has_extract = self.extract_pattern.is_some();
         let has_evals = !self.evals.is_empty();
         let has_filters = !self.filters.is_empty();
         let has_derives = !self.derives.is_empty();
@@ -125,15 +131,15 @@ impl Args {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
-        match (has_script_file, has_evals || has_filters || has_derives || has_begin_end, has_input_format || has_output_format || has_chunking) {
+        match (has_script_file, has_extract || has_evals || has_filters || has_derives || has_begin_end, has_input_format || has_output_format || has_chunking) {
             (true, true, _) => {
-                Err("Cannot use --script with --eval, --filter, --derive, --begin, or --end arguments".to_string())
+                Err("Cannot use --script with --extract, --eval, --filter, --derive, --begin, or --end arguments".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
-            (false, true, _) => Ok(()), // Eval/filter/derive/begin/end arguments only  
+            (false, true, _) => Ok(()), // Extract/eval/filter/derive/begin/end arguments only  
             (false, false, true) => Ok(()), // Input/output format or chunking only
             (false, false, false) => {
-                Err("Must provide either --script, --eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
+                Err("Must provide either --script, --extract/--eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
             }
         }
     }
@@ -166,6 +172,11 @@ impl Args {
             for (pos, index) in derive_indices.enumerate() {
                 steps_with_indices.push((index, PipelineStep::Derive(derive_values[pos].clone())));
             }
+        }
+
+        // Handle extract pattern - it doesn't have an index, so we place it first
+        if let Some(extract_pattern) = &self.extract_pattern {
+            steps_with_indices.push((0, PipelineStep::Extract(extract_pattern.clone())));
         }
 
         // Handle script file - it doesn't have an index, so we place it first
@@ -322,6 +333,14 @@ fn main() {
     // Add processors to pipeline in order
     for (i, step) in steps.iter().enumerate() {
         match step {
+            PipelineStep::Extract(pattern) => {
+                let processor = ExtractProcessor::new(&format!("extract_{}", i + 1), pattern)
+                    .unwrap_or_else(|e| {
+                        eprintln!("stelp: failed to compile extract pattern: {}", e);
+                        std::process::exit(1);
+                    });
+                pipeline.add_processor(Box::new(processor));
+            }
             PipelineStep::Eval(eval_expr) => {
                 let final_script =
                     build_final_script(&args.includes, eval_expr).unwrap_or_else(|e| {

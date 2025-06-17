@@ -258,10 +258,10 @@ fn test_data_mode_none_data() {
     let processor = StarlarkProcessor::from_script(
         "none_data_test",
         r#"
-# Set data to None
+# Set data to None (switches out of data mode)
 data = None
-# Return value should be ignored
-"IGNORED"
+# Return value should now be used
+"NOT_IGNORED"
         "#,
     )
     .unwrap();
@@ -272,9 +272,9 @@ data = None
 
     match result {
         ProcessResult::Transform(output) => {
-            // When data is None, should pass through original record
-            assert_eq!(output.as_structured(), Some(&json_data));
-            println!("✅ Data mode with None data passes through original");
+            // When data is None, should switch out of data mode and use return value
+            assert_eq!(output.as_text(), Some("NOT_IGNORED"));
+            println!("✅ Data mode with None data switches to return value");
         }
         other => panic!("Expected Transform result, got: {:?}", other),
     }
