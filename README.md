@@ -25,6 +25,10 @@ seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'  # Filter + 
 stelp -e 'data["user"] = data["user"].upper()' -F jsonl users.jsonl   # Modify data variable
 echo '{"user":"alice","age":25}' | stelp -f jsonl -F jsonl -e 'data["user"] = data["user"].upper()'
 
+# Derive mode for ergonomic field access
+echo "name,price,qty" | stelp -f csv --derive 'total = float(price) * float(qty)'
+stelp -f csv --derive 'category = "expensive" if float(price) > 20 else "cheap"' data.csv
+
 # Log analysis with counters
 stelp -e 'count = inc("total"); f"[{count}] {line}"' server.log
 
@@ -40,6 +44,7 @@ stelp [OPTIONS] [FILES...]
 # Core options
 -e, --eval <EXPR>           Evaluation expressions (executed in pipeline order)
     --filter <EXPR>         Filter expressions (keep lines where true)
+-d, --derive <EXPR>         Transform structured data with field variable injection
 -s, --script <FILE>         Script file with processing logic
     --begin/--end <EXPR>    Run before/after input processing
 
@@ -47,6 +52,7 @@ stelp [OPTIONS] [FILES...]
 -f, --input-format <FMT>    Input: line, jsonl, csv, logfmt, syslog, combined (auto-detects by extension)
 -F, --output-format <FMT>   Output: line, jsonl, csv, logfmt  
 -k, --keys <KEYS>           Select/order output columns (comma-separated)
+-K, --remove-keys <KEYS>    Remove keys from structured output (comma-separated)
 
 # Control
 -o, --output <FILE>         Output file (default: stdout)
@@ -69,8 +75,23 @@ glob["key"]              # Global state across lines
 inc("counter")           # Increment global counter, returns new value
 ```
 
+### Derive Mode (--derive)
+For structured data, `--derive` provides direct field access instead of `data["field"]`:
+```python
+# Standard mode: data["price"] * data["quantity"] 
+# Derive mode:   price * quantity
+
+total = float(price) * float(quantity)           # Direct field access
+category = "expensive" if float(price) > 20 else "cheap"
+temp_field = None                                # Delete field
+
+# Stelp functions use stelp_ prefix to avoid conflicts  
+count = stelp_inc("processed")
+stelp_data["invalid-key"] = "value"              # For non-identifier keys
+```
+
 ### Pipeline Processing
-Commands execute in order: `--filter` → `-e` → `-e` → ... (first to last)
+Commands execute in order: `--filter` → `--derive` → `-e` → ... (first to last)
 ```bash
 stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
 # 1. Filter: keep long lines  2. Uppercase  3. Add prefix

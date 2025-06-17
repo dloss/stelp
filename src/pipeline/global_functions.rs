@@ -1012,3 +1012,38 @@ mod tests {
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
 }
+
+// Additional globals for derive mode with stelp_ prefix
+#[starlark_module]
+pub(crate) fn derive_globals_with_prefix(builder: &mut starlark::environment::GlobalsBuilder) {
+    fn stelp_emit(text: String) -> anyhow::Result<starlark::values::none::NoneType> {
+        EMIT_BUFFER.with(|buffer| {
+            buffer.borrow_mut().push(text);
+        });
+        Ok(starlark::values::none::NoneType)
+    }
+
+    fn stelp_skip() -> anyhow::Result<starlark::values::none::NoneType> {
+        SKIP_FLAG.with(|flag| flag.set(true));
+        Ok(starlark::values::none::NoneType)
+    }
+
+    fn stelp_exit(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+        EXIT_FLAG.with(|flag| flag.set(true));
+        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = message);
+        Ok(starlark::values::none::NoneType)
+    }
+
+    fn stelp_inc(counter_name: String) -> anyhow::Result<i32> {
+        CURRENT_CONTEXT.with(|ctx_cell| {
+            if let Some((global_vars_ptr, _, _)) = *ctx_cell.borrow() {
+                unsafe {
+                    let global_vars = &*global_vars_ptr;
+                    Ok(global_vars.increment_counter(&counter_name))
+                }
+            } else {
+                Err(anyhow::anyhow!("No processing context available"))
+            }
+        })
+    }
+}

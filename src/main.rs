@@ -8,13 +8,14 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::processors::{FilterProcessor, StarlarkProcessor};
+use stelp::processors::{DeriveProcessor, FilterProcessor, StarlarkProcessor};
 use stelp::StreamPipeline;
 
 #[derive(Debug, Clone)]
 enum PipelineStep {
     Eval(String),
     Filter(String),
+    Derive(String),
     ScriptFile(PathBuf),
 }
 
@@ -43,6 +44,10 @@ struct Args {
     #[arg(long = "filter", action = ArgAction::Append)]
     filters: Vec<String>,
 
+    /// Derive expressions - Transform structured data by injecting field variables
+    #[arg(short = 'd', long = "derive", action = ArgAction::Append)]
+    derives: Vec<String>,
+
     /// BEGIN expression - Run before processing any input lines
     #[arg(long = "begin")]
     begin: Option<String>,
@@ -62,6 +67,10 @@ struct Args {
     /// Restrict output to specific keys from structured data (comma-separated)
     #[arg(short = 'k', long = "keys")]
     keys: Option<String>,
+
+    /// Remove keys from structured data output (comma-separated)
+    #[arg(short = 'K', long = "remove-keys")]
+    remove_keys: Option<String>,
 
     /// Output file (default: stdout)
     #[arg(short = 'o', long = "output")]
@@ -97,6 +106,7 @@ impl Args {
         let has_script_file = self.script_file.is_some();
         let has_evals = !self.evals.is_empty();
         let has_filters = !self.filters.is_empty();
+        let has_derives = !self.derives.is_empty();
         let has_begin_end = self.begin.is_some() || self.end.is_some();
         let has_input_format = self.input_format.is_some();
         let has_output_format = self.output_format.is_some();
@@ -115,15 +125,15 @@ impl Args {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
-        match (has_script_file, has_evals || has_filters || has_begin_end, has_input_format || has_output_format || has_chunking) {
+        match (has_script_file, has_evals || has_filters || has_derives || has_begin_end, has_input_format || has_output_format || has_chunking) {
             (true, true, _) => {
-                Err("Cannot use --script with --eval, --filter, --begin, or --end arguments".to_string())
+                Err("Cannot use --script with --eval, --filter, --derive, --begin, or --end arguments".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
-            (false, true, _) => Ok(()), // Eval/filter/begin/end arguments only  
+            (false, true, _) => Ok(()), // Eval/filter/derive/begin/end arguments only  
             (false, false, true) => Ok(()), // Input/output format or chunking only
             (false, false, false) => {
-                Err("Must provide either --script, --eval/--filter/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
+                Err("Must provide either --script, --eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
             }
         }
     }
@@ -146,6 +156,15 @@ impl Args {
                 matches.get_many::<String>("filters").unwrap().collect();
             for (pos, index) in filter_indices.enumerate() {
                 steps_with_indices.push((index, PipelineStep::Filter(filter_values[pos].clone())));
+            }
+        }
+
+        // Get derive steps with their indices
+        if let Some(derive_indices) = matches.indices_of("derives") {
+            let derive_values: Vec<&String> =
+                matches.get_many::<String>("derives").unwrap().collect();
+            for (pos, index) in derive_indices.enumerate() {
+                steps_with_indices.push((index, PipelineStep::Derive(derive_values[pos].clone())));
             }
         }
 
@@ -269,6 +288,13 @@ fn main() {
             .collect::<Vec<String>>()
     });
 
+    let remove_keys = args.remove_keys.as_ref().map(|k| {
+        k.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+    });
+
     let config = PipelineConfig {
         error_strategy: if args.fail_fast {
             ErrorStrategy::FailFast
@@ -279,6 +305,7 @@ fn main() {
         input_format: input_format.clone(),
         output_format, // Use the determined format
         keys,
+        remove_keys,
         ..Default::default()
     };
 
@@ -323,6 +350,20 @@ fn main() {
                                 i + 1,
                                 e
                             );
+                            std::process::exit(1);
+                        });
+                pipeline.add_processor(Box::new(processor));
+            }
+            PipelineStep::Derive(derive_expr) => {
+                let final_script =
+                    build_final_script(&args.includes, derive_expr).unwrap_or_else(|e| {
+                        eprintln!("stelp: {}", e);
+                        std::process::exit(1);
+                    });
+                let processor =
+                    DeriveProcessor::from_script(&format!("derive_{}", i + 1), &final_script)
+                        .unwrap_or_else(|e| {
+                            eprintln!("stelp: failed to compile derive expression {}: {}", i + 1, e);
                             std::process::exit(1);
                         });
                 pipeline.add_processor(Box::new(processor));

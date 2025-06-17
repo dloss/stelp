@@ -54,6 +54,31 @@ echo '192.168.1.1 - - [25/Dec/2021:10:24:56 +0000] "GET /api/status HTTP/1.1" 20
 
 # Syslog format parsing 
 echo "Dec 25 10:24:56 server1 nginx: 192.168.1.1 - GET /api/status" | cargo run -- -e 'ts_str = regex_replace(r"^(\w+ \d+ \d+:\d+:\d+).*", r"\1", line); epoch = guess_ts(ts_str); format_ts(epoch, "%Y-%m-%d %H:%M:%S") + " " + line'
+
+# Derive examples for structured data transformation
+echo -e "name,price,quantity\nAlice,10.50,3\nBob,25.00,2" | cargo run -- -f csv --derive 'total = float(price) * float(quantity)'
+
+# Complex derive with field creation, modification, and deletion
+echo -e "user,score,attempts,temp\nalice,85,3,debug\nbob,92,2,test" | cargo run -- -f csv --derive '
+efficiency = float(score) / float(attempts)
+grade = "A" if float(score) >= 90 else "B" if float(score) >= 80 else "C"
+passed = float(score) >= 70
+temp = None  # Delete field via None assignment
+' 
+
+# Using stelp_data for invalid identifiers and complex manipulation
+echo -e "user,score,meta-data\nalice,85,debug\nbob,92,test" | cargo run -- -f csv --derive '
+stelp_data["created_date"] = "2024-01-01"
+stelp_data["meta-data"] = None  # Remove invalid identifier key
+count = stelp_inc("processed")  # Use stelp_ prefixed functions
+stelp_emit("Processing: " + user)  # Emit debug info
+'
+
+# Mixed pipeline with filter and derive
+echo -e "name,price,quantity\nAlice,10.50,3\nBob,25.00,2\nCharlie,5.00,1" | cargo run -- -f csv --filter 'float(data["price"]) > 10' --derive 'total = float(price) * float(quantity); discount = 0.1 if float(price) > 20 else 0'
+
+# Remove keys at output stage
+echo -e "name,price,quantity,debug\nAlice,10.50,3,temp\nBob,25.00,2,test" | cargo run -- -f csv --derive 'total = float(price) * float(quantity)' --remove-keys debug
 ```
 
 ## Architecture Overview
@@ -69,6 +94,7 @@ echo "Dec 25 10:24:56 server1 nginx: 192.168.1.1 - GET /api/status" | cargo run 
 **Starlark Integration**: The tool embeds the Starlark language (Python subset) for user scripts:
 - `StarlarkProcessor` - Executes transformation scripts
 - `FilterProcessor` - Evaluates filter expressions  
+- `DeriveProcessor` - Transforms structured data with injected field variables
 - `GlobalVariables` - Manages persistent state across records
 - Global functions (emit, skip, exit, inc) provide control flow
 
@@ -150,3 +176,50 @@ Scripts have access to:
 - Meta variables: `LINENUM`, `FILENAME`, `RECNUM`
 
 The `src/prelude.star` file is automatically included and provides helper functions like `inc()` for counter management.
+
+## Derive Mode
+
+The `--derive` feature provides ergonomic structured data transformation by automatically injecting data dict keys as Starlark variables.
+
+### Key Features
+
+**Variable Injection**: Data fields become direct variables:
+```python
+# CSV with columns: name,price,quantity
+total = price * quantity  # Direct access instead of data["price"] * data["quantity"]
+```
+
+**Conflict Resolution**: All Stelp functionality uses `stelp_` prefix:
+```python
+# Data variables have clean namespace
+user_count = stelp_inc("users")      # Stelp counter function
+file_info = stelp_FILENAME           # Stelp meta variable  
+stelp_emit("Debug: " + name)         # Stelp emit function
+state = stelp_glob["app_state"]      # Stelp global state
+```
+
+**Field Manipulation**:
+```python
+# Field creation/modification via direct assignment
+total = price * quantity
+category = "expensive" if price > 100 else "affordable"
+
+# Field deletion via None assignment
+temp_field = None  # Removes temp_field from output
+
+# Invalid identifiers via stelp_data
+stelp_data["invalid-key"] = "value"        # Keys with dashes, spaces
+stelp_data["nested"] = {"config": "value"} # Nested structures
+stelp_data["meta-data"] = None             # Delete invalid identifier keys
+```
+
+**Output Filtering**: Remove keys at output stage:
+```bash
+stelp --derive 'total = price * qty' --remove-keys temp,debug data.csv
+```
+
+### Requirements
+
+- **Structured data only**: Use `-f csv/jsonl/etc` 
+- **Valid identifiers**: Data keys must be valid Starlark variable names
+- **Dict format**: Arrays and primitives not supported

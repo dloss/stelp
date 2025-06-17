@@ -2,7 +2,7 @@
 use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
-    global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
+    derive_globals_with_prefix, global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -643,5 +643,311 @@ fn starlark_to_json_value(value: starlark::values::Value) -> anyhow::Result<serd
         Ok(serde_json::Value::Object(obj))
     } else {
         Ok(serde_json::Value::String(value.to_string()))
+    }
+}
+
+/// Derive processor that injects data variables and prefixes Stelp functionality
+pub struct DeriveProcessor {
+    script_source: String,
+    name: String,
+}
+
+impl DeriveProcessor {
+    pub fn from_script(name: &str, script: &str) -> Result<Self, CompilationError> {
+        // Validate syntax by parsing with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
+        let _ast = AstModule::parse("derive", script.to_string(), &dialect)?;
+
+        Ok(DeriveProcessor {
+            script_source: script.to_string(),
+            name: name.to_string(),
+        })
+    }
+
+    fn is_valid_identifier(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        
+        // First character must be letter or underscore
+        let mut chars = name.chars();
+        let first = chars.next().unwrap();
+        if !first.is_ascii_alphabetic() && first != '_' {
+            return false;
+        }
+        
+        // Remaining characters must be alphanumeric or underscore
+        for c in chars {
+            if !c.is_ascii_alphanumeric() && c != '_' {
+                return false;
+            }
+        }
+        
+        // Check against Python/Starlark reserved words
+        !matches!(name, 
+            "True" | "False" | "None" | "and" | "or" | "not" | "if" | "else" | "elif" | 
+            "for" | "in" | "while" | "def" | "return" | "class" | "import" | "from" | 
+            "as" | "global" | "nonlocal" | "lambda" | "try" | "except" | "finally" | 
+            "raise" | "with" | "assert" | "del" | "pass" | "break" | "continue"
+        )
+    }
+
+    fn inject_data_variables(&self, module: &Module, data: &serde_json::Value) -> Result<(), anyhow::Error> {
+        if let serde_json::Value::Object(obj) = data {
+            for (key, value) in obj {
+                if Self::is_valid_identifier(key) {
+                    let starlark_value = json_to_starlark_value(module.heap(), value.clone())?;
+                    module.set(key, starlark_value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_variable_assignments(&self, module: &Module, original_data: &serde_json::Value) -> Result<serde_json::Value, anyhow::Error> {
+        let mut result_obj = serde_json::Map::new();
+        
+        // Start with original data if it's an object
+        if let serde_json::Value::Object(original_obj) = original_data {
+            result_obj = original_obj.clone();
+        }
+
+        // Get all variables from module that could be data fields
+        for var_name in module.names() {
+            let var_name_str = var_name.as_str();
+            
+            // Skip stelp_ prefixed variables, built-ins, and prelude functions
+            if var_name_str.starts_with("stelp_") || 
+               matches!(var_name_str, "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc") {
+                continue;
+            }
+
+            if let Some(var_value) = module.get(var_name_str) {
+                // Convert Starlark value to JSON
+                if var_value.is_none() {
+                    // None means deletion
+                    result_obj.remove(var_name_str);
+                } else {
+                    let json_value = starlark_to_json_value(var_value)?;
+                    result_obj.insert(var_name_str.to_string(), json_value);
+                }
+            }
+        }
+
+        // Also check stelp_data for modifications
+        if let Some(stelp_data_value) = module.get("stelp_data") {
+            if let Ok(stelp_data_json) = starlark_to_json_value(stelp_data_value) {
+                if let serde_json::Value::Object(stelp_data_obj) = stelp_data_json {
+                    for (key, value) in stelp_data_obj {
+                        if value.is_null() {
+                            // None means deletion
+                            result_obj.remove(&key);
+                        } else {
+                            result_obj.insert(key, value);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(serde_json::Value::Object(result_obj))
+    }
+
+    fn execute_derive(&self, record: &RecordData, ctx: &RecordContext) -> Result<RecordData, anyhow::Error> {
+        // Require structured data
+        let data = match record {
+            RecordData::Structured(data) => data,
+            RecordData::Text(_) => {
+                return Err(anyhow::anyhow!("--derive requires structured data (use -f csv/jsonl/etc)"));
+            }
+        };
+
+        // Set up context for global functions
+        CURRENT_CONTEXT.with(|ctx_cell| {
+            *ctx_cell.borrow_mut() = Some((
+                ctx.global_vars as *const GlobalVariables,
+                ctx.line_number,
+                ctx.file_name.map(|s| s.to_string()),
+            ));
+        });
+
+        // Create fresh module for each record
+        let module = Module::new();
+
+        // Set current module pointer for emit functions
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = Some(&module as *const Module);
+        });
+
+        // Create glob dictionary with stelp_ prefix
+        let glob_dict = create_glob_dict(module.heap(), ctx.global_vars);
+        module.set("stelp_glob", glob_dict);
+
+        // Inject meta variables with stelp_ prefix
+        module.set("stelp_LINENUM", module.heap().alloc(ctx.line_number as i32));
+        module.set("stelp_RECNUM", module.heap().alloc(ctx.record_count as i32));
+        if let Some(filename) = ctx.file_name {
+            module.set("stelp_FILENAME", module.heap().alloc(filename));
+        } else {
+            module.set("stelp_FILENAME", starlark::values::Value::new_none());
+        }
+
+        // Inject data dict with stelp_ prefix for edge cases
+        let starlark_data = json_to_starlark_value(module.heap(), data.clone())?;
+        module.set("stelp_data", starlark_data);
+
+        // Inject data fields as direct variables (the main feature)
+        self.inject_data_variables(&module, data)?;
+
+        // Add constants
+        module.set("True", starlark::values::Value::new_bool(true));
+        module.set("False", starlark::values::Value::new_bool(false));
+        module.set("None", starlark::values::Value::new_none());
+
+        // Add glob for prelude compatibility 
+        module.set("glob", module.get("stelp_glob").unwrap());
+
+        // Parse and execute script with f-strings enabled
+        let dialect = Dialect {
+            enable_f_strings: true,
+            ..Dialect::Extended
+        };
+
+        // Add stelp_ prefixed versions of global functions by creating a custom globals for derive
+        let derive_globals = {
+            use starlark::environment::GlobalsBuilder;
+            GlobalsBuilder::standard()
+                .with(global_functions)
+                .with(derive_globals_with_prefix)
+                .build()
+        };
+
+        // Load and execute prelude (without stelp_ prefix for helper functions)
+        let prelude_ast = AstModule::parse("prelude", PRELUDE_CODE.to_string(), &dialect)
+            .map_err(|e| anyhow::anyhow!("Prelude parse error: {}", e))?;
+        let mut prelude_eval = Evaluator::new(&module);
+        prelude_eval
+            .eval_module(prelude_ast, &derive_globals)
+            .map_err(|e| anyhow::anyhow!("Prelude execution error: {}", e))?;
+
+        let ast = AstModule::parse("derive", self.script_source.clone(), &dialect)
+            .map_err(|e| anyhow::anyhow!("Derive script parse error: {}", e))?;
+
+        let mut eval = Evaluator::new(&module);
+        eval.eval_module(ast, &derive_globals)
+            .map_err(|e| anyhow::anyhow!("Derive script execution error: {}", e))?;
+
+        // Sync stelp_glob dictionary back to global variables
+        if let Some(glob_value) = module.get("stelp_glob") {
+            sync_glob_dict_to_globals(glob_value, ctx.global_vars);
+        }
+
+        // Collect variable assignments and build new data
+        let new_data = self.collect_variable_assignments(&module, data)?;
+
+        // Clear context
+        CURRENT_CONTEXT.with(|current_ctx| {
+            *current_ctx.borrow_mut() = None;
+        });
+        CURRENT_MODULE.with(|module_ptr| {
+            *module_ptr.borrow_mut() = None;
+        });
+
+        Ok(RecordData::Structured(new_data))
+    }
+}
+
+impl RecordProcessor for DeriveProcessor {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        // Clear thread-local state
+        EMIT_BUFFER.with(|buffer| buffer.borrow_mut().clear());
+        SKIP_FLAG.with(|flag| flag.set(false));
+        EXIT_FLAG.with(|flag| flag.set(false));
+        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
+
+        let result = match self.execute_derive(record, ctx) {
+            Ok(derived_record) => {
+                // Collect emitted lines
+                let emissions: Vec<RecordData> = EMIT_BUFFER.with(|buffer| {
+                    buffer
+                        .borrow()
+                        .iter()
+                        .map(|s| RecordData::text(s.clone()))
+                        .collect()
+                });
+
+                // Check control flow flags
+                let skip_flag = SKIP_FLAG.with(|flag| flag.get());
+                let exit_flag = EXIT_FLAG.with(|flag| flag.get());
+
+                if skip_flag {
+                    if emissions.is_empty() {
+                        ProcessResult::Skip
+                    } else {
+                        ProcessResult::FanOut(emissions)
+                    }
+                } else if exit_flag {
+                    let final_output = EXIT_MESSAGE
+                        .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
+                    ProcessResult::Exit(final_output)
+                } else {
+                    match emissions.is_empty() {
+                        true => ProcessResult::Transform(derived_record),
+                        false => ProcessResult::TransformWithEmissions {
+                            primary: Some(derived_record),
+                            emissions,
+                        },
+                    }
+                }
+            }
+            Err(derive_error) => ProcessResult::Error(ProcessingError::ScriptError {
+                step: self.name.clone(),
+                line: ctx.line_number,
+                source: derive_error,
+            }),
+        };
+
+        // Debug logging
+        if ctx.debug {
+            eprintln!("  {}:", self.name);
+            
+            // Show emit() calls
+            let emissions = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
+            for emission in &emissions {
+                eprintln!("    + emit: {:?}", emission);
+            }
+            
+            // Show final decision  
+            match &result {
+                ProcessResult::Skip => eprintln!("    → SKIP"),
+                ProcessResult::Exit(final_output) => {
+                    if let Some(output) = final_output {
+                        eprintln!("    → EXIT with {:?}", output);
+                    } else {
+                        eprintln!("    → EXIT");
+                    }
+                },
+                ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),
+                ProcessResult::Transform(record) => eprintln!("    → {:?}", record),
+                ProcessResult::FanOut(records) => eprintln!("    → FAN-OUT ({} records)", records.len()),
+                ProcessResult::TransformWithEmissions { primary, emissions } => {
+                    if let Some(p) = primary {
+                        eprintln!("    → {:?} + {} emissions", p, emissions.len());
+                    } else {
+                        eprintln!("    → {} emissions", emissions.len());
+                    }
+                }
+            }
+            std::io::stderr().flush().ok();
+        }
+
+        result
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }

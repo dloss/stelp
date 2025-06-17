@@ -44,6 +44,7 @@ impl Default for OutputFormat {
 pub struct OutputFormatter {
     format: OutputFormat,
     keys: Option<Vec<String>>,
+    remove_keys: Option<Vec<String>>,
     csv_headers_written: bool,
     csv_schema_keys: Option<Vec<String>>, // Keys from first record (for warning)
     missing_keys_warned: std::collections::HashSet<String>, // Track warned keys
@@ -51,10 +52,15 @@ pub struct OutputFormatter {
 
 impl OutputFormatter {
     pub fn new(format: OutputFormat, keys: Option<Vec<String>>) -> Self {
+        Self::new_with_remove_keys(format, keys, None)
+    }
+
+    pub fn new_with_remove_keys(format: OutputFormat, keys: Option<Vec<String>>, remove_keys: Option<Vec<String>>) -> Self {
         OutputFormatter {
             format,
             csv_headers_written: false,
             keys,
+            remove_keys,
             csv_schema_keys: None,
             missing_keys_warned: std::collections::HashSet::new(),
         }
@@ -87,18 +93,37 @@ impl OutputFormatter {
         }
     }
 
+    fn filter_data(&self, record: &RecordData) -> RecordData {
+        // Apply remove_keys filtering if specified
+        if let Some(ref remove_keys) = self.remove_keys {
+            if let RecordData::Structured(data) = record {
+                if let serde_json::Value::Object(mut obj) = data.clone() {
+                    // Remove specified keys
+                    for key in remove_keys {
+                        obj.remove(key);
+                    }
+                    return RecordData::Structured(serde_json::Value::Object(obj));
+                }
+            }
+        }
+        record.clone()
+    }
+
     pub fn write_record<W: Write>(
         &mut self,
         output: &mut W,
         record: &RecordData,
     ) -> Result<(), ProcessingError> {
+        // Apply filtering before output
+        let filtered_record = self.filter_data(record);
+        
         match self.format {
-            OutputFormat::Line => self.write_line(output, record),
-            OutputFormat::Jsonl => self.write_jsonl(output, record),
-            OutputFormat::Csv => self.write_csv(output, record),
-            OutputFormat::Tsv => self.write_tsv(output, record),
-            OutputFormat::Logfmt => self.write_logfmt(output, record),
-            OutputFormat::Fields => self.write_fields(output, record),
+            OutputFormat::Line => self.write_line(output, &filtered_record),
+            OutputFormat::Jsonl => self.write_jsonl(output, &filtered_record),
+            OutputFormat::Csv => self.write_csv(output, &filtered_record),
+            OutputFormat::Tsv => self.write_tsv(output, &filtered_record),
+            OutputFormat::Logfmt => self.write_logfmt(output, &filtered_record),
+            OutputFormat::Fields => self.write_fields(output, &filtered_record),
         }
     }
 
