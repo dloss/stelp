@@ -604,16 +604,17 @@ fn json_to_starlark_value(heap: &Heap, json: serde_json::Value) -> anyhow::Resul
             Ok(heap.alloc(values?))
         }
         serde_json::Value::Object(obj) => {
-            let mut items = Vec::new();
+            use starlark::collections::SmallMap;
+            use starlark::values::dict::Dict;
+            
+            let mut dict_map = SmallMap::new();
             for (k, v) in obj {
-                let value_str = match json_to_starlark_value(heap, v) {
-                    Ok(val) => val.to_string(),
-                    Err(_) => "None".to_string(),
-                };
-                items.push(format!("{}: {}", k, value_str));
+                let key = heap.alloc(k.as_str());
+                let val = json_to_starlark_value(heap, v)?;
+                dict_map.insert_hashed(key.get_hashed().unwrap(), val);
             }
-            let dict_str = format!("{{{}}}", items.join(", "));
-            Ok(heap.alloc(dict_str))
+            let dict = Dict::new(dict_map);
+            Ok(heap.alloc(dict))
         }
     }
 }
@@ -636,7 +637,11 @@ fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
     } else if let Some(dict) = DictRef::from_value(value) {
         let mut obj = serde_json::Map::new();
         for (k, v) in dict.iter() {
-            let key = k.to_string();
+            let key = if let Some(s) = k.unpack_str() {
+                s.to_string()
+            } else {
+                k.to_string()
+            };
             obj.insert(key, starlark_to_json_value(v)?);
         }
         Ok(serde_json::Value::Object(obj))
@@ -1092,6 +1097,58 @@ mod tests {
         
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
+    }
+
+    #[test]
+    fn test_dump_json_simple_dict() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"dump_json({"name": "Alice", "age": 30})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let json_str = result.unpack_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        
+        assert_eq!(parsed["name"], "Alice");
+        assert_eq!(parsed["age"], 30);
+    }
+
+    #[test]
+    fn test_dump_json_roundtrip() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"original = {"name": "Bob", "items": [1, 2, 3], "count": 42}; json_str = dump_json(original); parsed_back = parse_json(json_str); dump_json(parsed_back)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let json_str = result.unpack_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        
+        assert_eq!(parsed["name"], "Bob");
+        assert_eq!(parsed["items"].as_array().unwrap().len(), 3);
+        assert_eq!(parsed["count"], 42);
+    }
+
+    #[test]
+    fn test_dump_json_nested_structures() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"dump_json({"user": {"profile": {"name": "Charlie"}}, "scores": [{"test": 95}]})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        
+        let json_str = result.unpack_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        
+        assert_eq!(parsed["user"]["profile"]["name"], "Charlie");
+        assert_eq!(parsed["scores"][0]["test"], 95);
     }
 }
 
