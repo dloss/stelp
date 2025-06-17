@@ -8,7 +8,7 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::processors::{DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor};
+use stelp::{DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor, WindowProcessor};
 use stelp::StreamPipeline;
 
 #[derive(Debug, Clone)]
@@ -104,6 +104,10 @@ struct Args {
     /// Chunks separated by delimiter
     #[arg(long)]
     chunk_delim: Option<String>,
+
+    /// Window size - keep last N records for window functions
+    #[arg(long = "window")]
+    window_size: Option<usize>,
 }
 
 impl Args {
@@ -339,7 +343,12 @@ fn main() {
                         eprintln!("stelp: failed to compile extract-vars pattern: {}", e);
                         std::process::exit(1);
                     });
-                pipeline.add_processor(Box::new(processor));
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
+                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                } else {
+                    Box::new(processor)
+                };
+                pipeline.add_processor(final_processor);
             }
             PipelineStep::Eval(eval_expr) => {
                 let final_script =
@@ -353,7 +362,12 @@ fn main() {
                             eprintln!("stelp: failed to compile eval expression {}: {}", i + 1, e);
                             std::process::exit(1);
                         });
-                pipeline.add_processor(Box::new(processor));
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
+                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                } else {
+                    Box::new(processor)
+                };
+                pipeline.add_processor(final_processor);
             }
             PipelineStep::Filter(filter_expr) => {
                 let final_script =
@@ -371,7 +385,12 @@ fn main() {
                             );
                             std::process::exit(1);
                         });
-                pipeline.add_processor(Box::new(processor));
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
+                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                } else {
+                    Box::new(processor)
+                };
+                pipeline.add_processor(final_processor);
             }
             PipelineStep::Derive(derive_expr) => {
                 let final_script =
@@ -385,7 +404,12 @@ fn main() {
                             eprintln!("stelp: failed to compile derive expression {}: {}", i + 1, e);
                             std::process::exit(1);
                         });
-                pipeline.add_processor(Box::new(processor));
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
+                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                } else {
+                    Box::new(processor)
+                };
+                pipeline.add_processor(final_processor);
             }
             PipelineStep::ScriptFile(script_path) => {
                 let script_content = std::fs::read_to_string(script_path).unwrap_or_else(|e| {
@@ -409,7 +433,12 @@ fn main() {
                     eprintln!("stelp: failed to compile script file: {}", e);
                     std::process::exit(1);
                 });
-                pipeline.add_processor(Box::new(processor));
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
+                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                } else {
+                    Box::new(processor)
+                };
+                pipeline.add_processor(final_processor);
             }
         }
     }

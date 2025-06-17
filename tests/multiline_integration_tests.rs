@@ -2,7 +2,7 @@ use std::io::Cursor;
 use stelp::chunking::{ChunkConfig, ChunkStrategy};
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::input_format::InputFormatWrapper;
-use stelp::processors::StarlarkProcessor;
+use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
 use regex::Regex;
 

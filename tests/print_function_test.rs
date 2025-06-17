@@ -1,7 +1,7 @@
 // tests/print_function_test.rs
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
-use stelp::processors::StarlarkProcessor;
+use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
 
 #[test]

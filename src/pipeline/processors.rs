@@ -108,6 +108,23 @@ impl StarlarkProcessor {
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
+        // Inject window variables if window context exists
+        crate::processors::window::WINDOW_CONTEXT.with(|ctx| {
+            if let Some(window_buffer) = ctx.borrow().as_ref() {
+                // Convert window buffer to Starlark list
+                let window_list = create_window_starlark_list(module.heap(), window_buffer);
+                match window_list {
+                    Ok(list) => {
+                        module.set("window", list);
+                    }
+                    Err(_) => {
+                        // If conversion fails, provide empty window
+                        module.set("window", module.heap().alloc(Vec::<starlark::values::Value>::new()));
+                    }
+                }
+            }
+        });
+
         // Parse and execute script with f-strings enabled
         let dialect = Dialect {
             enable_f_strings: true,
@@ -1067,4 +1084,58 @@ impl RecordProcessor for ExtractProcessor {
     fn name(&self) -> &str {
         &self.name
     }
+}
+
+// Helper function to create window starlark list
+fn create_window_starlark_list<'a>(
+    heap: &'a starlark::values::Heap,
+    window_buffer: &std::collections::VecDeque<crate::processors::window::WindowRecord>,
+) -> anyhow::Result<starlark::values::Value<'a>> {
+    use starlark::values::dict::Dict;
+    use starlark::collections::SmallMap;
+    
+    let window_records: Result<Vec<starlark::values::Value>, anyhow::Error> = window_buffer
+        .iter()
+        .map(|record| {
+            // Create a dict for each window record
+            let mut content = SmallMap::new();
+            
+            // Add line field
+            let line_value = if let Some(line) = &record.line {
+                heap.alloc(line.clone())
+            } else {
+                starlark::values::Value::new_none()
+            };
+            content.insert_hashed(
+                heap.alloc("line").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                line_value,
+            );
+            
+            // Add data field
+            let data_value = if let Some(data) = &record.data {
+                json_to_starlark_value(heap, data.clone())?
+            } else {
+                starlark::values::Value::new_none()
+            };
+            content.insert_hashed(
+                heap.alloc("data").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                data_value,
+            );
+            
+            // Add metadata
+            content.insert_hashed(
+                heap.alloc("line_number").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc(record.line_number as i32),
+            );
+            content.insert_hashed(
+                heap.alloc("record_count").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc(record.record_count as i32),
+            );
+            
+            let dict = Dict::new(content);
+            Ok(heap.alloc(dict))
+        })
+        .collect();
+    
+    Ok(heap.alloc(window_records?))
 }

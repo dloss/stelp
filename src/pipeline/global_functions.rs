@@ -1,5 +1,6 @@
 // src/pipeline/global_functions.rs
 use crate::variables::GlobalVariables;
+use crate::processors::window::WINDOW_CONTEXT;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
@@ -496,6 +497,70 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 Err(anyhow::anyhow!("Failed to parse timestamp '{}' - no recognized format", text))
             }
         }
+    }
+
+    // Window functions
+    fn window_values<'v>(heap: &'v Heap, field_name: String) -> anyhow::Result<Value<'v>> {
+        WINDOW_CONTEXT.with(|ctx| {
+            if let Some(window_buffer) = ctx.borrow().as_ref() {
+                let values: Vec<Value> = window_buffer.iter()
+                    .filter_map(|record| {
+                        // Extract field from either line or structured data
+                        match (&record.line, &record.data) {
+                            // For text records, only support "line" field
+                            (Some(line), None) if field_name == "line" => Some(heap.alloc(line.clone())),
+                            // For structured records, extract named field
+                            (None, Some(data)) => {
+                                data.get(&field_name)
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| heap.alloc(s.to_string()))
+                            }
+                            _ => None
+                        }
+                    })
+                    .collect();
+                Ok(heap.alloc(values))
+            } else {
+                Ok(heap.alloc(Vec::<Value>::new()))
+            }
+        })
+    }
+
+    fn window_numbers<'v>(heap: &'v Heap, field_name: String) -> anyhow::Result<Value<'v>> {
+        WINDOW_CONTEXT.with(|ctx| {
+            if let Some(window_buffer) = ctx.borrow().as_ref() {
+                let values: Vec<Value> = window_buffer.iter()
+                    .filter_map(|record| {
+                        match (&record.line, &record.data) {
+                            // For structured records, extract and convert to number
+                            (None, Some(data)) => {
+                                data.get(&field_name)
+                                    .and_then(|v| v.as_f64())
+                                    .map(|f| heap.alloc(f))
+                            }
+                            // For text records, try to parse as number
+                            (Some(line), None) if field_name == "line" => {
+                                line.parse::<f64>().ok().map(|f| heap.alloc(f))
+                            }
+                            _ => None
+                        }
+                    })
+                    .collect();
+                Ok(heap.alloc(values))
+            } else {
+                Ok(heap.alloc(Vec::<Value>::new()))
+            }
+        })
+    }
+
+    fn window_size() -> anyhow::Result<i32> {
+        WINDOW_CONTEXT.with(|ctx| {
+            if let Some(window_buffer) = ctx.borrow().as_ref() {
+                Ok(window_buffer.len() as i32)
+            } else {
+                Ok(0)
+            }
+        })
     }
 }
 

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::io::Write;
 use stelp::config::PipelineConfig;
-use stelp::processors::StarlarkProcessor;
+use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
 use tempfile::NamedTempFile;
 

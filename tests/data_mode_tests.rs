@@ -2,7 +2,7 @@
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
 use stelp::context::{ProcessResult, RecordContext, RecordData};
-use stelp::processors::{FilterProcessor, StarlarkProcessor};
+use stelp::{FilterProcessor, StarlarkProcessor};
 use stelp::variables::GlobalVariables;
 use stelp::StreamPipeline;
 use stelp::input_format::InputFormat;

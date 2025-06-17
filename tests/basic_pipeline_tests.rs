@@ -2,7 +2,7 @@
 use std::io::Cursor;
 use stelp::{
     config::PipelineConfig,
-    processors::{FilterProcessor, StarlarkProcessor},
+    FilterProcessor, StarlarkProcessor,
     StreamPipeline,
 };
 
@@ -97,7 +97,7 @@ fn debug_emit_and_skip() {
     use std::io::Cursor;
     use stelp::config::PipelineConfig;
     use stelp::context::{RecordContext, RecordData};
-    use stelp::processors::StarlarkProcessor;
+    use stelp::StarlarkProcessor;
     use stelp::variables::GlobalVariables;
     use stelp::StreamPipeline;
     println!("=== Debug: What's actually happening ===");

@@ -4,7 +4,7 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::{RecordContext, RecordData};
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::processors::{FilterProcessor, StarlarkProcessor};
+use stelp::{FilterProcessor, StarlarkProcessor};
 use stelp::variables::GlobalVariables;
 use stelp::StreamPipeline;
 

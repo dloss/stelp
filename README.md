@@ -36,6 +36,9 @@ stelp -f csv --derive 'category = "expensive" if float(price) > 20 else "cheap"'
 # Log analysis with counters
 stelp -e 'count = inc("total"); f"[{count}] {line}"' server.log
 
+# Window functions for trend analysis
+seq 10 20 15 25 | stelp --window 3 -e 'curr = int(line); prev = int(window[-2]["line"]) if window_size() >= 2 else curr; f"Value: {curr}, Change: {curr - prev}"'
+
 # Multi-output with emit() (line mode)
 echo "user1,user2" | stelp -e 'emit_all(line.split(",")); None'
 ```
@@ -60,6 +63,7 @@ stelp [OPTIONS] [FILES...]
 -K, --remove-keys <KEYS>    Remove keys from structured output (comma-separated)
 
 # Control
+    --window <N>            Keep last N records for window functions
 -o, --output <FILE>         Output file (default: stdout)
     --debug                 Show processing details
     --fail-fast             Stop on first error (default: skip errors)
@@ -75,6 +79,7 @@ Auto-detects format from file extensions: `*.jsonl`, `*.csv`, `*.logfmt` (otherw
 ```python
 line                     # Current line text (for text input)
 data                     # Parsed data dict (for structured input: jsonl/csv/logfmt/syslog)
+window                   # Array of recent records (with --window N)
 LINENUM, FILENAME, RECNUM # Meta variables (line number, filename, record number)
 glob["key"]              # Global state across lines
 inc("counter")           # Increment global counter, returns new value
@@ -241,6 +246,12 @@ cat access.log | stelp -e 'ts_str = regex_replace(r".*\[([^\]]+)\].*", r"\1", li
 
 # Global state tracking
 stelp -e 'count = inc("total"); error_count = inc("errors") if "ERROR" in line else glob.get("errors", 0); f"Total: {count}, Errors: {error_count}"' server.log
+
+# Window-based change detection
+seq 10 15 12 20 | stelp --window 3 -e 'curr = int(line); prev = int(window[-2]["line"]) if window_size() >= 2 else curr; f"Value: {curr}, Change: {curr - prev}"'
+
+# Rolling averages with window functions
+stelp --window 5 -e 'values = window_numbers("line"); avg = sum(values) / len(values); f"Current: {line}, Rolling avg: {avg:.1f}"' numbers.txt
 ```
 
 ### Fan-out Processing  
@@ -326,6 +337,11 @@ guess_ts(text)                     # Auto-detect timestamp format
 now()                              # Current Unix timestamp
 ts_diff(ts1, ts2)                  # Calculate time difference
 ts_add(timestamp, seconds)         # Add/subtract time
+
+# Window Functions (with --window N)
+window_size()                      # Current window size (≤ N)
+window_values(field)               # Extract field values from window
+window_numbers(field)              # Extract numeric field values from window
 ```
 
 ## Variable Scopes & Exit Codes
