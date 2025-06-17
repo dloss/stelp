@@ -12,6 +12,7 @@ thread_local! {
     pub(crate) static SKIP_FLAG: Cell<bool> = const { Cell::new(false) };
     pub(crate) static EXIT_FLAG: Cell<bool> = const { Cell::new(false) };
     pub(crate) static EXIT_MESSAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    pub(crate) static EXIT_CODE: Cell<i32> = const { Cell::new(0) };
     pub(crate) static CURRENT_CONTEXT: RefCell<Option<(*const GlobalVariables, usize, Option<String>)>> = const { RefCell::new(None) };
     pub(crate) static DEBUG_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     pub(crate) static IS_DATA_MODE: Cell<bool> = const { Cell::new(false) };
@@ -91,10 +92,26 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(starlark::values::none::NoneType)
     }
 
-    fn exit(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn exit<'v>(arg1: Option<starlark::values::Value<'v>>, arg2: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+        let (code, msg) = match (arg1, arg2) {
+            // exit() - no arguments
+            (None, None) => (0, None),
+            // exit(3) - integer as first argument
+            (Some(val), None) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), None),
+            // exit("message") - string as first argument (backward compatibility)
+            (Some(val), None) if val.unpack_str().is_some() => (0, Some(val.unpack_str().unwrap().to_string())),
+            // exit(3, "message") - both arguments
+            (Some(val), Some(msg)) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), Some(msg)),
+            // Invalid usage
+            _ => return Err(anyhow::anyhow!("exit() expects exit(code=0, msg=None) - code must be an integer")),
+        };
+        
         EXIT_FLAG.with(|flag| flag.set(true));
-        EXIT_MESSAGE.with(|msg| {
-            *msg.borrow_mut() = message;
+        EXIT_MESSAGE.with(|message| {
+            *message.borrow_mut() = msg;
+        });
+        EXIT_CODE.with(|exit_code| {
+            exit_code.set(code);
         });
         Ok(starlark::values::none::NoneType)
     }
@@ -1093,9 +1110,27 @@ pub(crate) fn derive_globals_with_prefix(builder: &mut starlark::environment::Gl
         Ok(starlark::values::none::NoneType)
     }
 
-    fn stelp_exit(message: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn stelp_exit<'v>(arg1: Option<starlark::values::Value<'v>>, arg2: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+        let (code, msg) = match (arg1, arg2) {
+            // stelp_exit() - no arguments
+            (None, None) => (0, None),
+            // stelp_exit(3) - integer as first argument
+            (Some(val), None) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), None),
+            // stelp_exit("message") - string as first argument (backward compatibility)
+            (Some(val), None) if val.unpack_str().is_some() => (0, Some(val.unpack_str().unwrap().to_string())),
+            // stelp_exit(3, "message") - both arguments
+            (Some(val), Some(msg)) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), Some(msg)),
+            // Invalid usage
+            _ => return Err(anyhow::anyhow!("stelp_exit() expects stelp_exit(code=0, msg=None) - code must be an integer")),
+        };
+        
         EXIT_FLAG.with(|flag| flag.set(true));
-        EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = message);
+        EXIT_MESSAGE.with(|message| {
+            *message.borrow_mut() = msg;
+        });
+        EXIT_CODE.with(|exit_code| {
+            exit_code.set(code);
+        });
         Ok(starlark::values::none::NoneType)
     }
 

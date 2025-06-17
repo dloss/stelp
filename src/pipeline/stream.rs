@@ -26,6 +26,7 @@ pub struct StreamPipeline {
     config: PipelineConfig,
     stats: ProcessingStats,
     output_formatter: OutputFormatter,
+    exit_code: i32,
 }
 
 impl StreamPipeline {
@@ -39,6 +40,7 @@ impl StreamPipeline {
             output_formatter,
             config,
             stats: ProcessingStats::default(),
+            exit_code: 0,
         }
     }
 
@@ -157,7 +159,8 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -234,7 +237,8 @@ impl StreamPipeline {
                 ProcessResult::Skip => {
                     file_stats.records_skipped += 1;
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -313,7 +317,8 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -420,7 +425,8 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -509,7 +515,8 @@ impl StreamPipeline {
                 ProcessResult::Skip => {
                     file_stats.records_skipped += 1;
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -588,7 +595,8 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                             if !e.to_string().contains("Broken pipe") {
@@ -666,6 +674,11 @@ impl StreamPipeline {
         &self.stats
     }
 
+    /// Get the exit code from the last processed exit
+    pub fn get_exit_code(&self) -> i32 {
+        self.exit_code
+    }
+
     /// Completely reset everything (for reusing pipeline)
     pub fn hard_reset(&mut self) {
         self.context.global_vars.clear();
@@ -673,6 +686,7 @@ impl StreamPipeline {
         self.context.record_count = 0;
         self.context.total_processed = 0;
         self.context.file_name = None;
+        self.exit_code = 0;
 
         for processor in &mut self.processors {
             processor.reset();

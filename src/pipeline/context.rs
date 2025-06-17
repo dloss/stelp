@@ -74,8 +74,8 @@ pub enum ProcessResult {
     },
     /// Skip this record (filter out)
     Skip,
-    /// Stop processing entirely, with optional final output
-    Exit(Option<RecordData>),
+    /// Stop processing entirely, with optional final output and exit code
+    Exit { data: Option<RecordData>, code: i32 },
     /// Processing error
     Error(ProcessingError),
 }

@@ -596,12 +596,17 @@ fn main() {
     }
 
     // Determine exit code based on results
-    let exit_code = if total_stats.errors > 0 {
-        1 // Processing errors occurred
-    } else if total_stats.records_output == 0 {
-        2 // No output produced
-    } else {
-        0 // Success
+    let exit_code = {
+        let pipeline_exit_code = pipeline.get_exit_code();
+        if pipeline_exit_code != 0 {
+            pipeline_exit_code // Use exit code from exit() function
+        } else if total_stats.errors > 0 {
+            1 // Processing errors occurred
+        } else if total_stats.records_output == 0 {
+            2 // No output produced
+        } else {
+            0 // Success
+        }
     };
 
     std::process::exit(exit_code);

@@ -2,7 +2,7 @@
 use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
-    derive_globals_with_prefix, global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
+    derive_globals_with_prefix, global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, EXIT_CODE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -252,6 +252,7 @@ impl StarlarkProcessor {
         SKIP_FLAG.with(|flag| flag.set(false));
         EXIT_FLAG.with(|flag| flag.set(false));
         EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
+        EXIT_CODE.with(|code| code.set(0));
 
         // Execute script
         let result = match self.execute_with_context(record, ctx) {
@@ -278,7 +279,8 @@ impl StarlarkProcessor {
                 } else if exit_flag {
                     let final_output = EXIT_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
-                    ProcessResult::Exit(final_output)
+                    let exit_code = EXIT_CODE.with(|code| code.get());
+                    ProcessResult::Exit { data: final_output, code: exit_code }
                 } else {
                     // Handle different result types
                     match starlark_result {
@@ -355,11 +357,11 @@ impl StarlarkProcessor {
             // Show final decision  
             match &result {
                 ProcessResult::Skip => eprintln!("    → SKIP"),
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
                     if let Some(output) = final_output {
-                        eprintln!("    → EXIT with {:?}", output);
+                        eprintln!("    → EXIT {} with {:?}", code, output);
                     } else {
-                        eprintln!("    → EXIT");
+                        eprintln!("    → EXIT {}", code);
                     }
                 },
                 ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),
@@ -897,6 +899,7 @@ impl RecordProcessor for DeriveProcessor {
         SKIP_FLAG.with(|flag| flag.set(false));
         EXIT_FLAG.with(|flag| flag.set(false));
         EXIT_MESSAGE.with(|msg| *msg.borrow_mut() = None);
+        EXIT_CODE.with(|code| code.set(0));
 
         let result = match self.execute_derive(record, ctx) {
             Ok(derived_record) => {
@@ -922,7 +925,8 @@ impl RecordProcessor for DeriveProcessor {
                 } else if exit_flag {
                     let final_output = EXIT_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
-                    ProcessResult::Exit(final_output)
+                    let exit_code = EXIT_CODE.with(|code| code.get());
+                    ProcessResult::Exit { data: final_output, code: exit_code }
                 } else {
                     match emissions.is_empty() {
                         true => ProcessResult::Transform(derived_record),
@@ -953,11 +957,11 @@ impl RecordProcessor for DeriveProcessor {
             // Show final decision  
             match &result {
                 ProcessResult::Skip => eprintln!("    → SKIP"),
-                ProcessResult::Exit(final_output) => {
+                ProcessResult::Exit { data: final_output, code } => {
                     if let Some(output) = final_output {
-                        eprintln!("    → EXIT with {:?}", output);
+                        eprintln!("    → EXIT {} with {:?}", code, output);
                     } else {
-                        eprintln!("    → EXIT");
+                        eprintln!("    → EXIT {}", code);
                     }
                 },
                 ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),

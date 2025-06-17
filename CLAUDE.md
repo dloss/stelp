@@ -146,7 +146,11 @@ glob["counter"] = glob.get("counter", 0) + 1
 **Control Flow**: Scripts can control pipeline execution:
 - `emit("text")` - Output additional lines
 - `skip()` - Skip current record
-- `exit("message")` - Terminate processing
+- `exit(code=0, msg=None)` - Terminate processing with exit code
+  - `exit()` - Exit with code 0 (success)
+  - `exit(3)` - Exit with code 3  
+  - `exit("error message")` - Exit with code 0 and message (backward compatibility)
+  - `exit(1, "error occurred")` - Exit with code 1 and message
 
 **F-string Limitations**: F-strings in Starlark are very limited and only support atomic values (plain variables). No dot access, brackets, or function calls are allowed - extract to variables first:
 ```python
@@ -181,6 +185,7 @@ When writing tests, use `Cursor::new()` for string input and `Vec<u8>` for outpu
 Scripts have access to:
 - Standard Starlark functions
 - Built-in functions: `emit()`, `skip()`, `exit()`, `inc()`
+- Exit function: `exit(code=0, msg=None)` - terminate processing with exit code
 - Regex functions: `regex_match()`, `regex_replace()`, `regex_find_all()`
 - JSON functions: `parse_json()`, `dump_json()`
 - CSV functions: `parse_csv()`, `dump_csv()`
