@@ -30,7 +30,7 @@ struct Args {
     input_files: Vec<PathBuf>,
 
     /// Extract structured data using named patterns like '{field}' or '{field:type}'
-    #[arg(long = "extract")]
+    #[arg(long = "extract-vars")]
     extract_pattern: Option<String>,
 
     /// Include Starlark files (processed in order)
@@ -133,13 +133,13 @@ impl Args {
 
         match (has_script_file, has_extract || has_evals || has_filters || has_derives || has_begin_end, has_input_format || has_output_format || has_chunking) {
             (true, true, _) => {
-                Err("Cannot use --script with --extract, --eval, --filter, --derive, --begin, or --end arguments".to_string())
+                Err("Cannot use --script with --extract-vars, --eval, --filter, --derive, --begin, or --end arguments".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
             (false, true, _) => Ok(()), // Extract/eval/filter/derive/begin/end arguments only  
             (false, false, true) => Ok(()), // Input/output format or chunking only
             (false, false, false) => {
-                Err("Must provide either --script, --extract/--eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
+                Err("Must provide either --script, --extract-vars/--eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
             }
         }
     }
@@ -336,7 +336,7 @@ fn main() {
             PipelineStep::Extract(pattern) => {
                 let processor = ExtractProcessor::new(&format!("extract_{}", i + 1), pattern)
                     .unwrap_or_else(|e| {
-                        eprintln!("stelp: failed to compile extract pattern: {}", e);
+                        eprintln!("stelp: failed to compile extract-vars pattern: {}", e);
                         std::process::exit(1);
                     });
                 pipeline.add_processor(Box::new(processor));

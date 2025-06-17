@@ -21,6 +21,10 @@ cargo build --release
 echo "hello world" | stelp -e 'line.upper()'                    # → HELLO WORLD
 seq 1 10 | stelp --filter 'int(line) % 2 == 0' -e 'f"Even: {line}"'  # Filter + transform
 
+# Pattern extraction (convert text to structured data)
+echo "192.168.1.1 admin 200" | stelp --extract-vars '{ip} {user} {status:int}' -F jsonl
+echo "CPU: 85.2%" | stelp --extract-vars 'CPU: {cpu:float}%' --filter 'data["cpu"] > 80'
+
 # Structured data processing
 stelp -e 'data["user"] = data["user"].upper()' -F jsonl users.jsonl   # Modify data variable
 echo '{"user":"alice","age":25}' | stelp -f jsonl -F jsonl -e 'data["user"] = data["user"].upper()'
@@ -42,6 +46,7 @@ echo "user1,user2" | stelp -e 'emit_all(line.split(",")); None'
 stelp [OPTIONS] [FILES...]
 
 # Core options
+    --extract-vars <PATTERN> Extract structured data using patterns like '{field}' or '{field:type}'
 -e, --eval <EXPR>           Evaluation expressions (executed in pipeline order)
     --filter <EXPR>         Filter expressions (keep lines where true)
 -d, --derive <EXPR>         Transform structured data with field variable injection
@@ -90,8 +95,34 @@ count = stelp_inc("processed")
 stelp_data["invalid-key"] = "value"              # For non-identifier keys
 ```
 
+### Pattern Extraction (--extract-vars)
+Extract structured data from unstructured text using template patterns:
+```python
+# Pattern syntax
+{field}        # Extract as string (default)
+{field:int}    # Extract and convert to integer  
+{field:float}  # Extract and convert to float
+{field:word}   # Extract word characters only (\w+)
+```
+
+```bash
+# Apache log processing
+echo '192.168.1.1 - admin [25/Dec/2021:10:24:56] "GET /api HTTP/1.1" 200 1234' | \
+  stelp --extract-vars '{ip} - {user} [{timestamp}] "{method} {path}" {status:int} {size:int}' \
+  --filter 'data["status"] >= 400' -F jsonl
+
+# System monitoring
+echo "CPU: 85.2% Memory: 76.1%" | \
+  stelp --extract-vars 'CPU: {cpu:float}% Memory: {memory:float}%' \
+  --filter 'data["cpu"] > 80.0' \
+  --eval 'cpu = data["cpu"]; data = None; f"High CPU: {cpu}%"'
+        
+# No match handling (graceful passthrough)
+echo "unmatched text" | stelp --extract-vars '{ip} {user}' --eval 'data or "no match"'
+```
+
 ### Pipeline Processing
-Commands execute in order: `--filter` → `--derive` → `-e` → ... (first to last)
+Commands execute in order: `--extract-vars` → `--filter` → `--derive` → `-e` → ... (first to last)
 ```bash
 stelp --filter 'len(line) > 3' -e 'line.upper()' -e 'f"Result: {line}"'
 # 1. Filter: keep long lines  2. Uppercase  3. Add prefix
@@ -171,6 +202,31 @@ echo -e '{"a":1,"b":2}\n{"a":1,"c":3}' | stelp -f jsonl -F csv --keys a,b,c
 ```
 
 ## Common Patterns
+
+### Pattern Extraction & Log Processing
+```bash
+# Extract Apache/Nginx log fields
+echo '192.168.1.1 - - [25/Dec/2021:10:24:56] "GET /api/status HTTP/1.1" 200 1234' | \
+  stelp --extract-vars '{ip} - - [{timestamp}] "{method} {path} {protocol}" {status:int} {size:int}' \
+  --filter 'data["status"] >= 400' \
+  --eval 'ip = data["ip"]; status = data["status"]; data = None; f"Error from {ip}: {status}"'
+
+# Parse custom log format
+echo "2023-12-25 10:24:56 ERROR user:alice message:login failed" | \
+  stelp --extract-vars '{date} {time} {level:word} user:{user} message:{message}' \
+  --filter 'data["level"] == "ERROR"' -F jsonl
+
+# System metrics monitoring  
+printf "CPU: 85.2%% Memory: 76.1%%\nCPU: 45.0%% Memory: 62.3%%\nCPU: 92.1%% Memory: 88.9%%\n" | \
+  stelp --extract-vars 'CPU: {cpu:float}% Memory: {memory:float}%' \
+  --filter 'data and data["cpu"] > 80.0' \
+  --eval 'cpu = data["cpu"]; data = None; f"High CPU: {cpu}%"'
+
+# Mixed processing: extract → transform → convert back to text
+echo "user=alice score=85 attempts=3" | \
+  stelp --extract-vars 'user={user} score={score:int} attempts={attempts:int}' \
+  --eval 'efficiency = data["score"] / data["attempts"]; data = None; f"{user}: {efficiency:.1f}"'
+```
 
 ### Text Processing
 ```bash

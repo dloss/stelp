@@ -74,6 +74,19 @@ count = stelp_inc("processed")  # Use stelp_ prefixed functions
 stelp_emit("Processing: " + user)  # Emit debug info
 '
 
+# Pattern extraction examples
+echo "192.168.1.1 admin 200 1.5" | cargo run -- --extract-vars '{ip} {user} {status:int} {time:float}' --eval 'ip = data["ip"]; status = data["status"]; data = None; f"Request from {ip}: {status}"'
+
+echo "doesn't match pattern" | cargo run -- --extract-vars '{ip} {user}' --eval 'data or "no match"'
+
+echo "192.168.1.1 admin not_a_number" | cargo run -- --extract-vars '{ip} {user} {status:int}' --eval 'data or "conversion failed"' --debug
+
+# Apache Combined Log Format parsing
+echo '192.168.1.1 - - [25/Dec/2021:10:24:56 +0000] "GET /api/status HTTP/1.1" 200 1234' | cargo run -- --extract-vars '{ip} - - [{timestamp}] "{method} {path} {protocol}" {status:int} {size:int}' --filter 'data["status"] >= 400' -F jsonl
+
+# System monitoring
+printf "CPU: 85.2%% Memory: 76.1%%\nCPU: 45.0%% Memory: 62.3%%\nCPU: 92.1%% Memory: 88.9%%\n" | cargo run -- --extract-vars 'CPU: {cpu:float}% Memory: {memory:float}%' --filter 'data and data["cpu"] > 80.0' --eval 'cpu = data["cpu"]; data = None; f"High CPU: {cpu}%"'
+
 # Mixed pipeline with filter and derive
 echo -e "name,price,quantity\nAlice,10.50,3\nBob,25.00,2\nCharlie,5.00,1" | cargo run -- -f csv --filter 'float(data["price"]) > 10' --derive 'total = float(price) * float(quantity); discount = 0.1 if float(price) > 20 else 0'
 
