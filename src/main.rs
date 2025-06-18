@@ -120,6 +120,14 @@ struct Args {
     /// Print only values, not keys (plain output mode)
     #[arg(short = 'p', long = "plain")]
     plain: bool,
+
+    /// Show only records with these log levels (comma-separated)
+    #[arg(short = 'l', long = "levels")]
+    levels: Option<String>,
+
+    /// Hide records with these log levels (comma-separated)
+    #[arg(short = 'L', long = "exclude-levels")]
+    exclude_levels: Option<String>,
 }
 
 impl Args {
@@ -135,6 +143,7 @@ impl Args {
         let has_chunking = self.chunk_lines.is_some() || 
                           self.chunk_start.is_some() || 
                           self.chunk_delim.is_some();
+        let has_level_filters = self.levels.is_some() || self.exclude_levels.is_some();
 
         // Check for mutually exclusive chunking options
         let chunk_options_count = [
@@ -147,15 +156,18 @@ impl Args {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
-        match (has_script_file, has_extract || has_evals || has_filters || has_derives || has_begin_end, has_input_format || has_output_format || has_chunking) {
+        let has_any_processing = has_extract || has_evals || has_filters || has_derives || has_begin_end;
+        let has_format_or_utility = has_input_format || has_output_format || has_chunking || has_level_filters;
+        
+        match (has_script_file, has_any_processing, has_format_or_utility) {
             (true, true, _) => {
-                Err("Cannot use --script with --extract-vars, --eval, --filter, --derive, --begin, or --end arguments".to_string())
+                Err("Cannot use --script with other processing options".to_string())
             }
             (true, false, _) => Ok(()), // Script file only
-            (false, true, _) => Ok(()), // Extract/eval/filter/derive/begin/end arguments only  
-            (false, false, true) => Ok(()), // Input/output format or chunking only
+            (false, true, _) => Ok(()), // Processing arguments
+            (false, false, true) => Ok(()), // Format/utility options only
             (false, false, false) => {
-                Err("Must provide either --script, --extract-vars/--eval/--filter/--derive/--begin/--end arguments, or --input-format/--output-format/chunking options".to_string())
+                Err("Must provide a processing option (try --help for options)".to_string())
             }
         }
     }
@@ -354,6 +366,16 @@ fn main() {
     } else {
         InputFormatWrapper::new(input_format.as_ref())
     };
+
+    // Add level filter processor if specified
+    if args.levels.is_some() || args.exclude_levels.is_some() {
+        let level_filter = stelp::LevelFilterProcessor::new(
+            "level_filter",
+            args.levels.as_deref(),
+            args.exclude_levels.as_deref(),
+        );
+        pipeline.add_processor(Box::new(level_filter));
+    }
 
     // Add processors to pipeline in order
     for (i, step) in steps.iter().enumerate() {

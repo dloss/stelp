@@ -1090,6 +1090,156 @@ impl RecordProcessor for ExtractProcessor {
     }
 }
 
+/// Level filter processor that filters records based on log levels
+pub struct LevelFilterProcessor {
+    include_levels: Option<Vec<String>>,
+    exclude_levels: Option<Vec<String>>,
+    level_keys: Vec<&'static str>,
+    name: String,
+}
+
+impl LevelFilterProcessor {
+    pub fn new(name: &str, include_levels: Option<&str>, exclude_levels: Option<&str>) -> Self {
+        let include_levels = include_levels.map(|s| {
+            s.split(',')
+                .map(|level| level.trim().to_lowercase())
+                .filter(|level| !level.is_empty())
+                .collect()
+        });
+        
+        let exclude_levels = exclude_levels.map(|s| {
+            s.split(',')
+                .map(|level| level.trim().to_lowercase())
+                .filter(|level| !level.is_empty())
+                .collect()
+        });
+        
+        Self {
+            include_levels,
+            exclude_levels,
+            level_keys: vec![
+                "level", "loglevel", "log_level", "lvl", "severity", "levelname", "@l"
+            ],
+            name: name.to_string(),
+        }
+    }
+    
+    /// Extract log level from record
+    fn extract_level(&self, record: &RecordData) -> Option<String> {
+        match record {
+            RecordData::Text(text) => {
+                // For text records, try to find common log level patterns
+                self.extract_level_from_text(text)
+            }
+            RecordData::Structured(data) => {
+                // For structured records, look for level fields
+                self.extract_level_from_structured(data)
+            }
+        }
+    }
+    
+    /// Extract level from structured data
+    fn extract_level_from_structured(&self, data: &serde_json::Value) -> Option<String> {
+        if let serde_json::Value::Object(obj) = data {
+            for &level_key in &self.level_keys {
+                if let Some(level_value) = obj.get(level_key) {
+                    let level_str = match level_value {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => continue,
+                    };
+                    return Some(level_str.to_lowercase());
+                }
+            }
+        }
+        None
+    }
+    
+    /// Extract level from text using pattern matching
+    fn extract_level_from_text(&self, text: &str) -> Option<String> {
+        let text_lower = text.to_lowercase();
+        
+        // Look for common log level patterns
+        let patterns: &[(&str, &[&str])] = &[
+            ("error", &["error", "err", "fatal", "panic", "alert", "crit", "critical", "emerg", "emergency", "severe"]),
+            ("warn", &["warn", "warning"]),
+            ("info", &["info", "informational", "notice"]),
+            ("debug", &["debug", "finer", "config"]),
+            ("trace", &["trace", "finest"]),
+        ];
+        
+        for (normalized_level, level_variants) in patterns {
+            for &variant in *level_variants {
+                // Look for the level as a word boundary
+                if text_lower.contains(&format!(" {} ", variant)) ||
+                   text_lower.contains(&format!("[{}]", variant)) ||
+                   text_lower.contains(&format!("{}:", variant)) ||
+                   text_lower.starts_with(&format!("{} ", variant)) ||
+                   text_lower.ends_with(&format!(" {}", variant)) {
+                    return Some(normalized_level.to_string());
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Check if record should be included based on level filters
+    fn should_include_record(&self, record: &RecordData) -> bool {
+        let level = match self.extract_level(record) {
+            Some(level) => level,
+            None => {
+                // If no level found, include by default unless specifically filtering
+                return self.include_levels.is_none();
+            }
+        };
+        
+        // Priority: exclude_levels takes precedence over include_levels
+        if let Some(ref exclude_levels) = self.exclude_levels {
+            if exclude_levels.contains(&level) {
+                return false;
+            }
+        }
+        
+        // Then check include_levels
+        if let Some(ref include_levels) = self.include_levels {
+            return include_levels.contains(&level);
+        }
+        
+        // No filters applied, include by default
+        true
+    }
+}
+
+impl RecordProcessor for LevelFilterProcessor {
+    fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
+        let should_include = self.should_include_record(record);
+        
+        let result = if should_include {
+            ProcessResult::Transform(record.clone())
+        } else {
+            ProcessResult::Skip
+        };
+        
+        // Debug logging
+        if ctx.debug {
+            let level = self.extract_level(record).unwrap_or_else(|| "unknown".to_string());
+            match &result {
+                ProcessResult::Transform(_) => eprintln!("  {}: level={} → PASS", self.name, level),
+                ProcessResult::Skip => eprintln!("  {}: level={} → SKIP", self.name, level),
+                _ => eprintln!("  {}: level={} → {:?}", self.name, level, result),
+            }
+            std::io::stderr().flush().ok();
+        }
+        
+        result
+    }
+    
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 // Helper function to create window starlark list
 fn create_window_starlark_list<'a>(
     heap: &'a starlark::values::Heap,
