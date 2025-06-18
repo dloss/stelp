@@ -1591,6 +1591,7 @@ dependencies = [
  "csv",
  "dateparser",
  "is-terminal",
+ "once_cell",
  "predicates",
  "regex",
  "serde",

@@ -41,6 +41,11 @@ seq 10 20 15 25 | stelp --window 3 -e 'curr = int(line); prev = int(window[-2]["
 
 # Multi-output with emit() (line mode)
 echo "user1,user2" | stelp -e 'emit_all(line.split(",")); None'
+
+# Built-in pattern extraction
+echo "Contact support@example.com" | stelp -e 'extract_pattern("email", line)'  # → support@example.com
+echo "Error from 192.168.1.100" | stelp -e 'extract_pattern("ipv4", line)'     # → 192.168.1.100
+stelp --list-patterns    # Show all available patterns (email, ipv4, url, uuid, etc.)
 ```
 
 ## Usage
@@ -78,6 +83,7 @@ stelp [OPTIONS] [FILES...]
     --color/--no-color      Force/disable colored output
     --debug                 Show processing details
     --stats                 Show processing statistics
+    --list-patterns         List available built-in regex patterns and exit
 ```
 
 ## Format Auto-Detection
@@ -386,6 +392,7 @@ stelp -s process_logs.star server.log
 regex_match(pattern, text)         # Test if pattern matches
 regex_replace(pattern, repl, text) # Replace pattern with replacement  
 regex_find_all(pattern, text)      # Find all matches
+extract_pattern(name, text)        # Extract using built-in patterns (see --list-patterns)
 
 # JSON/CSV  
 parse_json(text)                   # Parse JSON string → dict

@@ -3,9 +3,12 @@ use crate::processors::window::WINDOW_CONTEXT;
 use crate::variables::GlobalVariables;
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use dateparser;
+use regex::Regex;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
 
 thread_local! {
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -17,6 +20,48 @@ thread_local! {
     pub(crate) static DEBUG_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     pub(crate) static IS_DATA_MODE: Cell<bool> = const { Cell::new(false) };
     pub(crate) static CURRENT_MODULE: RefCell<Option<*const starlark::environment::Module>> = const { RefCell::new(None) };
+}
+
+// Builtin regex patterns adapted from KLP
+pub static BUILTIN_REGEXES: Lazy<HashMap<&'static str, (&'static str, &'static str)>> = Lazy::new(|| {
+    let mut patterns = HashMap::new();
+    
+    // Basic data types
+    patterns.insert("duration", (r"(?:\d+\.?\d*(?:ns|us|μs|ms|s|m|h|d|w|y))+", "duration (e.g., '2h30m', '1.5s')"));
+    patterns.insert("email", (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "email address"));
+    patterns.insert("fqdn", (r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b", "fully qualified domain name (FQDN)"));
+    patterns.insert("function", (r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(", "function call"));
+    patterns.insert("gitcommit", (r"\b[a-f0-9]{7,40}\b", "git commit hash"));
+    patterns.insert("hexnum", (r"\b0x[a-fA-F0-9]+\b", "hex number with 0x prefix"));
+    patterns.insert("hexcolor", (r"#[a-fA-F0-9]{3,8}\b", "hex color code"));
+    patterns.insert("ipv4", (r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b", "IPv4 address"));
+    patterns.insert("ipv4_port", (r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?):[0-9]+\b", "IPv4 address:port"));
+    patterns.insert("ipv6", (r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b|\b::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b", "IPv6 address"));
+    patterns.insert("isotime", (r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b", "ISO 8601 datetime string"));
+    patterns.insert("json", (r"\{.*\}|\[.*\]", "JSON string"));
+    patterns.insert("jwt", (r"\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "JSON Web Token (JWT)"));
+    patterns.insert("mac", (r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b", "MAC address"));
+    patterns.insert("md5", (r"\b[a-f0-9]{32}\b", "MD5 hash"));
+    patterns.insert("num", (r"[+-]?(?:\d*\.)?\d+", "number (integer or float)"));
+    patterns.insert("path", (r"(?:/[^/\s]*)+/?", "Unix file path"));
+    patterns.insert("oauth", (r"\b[A-Za-z0-9_-]{20,}\b", "OAuth token"));
+    patterns.insert("sha1", (r"\b[a-f0-9]{40}\b", "SHA-1 hash"));
+    patterns.insert("sha256", (r"\b[a-f0-9]{64}\b", "SHA-256 hash"));
+    patterns.insert("sql", (r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|GRANT|REVOKE)\b.*?;?", "SQL query"));
+    patterns.insert("url", (r"https?://[^\s<>]+", "URL"));
+    patterns.insert("uuid", (r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", "UUID"));
+    patterns.insert("version", (r"\b\d+(?:\.\d+){1,3}(?:-[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*)?\b", "software version identifier"));
+    patterns.insert("winregistry", (r"\\(?:HKEY_[A-Z_]+\\)?(?:[^\\]+\\)*[^\\]*", "Windows registry key"));
+    
+    patterns
+});
+
+pub fn get_pattern_list() -> Vec<(&'static str, &'static str)> {
+    let mut patterns: Vec<_> = BUILTIN_REGEXES.iter()
+        .map(|(name, (_, desc))| (*name, *desc))
+        .collect();
+    patterns.sort_by_key(|(name, _)| *name);
+    patterns
 }
 
 #[starlark_module]
@@ -161,6 +206,28 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             .map(|m| heap.alloc(m.as_str().to_string()))
             .collect();
         Ok(heap.alloc(matches))
+    }
+
+    // Pattern extraction function
+    fn extract_pattern<'v>(
+        heap: &'v Heap,
+        pattern_name: String,
+        text: String,
+    ) -> anyhow::Result<Value<'v>> {
+        if let Some((pattern, _)) = BUILTIN_REGEXES.get(pattern_name.as_str()) {
+            match Regex::new(pattern) {
+                Ok(regex) => {
+                    if let Some(m) = regex.find(&text) {
+                        Ok(heap.alloc(m.as_str().to_string()))
+                    } else {
+                        Ok(Value::new_none())
+                    }
+                }
+                Err(_) => Ok(Value::new_none()), // Invalid regex - return None
+            }
+        } else {
+            Ok(Value::new_none()) // Pattern name not found
+        }
     }
 
     // JSON functions
@@ -1193,6 +1260,111 @@ mod tests {
 
         assert_eq!(parsed["user"]["profile"]["name"], "Charlie");
         assert_eq!(parsed["scores"][0]["test"], 95);
+    }
+
+    // Pattern extraction tests
+    #[test]
+    fn test_extract_pattern_email() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("email", "Contact us at test@example.com for help")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "test@example.com");
+    }
+
+    #[test]
+    fn test_extract_pattern_ipv4() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("ipv4", "Request from 192.168.1.100 failed")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "192.168.1.100");
+    }
+
+    #[test]
+    fn test_extract_pattern_url() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("url", "Visit https://example.com/api/v1 for docs")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "https://example.com/api/v1");
+    }
+
+    #[test]
+    fn test_extract_pattern_uuid() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("uuid", "Session ID: 550e8400-e29b-41d4-a716-446655440000")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_extract_pattern_no_match() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("email", "No email address here")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_pattern_unknown_pattern() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("nonexistent", "some text")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_pattern_gitcommit() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("gitcommit", "Fixed bug in commit a1b2c3d4e5f6789")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "a1b2c3d4e5f6789");
+    }
+
+    #[test]
+    fn test_extract_pattern_version() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"extract_pattern("version", "Using stelp version 1.2.3-beta.1")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+
+        assert_eq!(result.unpack_str().unwrap(), "1.2.3-beta.1");
     }
 }
 

@@ -135,6 +135,10 @@ struct Args {
     /// Debug mode - show processing details
     #[arg(long)]
     debug: bool,
+
+    /// List available built-in regex patterns and exit
+    #[arg(long = "list-patterns")]
+    list_patterns: bool,
 }
 
 impl Args {
@@ -288,6 +292,16 @@ fn main() {
         eprintln!("stelp: argument parsing failed: {}", e);
         std::process::exit(1);
     });
+
+    // Handle --list-patterns option early
+    if args.list_patterns {
+        use stelp::pipeline::global_functions::get_pattern_list;
+        
+        for (name, description) in get_pattern_list() {
+            println!("{:<15} - {}", name, description);
+        }
+        std::process::exit(0);
+    }
 
     // Validate arguments
     if let Err(e) = args.validate() {
