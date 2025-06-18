@@ -1,10 +1,10 @@
+use regex::Regex;
 use std::io::Cursor;
 use stelp::chunking::{ChunkConfig, ChunkStrategy};
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::input_format::InputFormatWrapper;
 use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
-use regex::Regex;
 
 #[test]
 fn test_multiline_log_processing() {
@@ -23,13 +23,13 @@ java.lang.RuntimeException: Something went wrong
 
     let chunk_config = ChunkConfig {
         strategy: ChunkStrategy::StartPattern(
-            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap()
+            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap(),
         ),
         ..Default::default()
     };
 
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add a processor to count lines in each chunk
     let processor = StarlarkProcessor::from_script(
         "line_counter",
@@ -42,8 +42,9 @@ else:
     result = f"SINGLE: {line}"
 result
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     let format_wrapper = InputFormatWrapper::new(None).with_chunking(chunk_config);
@@ -94,7 +95,7 @@ line7";
     };
 
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add a processor to show chunk boundaries
     let processor = StarlarkProcessor::from_script(
         "chunk_marker",
@@ -103,8 +104,9 @@ replaced = line.replace('\n', ' | ')
 result = f"CHUNK: {replaced}"
 result
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     let format_wrapper = InputFormatWrapper::new(None).with_chunking(chunk_config);
@@ -155,7 +157,7 @@ data3";
     };
 
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add a processor to extract section name
     let processor = StarlarkProcessor::from_script(
         "section_extractor",
@@ -167,8 +169,9 @@ else:
     result = f"OTHER: {first_line}"
 result
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     let format_wrapper = InputFormatWrapper::new(None).with_chunking(chunk_config);
@@ -218,7 +221,7 @@ item5";
     };
 
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add a processor that counts chunks and items
     let processor = StarlarkProcessor::from_script(
         "chunk_counter",
@@ -227,8 +230,9 @@ chunk_num = inc("chunk_count")
 item_count = len(line.split('\n'))
 "Chunk " + str(chunk_num) + ": " + str(item_count) + " items"
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     let format_wrapper = InputFormatWrapper::new(None).with_chunking(chunk_config);
@@ -248,7 +252,7 @@ item_count = len(line.split('\n'))
 
     // Basic test - make sure we get output from all chunks
     assert_eq!(lines.len(), 3);
-    
+
     // Each line should contain chunk information and item counts
     for line in &lines {
         assert!(line.contains("Chunk"));
@@ -258,7 +262,6 @@ item_count = len(line.split('\n'))
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 3);
 }
-
 
 #[test]
 fn test_no_chunking_compatibility() {
@@ -273,12 +276,9 @@ line3";
     };
 
     let mut pipeline = StreamPipeline::new(config);
-    
-    let processor = StarlarkProcessor::from_script(
-        "passthrough",
-        r#"line.upper()"#,
-    ).unwrap();
-    
+
+    let processor = StarlarkProcessor::from_script("passthrough", r#"line.upper()"#).unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // No chunking config - should process line by line

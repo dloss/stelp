@@ -1,6 +1,6 @@
-use std::io::Cursor;
-use stelp::chunking::{ChunkConfig, ChunkStrategy, chunk_lines, parse_chunk_strategy};
 use regex::Regex;
+use std::io::Cursor;
+use stelp::chunking::{chunk_lines, parse_chunk_strategy, ChunkConfig, ChunkStrategy};
 
 #[test]
 fn test_line_strategy() {
@@ -34,10 +34,11 @@ fn test_fixed_lines_strategy() {
 
 #[test]
 fn test_timestamp_pattern_strategy() {
-    let input = "2024-01-01 10:00:00 Start\nContinuation line\n2024-01-01 10:01:00 Next entry\nMore data";
+    let input =
+        "2024-01-01 10:00:00 Start\nContinuation line\n2024-01-01 10:01:00 Next entry\nMore data";
     let config = ChunkConfig {
         strategy: ChunkStrategy::StartPattern(
-            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap()
+            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap(),
         ),
         ..Default::default()
     };
@@ -61,13 +62,12 @@ fn test_delimiter_strategy() {
     assert_eq!(chunks[0], "section1\ndata1");
     assert_eq!(chunks[1], "section2\ndata2");
     assert_eq!(chunks[2], "section3\nfinal data");
-    
+
     // Verify delimiters are not included
     assert!(!chunks[0].contains("---"));
     assert!(!chunks[1].contains("---"));
     assert!(!chunks[2].contains("---"));
 }
-
 
 #[test]
 fn test_java_stacktrace_pattern() {
@@ -78,25 +78,25 @@ java.lang.RuntimeException: Something went wrong
     at com.example.Controller.handle(Controller.java:23)
     at java.base/java.lang.Thread.run(Thread.java:829)
 2024-01-01 10:00:02 INFO Application recovered"#;
-    
+
     let config = ChunkConfig {
         strategy: ChunkStrategy::StartPattern(
-            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap()
+            Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap(),
         ),
         ..Default::default()
     };
 
     let chunks = chunk_lines(Cursor::new(input), config).unwrap();
     assert_eq!(chunks.len(), 3);
-    
+
     // First chunk should just be the startup message
     assert_eq!(chunks[0], "2024-01-01 10:00:00 INFO Starting application");
-    
+
     // Second chunk should contain the full stack trace
     assert!(chunks[1].contains("java.lang.RuntimeException"));
     assert!(chunks[1].contains("at com.example.Service.doSomething"));
     assert!(chunks[1].contains("at java.base/java.lang.Thread.run"));
-    
+
     // Third chunk should be the recovery message
     assert_eq!(chunks[2], "2024-01-01 10:00:02 INFO Application recovered");
 }
@@ -112,25 +112,25 @@ Traceback (most recent call last):
     return calculate(value)
 ValueError: Invalid input value
 [2024-01-01 10:00:02] INFO: Process restarted"#;
-    
+
     let config = ChunkConfig {
         strategy: ChunkStrategy::StartPattern(
-            Regex::new(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]").unwrap()
+            Regex::new(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]").unwrap(),
         ),
         ..Default::default()
     };
 
     let chunks = chunk_lines(Cursor::new(input), config).unwrap();
     assert_eq!(chunks.len(), 3);
-    
+
     // First chunk
     assert_eq!(chunks[0], "[2024-01-01 10:00:00] INFO: Starting process");
-    
+
     // Second chunk should contain the full Python traceback
     assert!(chunks[1].contains("Traceback (most recent call last)"));
     assert!(chunks[1].contains("File \"/app/main.py\""));
     assert!(chunks[1].contains("ValueError: Invalid input value"));
-    
+
     // Third chunk
     assert_eq!(chunks[2], "[2024-01-01 10:00:02] INFO: Process restarted");
 }
@@ -139,20 +139,20 @@ ValueError: Invalid input value
 fn test_parse_chunk_strategy() {
     // Test valid strategies
     assert!(matches!(
-        parse_chunk_strategy("line").unwrap(), 
+        parse_chunk_strategy("line").unwrap(),
         ChunkStrategy::Line
     ));
-    
+
     assert!(matches!(
         parse_chunk_strategy("lines:5").unwrap(),
         ChunkStrategy::FixedLines(5)
     ));
-    
+
     assert!(matches!(
         parse_chunk_strategy("delimiter:---").unwrap(),
         ChunkStrategy::Delimiter(ref s) if s == "---"
     ));
-    
+
     // Test pattern strategy
     let pattern_strategy = parse_chunk_strategy("start-pattern:^\\d{4}").unwrap();
     if let ChunkStrategy::StartPattern(regex) = pattern_strategy {
@@ -161,7 +161,7 @@ fn test_parse_chunk_strategy() {
     } else {
         panic!("Expected StartPattern strategy");
     }
-    
+
     // Test invalid strategies
     assert!(parse_chunk_strategy("invalid").is_err());
     assert!(parse_chunk_strategy("lines:abc").is_err());
@@ -210,9 +210,7 @@ fn test_delimiter_not_found() {
 fn test_pattern_not_found() {
     let input = "line1\nline2\nline3";
     let config = ChunkConfig {
-        strategy: ChunkStrategy::StartPattern(
-            Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap()
-        ),
+        strategy: ChunkStrategy::StartPattern(Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap()),
         ..Default::default()
     };
 

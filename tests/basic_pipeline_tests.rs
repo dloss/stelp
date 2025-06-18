@@ -1,10 +1,6 @@
 // tests/basic_pipeline_tests.rs
 use std::io::Cursor;
-use stelp::{
-    config::PipelineConfig,
-    FilterProcessor, StarlarkProcessor,
-    StreamPipeline,
-};
+use stelp::{config::PipelineConfig, FilterProcessor, StarlarkProcessor, StreamPipeline};
 
 #[test]
 fn test_basic_text_transformation() {
@@ -97,8 +93,8 @@ fn debug_emit_and_skip() {
     use std::io::Cursor;
     use stelp::config::PipelineConfig;
     use stelp::context::{RecordContext, RecordData};
-    use stelp::StarlarkProcessor;
     use stelp::variables::GlobalVariables;
+    use stelp::StarlarkProcessor;
     use stelp::StreamPipeline;
     println!("=== Debug: What's actually happening ===");
 

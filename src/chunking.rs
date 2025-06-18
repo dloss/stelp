@@ -1,5 +1,5 @@
-use std::io::{BufRead, Result as IoResult};
 use regex::Regex;
+use std::io::{BufRead, Result as IoResult};
 
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
@@ -52,25 +52,23 @@ impl LineChunker {
         self.global_line_number += 1;
 
         match &self.config.strategy {
-            ChunkStrategy::Line => {
-                Some(Chunk {
-                    content: line,
-                    line_count: 1,
-                    start_line: self.global_line_number,
-                })
-            }
-            
+            ChunkStrategy::Line => Some(Chunk {
+                content: line,
+                line_count: 1,
+                start_line: self.global_line_number,
+            }),
+
             ChunkStrategy::FixedLines(size) => {
                 let size = *size; // Copy the value to avoid borrow conflicts
                 self.add_line_to_chunk(&line);
-                
+
                 if self.current_lines >= size {
                     Some(self.emit_current_chunk())
                 } else {
                     None
                 }
             }
-            
+
             ChunkStrategy::StartPattern(regex) => {
                 if regex.is_match(&line) && !self.current_chunk.is_empty() {
                     let chunk = self.emit_current_chunk();
@@ -81,7 +79,7 @@ impl LineChunker {
                     None
                 }
             }
-            
+
             ChunkStrategy::Delimiter(delimiter) => {
                 if line.trim() == delimiter.trim() {
                     if !self.current_chunk.is_empty() {
@@ -122,16 +120,12 @@ impl LineChunker {
 
         self.current_lines = 0;
         self.chunk_start_line = self.global_line_number + 1;
-        
+
         chunk
     }
-
 }
 
-pub fn chunk_lines<R: BufRead>(
-    reader: R,
-    config: ChunkConfig,
-) -> IoResult<Vec<String>> {
+pub fn chunk_lines<R: BufRead>(reader: R, config: ChunkConfig) -> IoResult<Vec<String>> {
     let mut chunker = LineChunker::new(config);
     let mut chunks = Vec::new();
 
@@ -152,23 +146,22 @@ pub fn chunk_lines<R: BufRead>(
 pub fn parse_chunk_strategy(strategy_spec: &str) -> Result<ChunkStrategy, String> {
     match strategy_spec {
         "line" => Ok(ChunkStrategy::Line),
-        
+
         s if s.starts_with("lines:") => {
-            let count = s[6..].parse::<usize>()
+            let count = s[6..]
+                .parse::<usize>()
                 .map_err(|_| format!("Invalid line count: {}", &s[6..]))?;
             Ok(ChunkStrategy::FixedLines(count))
         }
-        
+
         s if s.starts_with("start-pattern:") => {
-            let regex = Regex::new(&s[14..])
-                .map_err(|e| format!("Invalid start pattern regex: {}", e))?;
+            let regex =
+                Regex::new(&s[14..]).map_err(|e| format!("Invalid start pattern regex: {}", e))?;
             Ok(ChunkStrategy::StartPattern(regex))
         }
-        
-        s if s.starts_with("delimiter:") => {
-            Ok(ChunkStrategy::Delimiter(s[10..].to_string()))
-        }
-        
+
+        s if s.starts_with("delimiter:") => Ok(ChunkStrategy::Delimiter(s[10..].to_string())),
+
         unknown => Err(format!("Unknown chunk strategy: {}", unknown)),
     }
 }
@@ -212,9 +205,7 @@ mod tests {
     fn test_start_pattern_strategy() {
         let input = "2024-01-01 Start\nContinuation\n2024-01-02 Another\nMore data";
         let config = ChunkConfig {
-            strategy: ChunkStrategy::StartPattern(
-                Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap()
-            ),
+            strategy: ChunkStrategy::StartPattern(Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap()),
             ..Default::default()
         };
 
@@ -238,5 +229,4 @@ mod tests {
         assert_eq!(chunks[1], "section2\ndata2");
         assert_eq!(chunks[2], "section3");
     }
-
 }

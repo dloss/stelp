@@ -62,14 +62,17 @@ impl GlobalVariables {
     }
 
     pub fn increment_counter(&self, name: &str) -> i32 {
-        let current = self.get_raw(name)
+        let current = self
+            .get_raw(name)
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32;
-        
+
         let new_value = current + 1;
-        let json_str = serde_json::to_string(&serde_json::Value::Number(serde_json::Number::from(new_value)))
-            .unwrap_or_else(|_| "1".to_string());
+        let json_str = serde_json::to_string(&serde_json::Value::Number(serde_json::Number::from(
+            new_value,
+        )))
+        .unwrap_or_else(|_| "1".to_string());
         self.store.borrow_mut().insert(name.to_string(), json_str);
         new_value
     }

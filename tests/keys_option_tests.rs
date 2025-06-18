@@ -54,7 +54,7 @@ fn test_keys_option_key_order() {
         .arg("-F")
         .arg("jsonl")
         .arg("-k")
-        .arg("age,name")  // Different order than input
+        .arg("age,name") // Different order than input
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}"#)
         .assert()
         .success()
@@ -102,8 +102,10 @@ fn test_keys_option_with_filter() {
         .arg(r#"data["age"] > 25"#)
         .arg("-k")
         .arg("name,age")
-        .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}
-{"name":"bob","age":20,"city":"LA"}"#)
+        .write_stdin(
+            r#"{"name":"alice","age":30,"city":"NYC"}
+{"name":"bob","age":20,"city":"LA"}"#,
+        )
         .assert()
         .success()
         .stdout(r#"{"name":"alice","age":30}"#.to_string() + "\n");
@@ -168,8 +170,10 @@ fn test_keys_option_csv_headers() {
         .arg("csv")
         .arg("-k")
         .arg("age,name")
-        .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}
-{"name":"bob","age":25,"city":"LA"}"#)
+        .write_stdin(
+            r#"{"name":"alice","age":30,"city":"NYC"}
+{"name":"bob","age":25,"city":"LA"}"#,
+        )
         .assert()
         .success()
         .stdout("age,name\n30,alice\n25,bob\n");

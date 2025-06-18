@@ -1,10 +1,6 @@
 // tests/window_tests.rs
 use std::io::Cursor;
-use stelp::{
-    config::PipelineConfig,
-    StarlarkProcessor, WindowProcessor,
-    StreamPipeline,
-};
+use stelp::{config::PipelineConfig, StarlarkProcessor, StreamPipeline, WindowProcessor};
 
 #[test]
 fn test_basic_window_functionality() {
@@ -13,14 +9,15 @@ fn test_basic_window_functionality() {
 
     // Create processor that uses window for change detection
     let inner = StarlarkProcessor::from_script(
-        "window_test", 
+        "window_test",
         r#"current = int(line)
 size = window_size()
 prev = int(window[-2]["line"]) if size >= 2 else current
 change = current - prev
-f"Value: {current}, Change: {change}""#
-    ).unwrap();
-    
+f"Value: {current}, Change: {change}""#,
+    )
+    .unwrap();
+
     let window_processor = WindowProcessor::new(3, Box::new(inner));
     pipeline.add_processor(Box::new(window_processor));
 
@@ -50,9 +47,10 @@ fn test_window_helper_functions() {
         "helper_test",
         r#"values = window_values("line")
 count = len(values)
-f"Current: {line}, Window count: {count}""#
-    ).unwrap();
-    
+f"Current: {line}, Window count: {count}""#,
+    )
+    .unwrap();
+
     let window_processor = WindowProcessor::new(3, Box::new(inner));
     pipeline.add_processor(Box::new(window_processor));
 
@@ -81,17 +79,20 @@ fn test_window_with_structured_data() {
         r#"# Simple demonstration of window functionality
 line_num = LINENUM
 window_count = window_size()
-f"Line: {line_num}, Window size: {window_count}""#
-    ).unwrap();
-    
+f"Line: {line_num}, Window size: {window_count}""#,
+    )
+    .unwrap();
+
     let window_processor = WindowProcessor::new(3, Box::new(inner));
     pipeline.add_processor(Box::new(window_processor));
 
-    let input = Cursor::new(r#"{"price": 10.5}
+    let input = Cursor::new(
+        r#"{"price": 10.5}
 {"price": 12.0}
 {"price": 11.25}
 {"price": 13.5}
-"#);
+"#,
+    );
     let mut output = Vec::new();
 
     let _stats = pipeline
@@ -100,7 +101,7 @@ f"Line: {line_num}, Window size: {window_count}""#
 
     let output_str = String::from_utf8(output).unwrap();
     assert!(output_str.contains("Line: 1, Window size: 1"));
-    assert!(output_str.contains("Line: 2, Window size: 2")); 
+    assert!(output_str.contains("Line: 2, Window size: 2"));
     assert!(output_str.contains("Line: 3, Window size: 3"));
     assert!(output_str.contains("Line: 4, Window size: 3"));
 }
@@ -113,9 +114,10 @@ fn test_window_size_limitation() {
     let inner = StarlarkProcessor::from_script(
         "size_test",
         r#"size = window_size()
-f"Window size: {size}, Current: {line}""#
-    ).unwrap();
-    
+f"Window size: {size}, Current: {line}""#,
+    )
+    .unwrap();
+
     let window_processor = WindowProcessor::new(2, Box::new(inner)); // Window size 2
     pipeline.add_processor(Box::new(window_processor));
 
@@ -128,12 +130,12 @@ f"Window size: {size}, Current: {line}""#
 
     let output_str = String::from_utf8(output).unwrap();
     let lines: Vec<&str> = output_str.trim().split('\n').collect();
-    
+
     assert_eq!(lines.len(), 4);
-    assert!(lines[0].contains("Window size: 1"));  // First record
-    assert!(lines[1].contains("Window size: 2"));  // Second record
-    assert!(lines[2].contains("Window size: 2"));  // Third record (limited by window size)
-    assert!(lines[3].contains("Window size: 2"));  // Fourth record (limited by window size)
+    assert!(lines[0].contains("Window size: 1")); // First record
+    assert!(lines[1].contains("Window size: 2")); // Second record
+    assert!(lines[2].contains("Window size: 2")); // Third record (limited by window size)
+    assert!(lines[3].contains("Window size: 2")); // Fourth record (limited by window size)
 }
 
 #[test]
@@ -150,9 +152,10 @@ if size > 1:
     result = f"Current line {LINENUM}, Previous was line {prev_line_num}"
 else:
     result = f"Current line {LINENUM}, No previous"
-result"#
-    ).unwrap();
-    
+result"#,
+    )
+    .unwrap();
+
     let window_processor = WindowProcessor::new(3, Box::new(inner));
     pipeline.add_processor(Box::new(window_processor));
 
@@ -180,9 +183,10 @@ fn test_window_without_context() {
         r#"size = window_size()
 values = window_values("line")
 count = len(values)
-f"Size: {size}, Values: {count}""#
-    ).unwrap();
-    
+f"Size: {size}, Values: {count}""#,
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     let input = Cursor::new("test\n");

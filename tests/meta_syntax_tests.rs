@@ -2,8 +2,8 @@
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
 use stelp::context::{RecordContext, RecordData};
-use stelp::StarlarkProcessor;
 use stelp::variables::GlobalVariables;
+use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
 
 #[test]
@@ -199,7 +199,10 @@ else:
             );
             if let Some(structured) = output.as_structured() {
                 // Should now have meta field with expected content
-                assert_eq!(structured["meta"], "Record 1: structured data from data.json");
+                assert_eq!(
+                    structured["meta"],
+                    "Record 1: structured data from data.json"
+                );
                 assert_eq!(structured["original"]["name"], "Alice");
                 assert_eq!(structured["original"]["age"], 30);
                 println!("✅ Meta works with structured data: {:?}", structured);

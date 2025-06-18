@@ -3,13 +3,15 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
-use stelp::chunking::{ChunkConfig, parse_chunk_strategy};
+use stelp::chunking::{parse_chunk_strategy, ChunkConfig};
 use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::{DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor, WindowProcessor};
 use stelp::StreamPipeline;
+use stelp::{
+    DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor, WindowProcessor,
+};
 
 #[derive(Debug, Clone)]
 enum PipelineStep {
@@ -145,9 +147,8 @@ impl Args {
         let has_begin_end = self.begin.is_some() || self.end.is_some();
         let has_input_format = self.input_format.is_some();
         let has_output_format = self.output_format.is_some();
-        let has_chunking = self.chunk_lines.is_some() || 
-                          self.chunk_start.is_some() || 
-                          self.chunk_delim.is_some();
+        let has_chunking =
+            self.chunk_lines.is_some() || self.chunk_start.is_some() || self.chunk_delim.is_some();
         let has_level_filters = self.levels.is_some() || self.exclude_levels.is_some();
 
         // Check for mutually exclusive chunking options
@@ -155,21 +156,24 @@ impl Args {
             self.chunk_lines.is_some(),
             self.chunk_start.is_some(),
             self.chunk_delim.is_some(),
-        ].iter().filter(|&&x| x).count();
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count();
 
         if chunk_options_count > 1 {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
-        let has_any_processing = has_extract || has_evals || has_filters || has_derives || has_begin_end;
-        let has_format_or_utility = has_input_format || has_output_format || has_chunking || has_level_filters;
-        
+        let has_any_processing =
+            has_extract || has_evals || has_filters || has_derives || has_begin_end;
+        let has_format_or_utility =
+            has_input_format || has_output_format || has_chunking || has_level_filters;
+
         match (has_script_file, has_any_processing, has_format_or_utility) {
-            (true, true, _) => {
-                Err("Cannot use --script with other processing options".to_string())
-            }
-            (true, false, _) => Ok(()), // Script file only
-            (false, true, _) => Ok(()), // Processing arguments
+            (true, true, _) => Err("Cannot use --script with other processing options".to_string()),
+            (true, false, _) => Ok(()),     // Script file only
+            (false, true, _) => Ok(()),     // Processing arguments
             (false, false, true) => Ok(()), // Format/utility options only
             (false, false, false) => {
                 Err("Must provide a processing option (try --help for options)".to_string())
@@ -255,7 +259,7 @@ impl Args {
         } else if self.no_color {
             Some(false)
         } else {
-            None  // Auto-detect based on TTY
+            None // Auto-detect based on TTY
         }
     }
 }
@@ -391,11 +395,12 @@ fn main() {
                         eprintln!("stelp: failed to compile extract-vars pattern: {}", e);
                         std::process::exit(1);
                     });
-                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
-                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
-                } else {
-                    Box::new(processor)
-                };
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> =
+                    if let Some(window_size) = args.window_size {
+                        Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                    } else {
+                        Box::new(processor)
+                    };
                 pipeline.add_processor(final_processor);
             }
             PipelineStep::Eval(eval_expr) => {
@@ -410,11 +415,12 @@ fn main() {
                             eprintln!("stelp: failed to compile eval expression {}: {}", i + 1, e);
                             std::process::exit(1);
                         });
-                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
-                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
-                } else {
-                    Box::new(processor)
-                };
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> =
+                    if let Some(window_size) = args.window_size {
+                        Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                    } else {
+                        Box::new(processor)
+                    };
                 pipeline.add_processor(final_processor);
             }
             PipelineStep::Filter(filter_expr) => {
@@ -433,11 +439,12 @@ fn main() {
                             );
                             std::process::exit(1);
                         });
-                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
-                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
-                } else {
-                    Box::new(processor)
-                };
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> =
+                    if let Some(window_size) = args.window_size {
+                        Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                    } else {
+                        Box::new(processor)
+                    };
                 pipeline.add_processor(final_processor);
             }
             PipelineStep::Derive(derive_expr) => {
@@ -449,14 +456,19 @@ fn main() {
                 let processor =
                     DeriveProcessor::from_script(&format!("derive_{}", i + 1), &final_script)
                         .unwrap_or_else(|e| {
-                            eprintln!("stelp: failed to compile derive expression {}: {}", i + 1, e);
+                            eprintln!(
+                                "stelp: failed to compile derive expression {}: {}",
+                                i + 1,
+                                e
+                            );
                             std::process::exit(1);
                         });
-                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
-                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
-                } else {
-                    Box::new(processor)
-                };
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> =
+                    if let Some(window_size) = args.window_size {
+                        Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                    } else {
+                        Box::new(processor)
+                    };
                 pipeline.add_processor(final_processor);
             }
             PipelineStep::ScriptFile(script_path) => {
@@ -481,11 +493,12 @@ fn main() {
                     eprintln!("stelp: failed to compile script file: {}", e);
                     std::process::exit(1);
                 });
-                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> = if let Some(window_size) = args.window_size {
-                    Box::new(WindowProcessor::new(window_size, Box::new(processor)))
-                } else {
-                    Box::new(processor)
-                };
+                let final_processor: Box<dyn stelp::pipeline::stream::RecordProcessor> =
+                    if let Some(window_size) = args.window_size {
+                        Box::new(WindowProcessor::new(window_size, Box::new(processor)))
+                    } else {
+                        Box::new(processor)
+                    };
                 pipeline.add_processor(final_processor);
             }
         }
@@ -497,8 +510,8 @@ fn main() {
             eprintln!("stelp: {}", e);
             std::process::exit(1);
         });
-        let processor = StarlarkProcessor::from_script("BEGIN", &final_script)
-            .unwrap_or_else(|e| {
+        let processor =
+            StarlarkProcessor::from_script("BEGIN", &final_script).unwrap_or_else(|e| {
                 eprintln!("stelp: failed to compile BEGIN expression: {}", e);
                 std::process::exit(1);
             });
@@ -511,11 +524,10 @@ fn main() {
             eprintln!("stelp: {}", e);
             std::process::exit(1);
         });
-        let processor = StarlarkProcessor::from_script("END", &final_script)
-            .unwrap_or_else(|e| {
-                eprintln!("stelp: failed to compile END expression: {}", e);
-                std::process::exit(1);
-            });
+        let processor = StarlarkProcessor::from_script("END", &final_script).unwrap_or_else(|e| {
+            eprintln!("stelp: failed to compile END expression: {}", e);
+            std::process::exit(1);
+        });
         pipeline.set_end_processor(Box::new(processor));
     }
 
@@ -608,21 +620,26 @@ fn main() {
 
     // Report CSV warnings about missing keys
     pipeline.get_output_formatter().report_csv_warnings();
-    
+
     // Report parse errors in debug mode
     if args.debug && !total_stats.parse_errors.is_empty() {
         if total_stats.parse_errors.len() <= 5 {
             // Show individual errors for small counts
             for error in &total_stats.parse_errors {
-                eprintln!("stelp: line {}: {} parse error: {}", 
-                         error.line_number, error.format_name, error.error);
+                eprintln!(
+                    "stelp: line {}: {} parse error: {}",
+                    error.line_number, error.format_name, error.error
+                );
             }
         } else {
             // Show summary for large counts
-            eprintln!("stelp: {} parse errors encountered", total_stats.parse_errors.len());
+            eprintln!(
+                "stelp: {} parse errors encountered",
+                total_stats.parse_errors.len()
+            );
         }
     }
-    
+
     // Print performance stats if requested
     if args.stats {
         let processing_ms = total_stats.processing_time.as_secs_f64() * 1000.0;
@@ -631,7 +648,7 @@ fn main() {
         } else {
             0.0
         };
-        
+
         eprintln!(
             "stelp: {} records processed, {} output, {} skipped, {} errors in {:.2}ms ({:.0} records/s)",
             total_stats.records_processed,

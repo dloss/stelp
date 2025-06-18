@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde_json;
 use starlark::values::{Heap, Value};
-use anyhow::{anyhow, Result};
 
 /// Field type specification for pattern extraction
 #[derive(Debug, Clone, PartialEq)]
@@ -16,10 +16,10 @@ impl FieldType {
     /// Convert field type to corresponding regex pattern
     fn to_regex(&self) -> &'static str {
         match self {
-            FieldType::String => r"([^\s]+)",        // Non-whitespace characters
-            FieldType::Int => r"([+-]?\d+)",          // Optional sign + digits
-            FieldType::Float => r"([+-]?\d*\.?\d+)",  // Optional sign + decimal
-            FieldType::Word => r"(\w+)",              // Word characters only
+            FieldType::String => r"([^\s]+)", // Non-whitespace characters
+            FieldType::Int => r"([+-]?\d+)",  // Optional sign + digits
+            FieldType::Float => r"([+-]?\d*\.?\d+)", // Optional sign + decimal
+            FieldType::Word => r"(\w+)",      // Word characters only
         }
     }
 }
@@ -44,7 +44,7 @@ impl PatternExtractor {
         let (regex_pattern, fields) = Self::compile_pattern(pattern_str)?;
         let regex = Regex::new(&regex_pattern)
             .map_err(|e| anyhow!("Failed to compile regex pattern: {}", e))?;
-        
+
         Ok(PatternExtractor { regex, fields })
     }
 
@@ -53,7 +53,7 @@ impl PatternExtractor {
         match self.regex.captures(text) {
             Some(captures) => {
                 let mut obj = serde_json::Map::new();
-                
+
                 // Process each field capture
                 for (i, field) in self.fields.iter().enumerate() {
                     // Capture groups are 1-indexed (0 is the full match)
@@ -63,7 +63,7 @@ impl PatternExtractor {
                         obj.insert(field.name.clone(), json_value);
                     }
                 }
-                
+
                 // Convert JSON object to Starlark value
                 let json_obj = serde_json::Value::Object(obj);
                 let starlark_value = json_to_starlark_value(heap, json_obj)?;
@@ -78,13 +78,13 @@ impl PatternExtractor {
         let mut regex_pattern = String::new();
         let mut fields = Vec::new();
         let mut chars = pattern_str.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '{' {
                 // Parse field specification
                 let mut field_spec = String::new();
                 let mut found_closing = false;
-                
+
                 while let Some(inner_ch) = chars.next() {
                     if inner_ch == '}' {
                         found_closing = true;
@@ -92,15 +92,15 @@ impl PatternExtractor {
                     }
                     field_spec.push(inner_ch);
                 }
-                
+
                 if !found_closing {
                     return Err(anyhow!("Unclosed field specification: {{{}", field_spec));
                 }
-                
+
                 if field_spec.is_empty() {
                     return Err(anyhow!("Empty field specification"));
                 }
-                
+
                 // Parse field name and type
                 let field = Self::parse_field_spec(&field_spec)?;
                 regex_pattern.push_str(field.field_type.to_regex());
@@ -116,14 +116,14 @@ impl PatternExtractor {
                 }
             }
         }
-        
+
         Ok((regex_pattern, fields))
     }
 
     /// Parse field specification like "field" or "field:type"
     fn parse_field_spec(spec: &str) -> Result<FieldSpec> {
         let parts: Vec<&str> = spec.split(':').collect();
-        
+
         match parts.len() {
             1 => {
                 // Just field name, default to string type
@@ -141,23 +141,31 @@ impl PatternExtractor {
                 // Field name and type
                 let name = parts[0].trim().to_string();
                 let type_str = parts[1].trim();
-                
+
                 if name.is_empty() {
                     return Err(anyhow!("Empty field name"));
                 }
                 Self::validate_field_name(&name)?;
-                
+
                 let field_type = match type_str {
                     "int" => FieldType::Int,
                     "float" => FieldType::Float,
                     "word" => FieldType::Word,
                     "" => FieldType::String, // Default if type is empty
-                    _ => return Err(anyhow!("Unknown field type '{}'. Supported types: int, float, word", type_str)),
+                    _ => {
+                        return Err(anyhow!(
+                            "Unknown field type '{}'. Supported types: int, float, word",
+                            type_str
+                        ))
+                    }
                 };
-                
+
                 Ok(FieldSpec { name, field_type })
             }
-            _ => Err(anyhow!("Invalid field specification '{}'. Use 'field' or 'field:type'", spec)),
+            _ => Err(anyhow!(
+                "Invalid field specification '{}'. Use 'field' or 'field:type'",
+                spec
+            )),
         }
     }
 
@@ -166,43 +174,53 @@ impl PatternExtractor {
         if name.is_empty() {
             return Err(anyhow!("Empty field name"));
         }
-        
+
         let mut chars = name.chars();
         let first = chars.next().unwrap();
-        
+
         // First character must be letter or underscore
         if !first.is_ascii_alphabetic() && first != '_' {
-            return Err(anyhow!("Field name '{}' must start with letter or underscore", name));
+            return Err(anyhow!(
+                "Field name '{}' must start with letter or underscore",
+                name
+            ));
         }
-        
+
         // Remaining characters must be alphanumeric or underscore
         for c in chars {
             if !c.is_ascii_alphanumeric() && c != '_' {
-                return Err(anyhow!("Field name '{}' contains invalid character '{}'", name, c));
+                return Err(anyhow!(
+                    "Field name '{}' contains invalid character '{}'",
+                    name,
+                    c
+                ));
             }
         }
-        
+
         Ok(())
     }
 
     /// Convert captured text to appropriate JSON value based on field type
     fn convert_capture(&self, text: &str, field_type: &FieldType) -> Result<serde_json::Value> {
         match field_type {
-            FieldType::String | FieldType::Word => {
-                Ok(serde_json::Value::String(text.to_string()))
-            }
-            FieldType::Int => {
-                text.parse::<i64>()
-                    .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
-                    .map_err(|_| anyhow!("Failed to convert '{}' to integer", text))
-            }
+            FieldType::String | FieldType::Word => Ok(serde_json::Value::String(text.to_string())),
+            FieldType::Int => text
+                .parse::<i64>()
+                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
+                .map_err(|_| anyhow!("Failed to convert '{}' to integer", text)),
             FieldType::Float => {
-                let f = text.parse::<f64>()
+                let f = text
+                    .parse::<f64>()
                     .map_err(|_| anyhow!("Failed to convert '{}' to float", text))?;
-                
+
                 serde_json::Number::from_f64(f)
                     .map(serde_json::Value::Number)
-                    .ok_or_else(|| anyhow!("Float value '{}' cannot be represented as JSON number", text))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Float value '{}' cannot be represented as JSON number",
+                            text
+                        )
+                    })
             }
         }
     }
@@ -243,10 +261,7 @@ fn json_to_starlark_value(
             for (k, v) in obj {
                 let key = heap.alloc(k);
                 let value = json_to_starlark_value(heap, v)?;
-                content.insert_hashed(
-                    key.get_hashed().map_err(|e| anyhow!("{}", e))?,
-                    value,
-                );
+                content.insert_hashed(key.get_hashed().map_err(|e| anyhow!("{}", e))?, value);
             }
             let dict = Dict::new(content);
             Ok(heap.alloc(dict))
@@ -299,7 +314,8 @@ mod tests {
         assert_eq!(fields[1].name, "user");
 
         // Test pattern with types
-        let (regex, fields) = PatternExtractor::compile_pattern("{ip} {status:int} {time:float}").unwrap();
+        let (regex, fields) =
+            PatternExtractor::compile_pattern("{ip} {status:int} {time:float}").unwrap();
         assert_eq!(regex, r"([^\s]+) ([+-]?\d+) ([+-]?\d*\.?\d+)");
         assert_eq!(fields.len(), 3);
         assert_eq!(fields[1].field_type, FieldType::Int);
@@ -317,10 +333,12 @@ mod tests {
     fn test_basic_extraction() {
         let module = Module::new();
         let extractor = PatternExtractor::new("{ip} {user} {action}").unwrap();
-        
-        let result = extractor.extract(module.heap(), "192.168.1.1 admin login").unwrap();
+
+        let result = extractor
+            .extract(module.heap(), "192.168.1.1 admin login")
+            .unwrap();
         assert!(result.is_some());
-        
+
         let dict = result.unwrap();
         // We can't easily test the Starlark dict content without more complex setup
         // but we can verify it's not None
@@ -331,7 +349,7 @@ mod tests {
     fn test_type_conversion() {
         let module = Module::new();
         let extractor = PatternExtractor::new("{status:int} {time:float} {user:word}").unwrap();
-        
+
         let result = extractor.extract(module.heap(), "200 1.5 alice").unwrap();
         assert!(result.is_some());
     }
@@ -340,7 +358,7 @@ mod tests {
     fn test_no_match() {
         let module = Module::new();
         let extractor = PatternExtractor::new("{ip} {user}").unwrap();
-        
+
         // Use text that has only one word (pattern expects two words)
         let result = extractor.extract(module.heap(), "onlyoneword").unwrap();
         assert!(result.is_none());
@@ -354,11 +372,11 @@ mod tests {
         // The int regex ([+-]?\d+) only matches valid integers
         // Let's test a scenario where we have too large an integer
         let extractor = PatternExtractor::new("{status:int}").unwrap();
-        
+
         // This won't match the int pattern, so returns None rather than error
         let result = extractor.extract(module.heap(), "not_a_number");
         assert!(result.unwrap().is_none());
-        
+
         // Test a valid integer that should work
         let result = extractor.extract(module.heap(), "200");
         assert!(result.unwrap().is_some());

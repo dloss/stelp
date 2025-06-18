@@ -2,11 +2,11 @@
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
 use stelp::context::{ProcessResult, RecordContext, RecordData};
-use stelp::{FilterProcessor, StarlarkProcessor};
-use stelp::variables::GlobalVariables;
-use stelp::StreamPipeline;
 use stelp::input_format::InputFormat;
 use stelp::pipeline::stream::RecordProcessor;
+use stelp::variables::GlobalVariables;
+use stelp::StreamPipeline;
+use stelp::{FilterProcessor, StarlarkProcessor};
 
 #[test]
 fn test_data_mode_ignores_return_value() {
@@ -47,7 +47,10 @@ data["new_field"] = "added_by_script"
                 assert_eq!(structured["age"], 30);
                 assert_eq!(structured["modified"], true);
                 assert_eq!(structured["new_field"], "added_by_script");
-                println!("✅ Data mode ignores return value, uses data variable: {:?}", structured);
+                println!(
+                    "✅ Data mode ignores return value, uses data variable: {:?}",
+                    structured
+                );
             } else {
                 panic!("Expected structured output, got text");
             }
@@ -152,11 +155,7 @@ fn test_filter_still_works_in_data_mode() {
     };
 
     // Filter that checks structured data
-    let mut filter = FilterProcessor::from_script(
-        "data_filter",
-        r#"data["age"] >= 25"#,
-    )
-    .unwrap();
+    let mut filter = FilterProcessor::from_script("data_filter", r#"data["age"] >= 25"#).unwrap();
 
     // Test with matching data
     let json_data = serde_json::json!({"name": "Alice", "age": 30});
@@ -195,10 +194,8 @@ fn test_data_mode_pipeline() {
     let mut pipeline = StreamPipeline::new(config);
 
     // Add safer filter that checks for data existence first
-    let filter = FilterProcessor::from_script(
-        "age_filter", 
-        r#"data and data.get("age", 0) >= 25"#
-    ).unwrap();
+    let filter =
+        FilterProcessor::from_script("age_filter", r#"data and data.get("age", 0) >= 25"#).unwrap();
     pipeline.add_processor(Box::new(filter));
 
     // Add transformer
@@ -221,17 +218,18 @@ if data:
     let input = Cursor::new(input_json);
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
     println!("Pipeline output:\n{}", output_str);
-    println!("Stats: processed={}, output={}", stats.records_processed, stats.records_output);
+    println!(
+        "Stats: processed={}, output={}",
+        stats.records_processed, stats.records_output
+    );
 
     // Should have processed 3 records
     assert_eq!(stats.records_processed, 3);
-    
+
     // Check basic functionality - at least some output should be produced
     if stats.records_output > 0 {
         println!("✅ Data mode pipeline produced output");

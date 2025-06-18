@@ -1,10 +1,10 @@
 // src/input_format.rs - Complete integration in a single file
 
+use crate::chunking::{chunk_lines, ChunkConfig};
+use regex::Regex;
 use serde_json;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use regex::Regex;
-use crate::chunking::{ChunkConfig, chunk_lines};
 
 #[derive(Clone, Debug, clap::ValueEnum)]
 pub enum InputFormat {
@@ -20,9 +20,15 @@ pub enum InputFormat {
     Logfmt,
     #[value(name = "syslog", help = "Syslog format (RFC3164/RFC5424)")]
     Syslog,
-    #[value(name = "combined", help = "Apache/Nginx Combined Log Format (supports standard and extended variants)")]
+    #[value(
+        name = "combined",
+        help = "Apache/Nginx Combined Log Format (supports standard and extended variants)"
+    )]
     Combined,
-    #[value(name = "fields", help = "Whitespace-separated fields (like AWK) with f1, f2, etc. key names")]
+    #[value(
+        name = "fields",
+        help = "Whitespace-separated fields (like AWK) with f1, f2, etc. key names"
+    )]
     Fields,
 }
 
@@ -68,11 +74,17 @@ impl LineParser for JsonlParser {
 
 impl CsvParser {
     pub fn new() -> Self {
-        Self { headers: None, separator: ',' }
+        Self {
+            headers: None,
+            separator: ',',
+        }
     }
 
     pub fn new_tsv() -> Self {
-        Self { headers: None, separator: '\t' }
+        Self {
+            headers: None,
+            separator: '\t',
+        }
     }
 
     pub fn parse_headers(&mut self, header_line: &str) -> Result<(), String> {
@@ -143,7 +155,10 @@ impl CsvParser {
 impl LineParser for CsvParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
-        let headers = self.headers.as_ref().ok_or(format!("{} headers not initialized", format_name))?;
+        let headers = self
+            .headers
+            .as_ref()
+            .ok_or(format!("{} headers not initialized", format_name))?;
 
         let values = self.parse_fields(line)?;
 
@@ -308,8 +323,9 @@ impl SyslogParser {
     pub fn new() -> Self {
         // RFC5424: <165>1 2023-10-11T22:14:15.003Z hostname appname 1234 msgid structured_data message
         let rfc5424_regex = Regex::new(
-            r"^<(\d{1,3})>(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$"
-        ).expect("RFC5424 regex should compile");
+            r"^<(\d{1,3})>(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$",
+        )
+        .expect("RFC5424 regex should compile");
 
         // RFC3164: Oct 11 22:14:15 hostname appname[1234]: message
         let rfc3164_regex = Regex::new(
@@ -332,19 +348,20 @@ impl SyslogParser {
 impl LineParser for SyslogParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let line = line.trim();
-        
+
         // Try RFC5424 format first
         if let Some(captures) = self.rfc5424_regex.captures(line) {
             let priority_str = captures.get(1).unwrap().as_str();
-            let priority = priority_str.parse::<u32>()
+            let priority = priority_str
+                .parse::<u32>()
                 .map_err(|_| format!("Invalid priority value: {}", priority_str))?;
-            
+
             if priority > 191 {
                 return Err(format!("Priority value {} out of range (0-191)", priority));
             }
-            
+
             let (facility, severity) = Self::parse_priority(priority);
-            
+
             let _version = captures.get(2).unwrap().as_str();
             let timestamp = captures.get(3).unwrap().as_str();
             let hostname = captures.get(4).unwrap().as_str();
@@ -353,17 +370,35 @@ impl LineParser for SyslogParser {
             let msgid = captures.get(7).unwrap().as_str();
             let _structured_data = captures.get(8).unwrap().as_str();
             let message = captures.get(9).map(|m| m.as_str()).unwrap_or("");
-            
+
             let mut map = serde_json::Map::new();
-            map.insert("pri".to_string(), serde_json::Value::Number(priority.into()));
-            map.insert("facility".to_string(), serde_json::Value::Number(facility.into()));
-            map.insert("severity".to_string(), serde_json::Value::Number(severity.into()));
-            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
-            map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
-            
+            map.insert(
+                "pri".to_string(),
+                serde_json::Value::Number(priority.into()),
+            );
+            map.insert(
+                "facility".to_string(),
+                serde_json::Value::Number(facility.into()),
+            );
+            map.insert(
+                "severity".to_string(),
+                serde_json::Value::Number(severity.into()),
+            );
+            map.insert(
+                "ts".to_string(),
+                serde_json::Value::String(timestamp.to_string()),
+            );
+            map.insert(
+                "host".to_string(),
+                serde_json::Value::String(hostname.to_string()),
+            );
+
             // Handle optional fields
             if appname != "-" {
-                map.insert("prog".to_string(), serde_json::Value::String(appname.to_string()));
+                map.insert(
+                    "prog".to_string(),
+                    serde_json::Value::String(appname.to_string()),
+                );
             }
             if procid != "-" {
                 if let Ok(pid) = procid.parse::<u32>() {
@@ -371,14 +406,20 @@ impl LineParser for SyslogParser {
                 }
             }
             if msgid != "-" {
-                map.insert("msgid".to_string(), serde_json::Value::String(msgid.to_string()));
+                map.insert(
+                    "msgid".to_string(),
+                    serde_json::Value::String(msgid.to_string()),
+                );
             }
-            
-            map.insert("msg".to_string(), serde_json::Value::String(message.to_string()));
-            
+
+            map.insert(
+                "msg".to_string(),
+                serde_json::Value::String(message.to_string()),
+            );
+
             return Ok(serde_json::Value::Object(map));
         }
-        
+
         // Try RFC3164 format
         if let Some(captures) = self.rfc3164_regex.captures(line) {
             let timestamp = captures.get(1).unwrap().as_str();
@@ -386,23 +427,35 @@ impl LineParser for SyslogParser {
             let appname = captures.get(3).unwrap().as_str();
             let procid = captures.get(4).map(|m| m.as_str());
             let message = captures.get(5).unwrap().as_str();
-            
+
             let mut map = serde_json::Map::new();
-            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
-            map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
-            map.insert("prog".to_string(), serde_json::Value::String(appname.to_string()));
-            
+            map.insert(
+                "ts".to_string(),
+                serde_json::Value::String(timestamp.to_string()),
+            );
+            map.insert(
+                "host".to_string(),
+                serde_json::Value::String(hostname.to_string()),
+            );
+            map.insert(
+                "prog".to_string(),
+                serde_json::Value::String(appname.to_string()),
+            );
+
             if let Some(pid_str) = procid {
                 if let Ok(pid) = pid_str.parse::<u32>() {
                     map.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
                 }
             }
-            
-            map.insert("msg".to_string(), serde_json::Value::String(message.to_string()));
-            
+
+            map.insert(
+                "msg".to_string(),
+                serde_json::Value::String(message.to_string()),
+            );
+
             return Ok(serde_json::Value::Object(map));
         }
-        
+
         Err("Line does not match RFC5424 or RFC3164 syslog format".to_string())
     }
 }
@@ -419,16 +472,16 @@ impl CombinedParser {
         let extended_regex = Regex::new(
             r#"^(\S+)\s+(\S+)\s+-\s+(\S+)\s+(\d+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+"([^"]*)"\s+(\d+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"(?:\s+(.*))?$"#
         ).expect("Extended combined format regex should compile");
-        
+
         // Standard Combined Log Format: IP - user [timestamp] "request" status size "referer" "user_agent"
         let standard_combined_regex = Regex::new(
             r#"^(\S+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"$"#
         ).expect("Standard combined format regex should compile");
 
         // Common Log Format: IP - user [timestamp] "request" status size
-        let common_regex = Regex::new(
-            r#"^(\S+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d+)\s+(\S+)$"#
-        ).expect("Common log format regex should compile");
+        let common_regex =
+            Regex::new(r#"^(\S+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d+)\s+(\S+)$"#)
+                .expect("Common log format regex should compile");
 
         Self {
             extended_regex,
@@ -441,19 +494,19 @@ impl CombinedParser {
         let parts: Vec<&str> = request.splitn(3, ' ').collect();
         match parts.len() {
             3 => (
-                Some(parts[0].to_string()),  // method
-                Some(parts[1].to_string()),  // path
-                Some(parts[2].to_string()),  // protocol
+                Some(parts[0].to_string()), // method
+                Some(parts[1].to_string()), // path
+                Some(parts[2].to_string()), // protocol
             ),
             2 => (
-                Some(parts[0].to_string()),  // method
-                Some(parts[1].to_string()),  // path
-                None,                        // protocol
+                Some(parts[0].to_string()), // method
+                Some(parts[1].to_string()), // path
+                None,                       // protocol
             ),
             1 => (
-                Some(parts[0].to_string()),  // method
-                None,                        // path
-                None,                        // protocol
+                Some(parts[0].to_string()), // method
+                None,                       // path
+                None,                       // protocol
             ),
             _ => (None, None, None),
         }
@@ -463,7 +516,7 @@ impl CombinedParser {
 impl LineParser for CombinedParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let line = line.trim();
-        
+
         // Try Extended Apache format first (IP hostname - user port [timestamp] "request" "query" status size "referer" "user_agent" timing...)
         if let Some(captures) = self.extended_regex.captures(line) {
             let ip = captures.get(1).unwrap().as_str();
@@ -478,30 +531,48 @@ impl LineParser for CombinedParser {
             let referer = captures.get(10).unwrap().as_str();
             let user_agent = captures.get(11).unwrap().as_str();
             let timing = captures.get(12).map(|m| m.as_str());
-            
+
             let (method, path, protocol) = Self::parse_request(request);
-            
+
             let mut map = serde_json::Map::new();
             map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
-            
+
             // Extended format fields
             if hostname != "-" {
-                map.insert("host".to_string(), serde_json::Value::String(hostname.to_string()));
+                map.insert(
+                    "host".to_string(),
+                    serde_json::Value::String(hostname.to_string()),
+                );
             }
             if user != "-" {
-                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+                map.insert(
+                    "user".to_string(),
+                    serde_json::Value::String(user.to_string()),
+                );
             }
             if let Ok(port_num) = port.parse::<u32>() {
-                map.insert("port".to_string(), serde_json::Value::Number(port_num.into()));
+                map.insert(
+                    "port".to_string(),
+                    serde_json::Value::Number(port_num.into()),
+                );
             }
-            
-            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
-            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
-            
+
+            map.insert(
+                "ts".to_string(),
+                serde_json::Value::String(timestamp.to_string()),
+            );
+            map.insert(
+                "req".to_string(),
+                serde_json::Value::String(request.to_string()),
+            );
+
             if !query.is_empty() && query != "-" {
-                map.insert("query".to_string(), serde_json::Value::String(query.to_string()));
+                map.insert(
+                    "query".to_string(),
+                    serde_json::Value::String(query.to_string()),
+                );
             }
-            
+
             if let Some(m) = method {
                 map.insert("method".to_string(), serde_json::Value::String(m));
             }
@@ -511,37 +582,58 @@ impl LineParser for CombinedParser {
             if let Some(proto) = protocol {
                 map.insert("proto".to_string(), serde_json::Value::String(proto));
             }
-            
+
             if let Ok(status_num) = status.parse::<u32>() {
-                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::Number(status_num.into()),
+                );
             } else {
-                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::String(status.to_string()),
+                );
             }
-            
+
             if size != "-" {
                 if let Ok(size_num) = size.parse::<u64>() {
-                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::Number(size_num.into()),
+                    );
                 } else {
-                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::String(size.to_string()),
+                    );
                 }
             }
-            
+
             if referer != "-" {
-                map.insert("referer".to_string(), serde_json::Value::String(referer.to_string()));
+                map.insert(
+                    "referer".to_string(),
+                    serde_json::Value::String(referer.to_string()),
+                );
             }
             if user_agent != "-" {
-                map.insert("ua".to_string(), serde_json::Value::String(user_agent.to_string()));
+                map.insert(
+                    "ua".to_string(),
+                    serde_json::Value::String(user_agent.to_string()),
+                );
             }
-            
+
             if let Some(timing_data) = timing {
                 if !timing_data.trim().is_empty() {
-                    map.insert("timing".to_string(), serde_json::Value::String(timing_data.to_string()));
+                    map.insert(
+                        "timing".to_string(),
+                        serde_json::Value::String(timing_data.to_string()),
+                    );
                 }
             }
-            
+
             return Ok(serde_json::Value::Object(map));
         }
-        
+
         // Try Standard Combined Log Format (IP - user [timestamp] "request" status size "referer" "user_agent")
         if let Some(captures) = self.standard_combined_regex.captures(line) {
             let ip = captures.get(1).unwrap().as_str();
@@ -552,19 +644,28 @@ impl LineParser for CombinedParser {
             let size = captures.get(6).unwrap().as_str();
             let referer = captures.get(7).unwrap().as_str();
             let user_agent = captures.get(8).unwrap().as_str();
-            
+
             let (method, path, protocol) = Self::parse_request(request);
-            
+
             let mut map = serde_json::Map::new();
             map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
-            
+
             if user != "-" {
-                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+                map.insert(
+                    "user".to_string(),
+                    serde_json::Value::String(user.to_string()),
+                );
             }
-            
-            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
-            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
-            
+
+            map.insert(
+                "ts".to_string(),
+                serde_json::Value::String(timestamp.to_string()),
+            );
+            map.insert(
+                "req".to_string(),
+                serde_json::Value::String(request.to_string()),
+            );
+
             if let Some(m) = method {
                 map.insert("method".to_string(), serde_json::Value::String(m));
             }
@@ -574,31 +675,49 @@ impl LineParser for CombinedParser {
             if let Some(proto) = protocol {
                 map.insert("proto".to_string(), serde_json::Value::String(proto));
             }
-            
+
             if let Ok(status_num) = status.parse::<u32>() {
-                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::Number(status_num.into()),
+                );
             } else {
-                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::String(status.to_string()),
+                );
             }
-            
+
             if size != "-" {
                 if let Ok(size_num) = size.parse::<u64>() {
-                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::Number(size_num.into()),
+                    );
                 } else {
-                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::String(size.to_string()),
+                    );
                 }
             }
-            
+
             if referer != "-" {
-                map.insert("referer".to_string(), serde_json::Value::String(referer.to_string()));
+                map.insert(
+                    "referer".to_string(),
+                    serde_json::Value::String(referer.to_string()),
+                );
             }
             if user_agent != "-" {
-                map.insert("ua".to_string(), serde_json::Value::String(user_agent.to_string()));
+                map.insert(
+                    "ua".to_string(),
+                    serde_json::Value::String(user_agent.to_string()),
+                );
             }
-            
+
             return Ok(serde_json::Value::Object(map));
         }
-        
+
         // Try Common Log Format (IP - user [timestamp] "request" status size)
         if let Some(captures) = self.common_regex.captures(line) {
             let ip = captures.get(1).unwrap().as_str();
@@ -607,19 +726,28 @@ impl LineParser for CombinedParser {
             let request = captures.get(4).unwrap().as_str();
             let status = captures.get(5).unwrap().as_str();
             let size = captures.get(6).unwrap().as_str();
-            
+
             let (method, path, protocol) = Self::parse_request(request);
-            
+
             let mut map = serde_json::Map::new();
             map.insert("ip".to_string(), serde_json::Value::String(ip.to_string()));
-            
+
             if user != "-" {
-                map.insert("user".to_string(), serde_json::Value::String(user.to_string()));
+                map.insert(
+                    "user".to_string(),
+                    serde_json::Value::String(user.to_string()),
+                );
             }
-            
-            map.insert("ts".to_string(), serde_json::Value::String(timestamp.to_string()));
-            map.insert("req".to_string(), serde_json::Value::String(request.to_string()));
-            
+
+            map.insert(
+                "ts".to_string(),
+                serde_json::Value::String(timestamp.to_string()),
+            );
+            map.insert(
+                "req".to_string(),
+                serde_json::Value::String(request.to_string()),
+            );
+
             if let Some(m) = method {
                 map.insert("method".to_string(), serde_json::Value::String(m));
             }
@@ -629,24 +757,36 @@ impl LineParser for CombinedParser {
             if let Some(proto) = protocol {
                 map.insert("proto".to_string(), serde_json::Value::String(proto));
             }
-            
+
             if let Ok(status_num) = status.parse::<u32>() {
-                map.insert("status".to_string(), serde_json::Value::Number(status_num.into()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::Number(status_num.into()),
+                );
             } else {
-                map.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+                map.insert(
+                    "status".to_string(),
+                    serde_json::Value::String(status.to_string()),
+                );
             }
-            
+
             if size != "-" {
                 if let Ok(size_num) = size.parse::<u64>() {
-                    map.insert("size".to_string(), serde_json::Value::Number(size_num.into()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::Number(size_num.into()),
+                    );
                 } else {
-                    map.insert("size".to_string(), serde_json::Value::String(size.to_string()));
+                    map.insert(
+                        "size".to_string(),
+                        serde_json::Value::String(size.to_string()),
+                    );
                 }
             }
-            
+
             return Ok(serde_json::Value::Object(map));
         }
-        
+
         Err("Line does not match any supported Combined Log Format variant".to_string())
     }
 }
@@ -666,12 +806,12 @@ pub struct InputFormatWrapper<'a> {
 
 impl<'a> InputFormatWrapper<'a> {
     pub fn new(format: Option<&'a InputFormat>) -> Self {
-        Self { 
+        Self {
             format,
             chunk_config: None,
         }
     }
-    
+
     pub fn with_chunking(mut self, chunk_config: ChunkConfig) -> Self {
         self.chunk_config = Some(chunk_config);
         self
@@ -688,7 +828,12 @@ impl<'a> InputFormatWrapper<'a> {
             Some(InputFormat::Line) => {
                 // Line format is the same as raw text processing
                 if self.chunk_config.is_some() {
-                    self.process_text_with_chunking(BufReader::new(reader), pipeline, output, filename)
+                    self.process_text_with_chunking(
+                        BufReader::new(reader),
+                        pipeline,
+                        output,
+                        filename,
+                    )
                 } else {
                     pipeline.process_stream_with_data(BufReader::new(reader), output, filename)
                 }
@@ -717,7 +862,12 @@ impl<'a> InputFormatWrapper<'a> {
             None => {
                 // Raw text - apply chunking if configured
                 if self.chunk_config.is_some() {
-                    self.process_text_with_chunking(BufReader::new(reader), pipeline, output, filename)
+                    self.process_text_with_chunking(
+                        BufReader::new(reader),
+                        pipeline,
+                        output,
+                        filename,
+                    )
                 } else {
                     // Use existing pipeline unchanged
                     pipeline.process_stream_with_data(BufReader::new(reader), output, filename)
@@ -780,7 +930,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -790,7 +940,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -858,7 +1008,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -868,7 +1018,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -936,7 +1086,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -946,7 +1096,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -1004,7 +1154,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -1014,7 +1164,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -1072,7 +1222,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -1082,7 +1232,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -1140,7 +1290,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -1150,7 +1300,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -1208,7 +1358,7 @@ impl<'a> InputFormatWrapper<'a> {
 
         // Process records directly
         let mut result = pipeline.process_records(records, output, filename)?;
-        
+
         // Add parse errors to the statistics
         result.errors += parse_errors.len();
         for parse_error in parse_errors {
@@ -1218,7 +1368,7 @@ impl<'a> InputFormatWrapper<'a> {
                 error: parse_error.error,
             });
         }
-        
+
         Ok(result)
     }
 
@@ -1231,13 +1381,13 @@ impl<'a> InputFormatWrapper<'a> {
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let chunk_config = self.chunk_config.as_ref().unwrap();
         let chunks = chunk_lines(reader, chunk_config.clone())?;
-        
+
         // Convert chunks to RecordData
         let records: Vec<crate::context::RecordData> = chunks
             .into_iter()
             .map(|chunk| crate::context::RecordData::text(chunk))
             .collect();
-        
+
         // Process chunks through the pipeline
         pipeline.process_records(records, output, filename)
     }

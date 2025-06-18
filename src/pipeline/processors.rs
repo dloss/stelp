@@ -2,7 +2,8 @@
 use crate::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::glob_dict::{create_glob_dict, sync_glob_dict_to_globals};
 use crate::pipeline::global_functions::{
-    derive_globals_with_prefix, global_functions, CURRENT_CONTEXT, EMIT_BUFFER, EXIT_FLAG, EXIT_MESSAGE, EXIT_CODE, SKIP_FLAG, IS_DATA_MODE, CURRENT_MODULE,
+    derive_globals_with_prefix, global_functions, CURRENT_CONTEXT, CURRENT_MODULE, EMIT_BUFFER,
+    EXIT_CODE, EXIT_FLAG, EXIT_MESSAGE, IS_DATA_MODE, SKIP_FLAG,
 };
 use crate::pipeline::stream::RecordProcessor;
 use crate::variables::GlobalVariables;
@@ -119,7 +120,10 @@ impl StarlarkProcessor {
                     }
                     Err(_) => {
                         // If conversion fails, provide empty window
-                        module.set("window", module.heap().alloc(Vec::<starlark::values::Value>::new()));
+                        module.set(
+                            "window",
+                            module.heap().alloc(Vec::<starlark::values::Value>::new()),
+                        );
                     }
                 }
             }
@@ -173,7 +177,9 @@ impl StarlarkProcessor {
                 } else {
                     // Convert data variable to appropriate RecordData
                     match starlark_to_json_value(data_value) {
-                        Ok(json_value) => StarlarkResult::DataModeResult(RecordData::structured(json_value)),
+                        Ok(json_value) => {
+                            StarlarkResult::DataModeResult(RecordData::structured(json_value))
+                        }
                         Err(_) => {
                             // Fallback to text representation
                             let text = if let Some(s) = data_value.unpack_str() {
@@ -280,7 +286,10 @@ impl StarlarkProcessor {
                     let final_output = EXIT_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     let exit_code = EXIT_CODE.with(|code| code.get());
-                    ProcessResult::Exit { data: final_output, code: exit_code }
+                    ProcessResult::Exit {
+                        data: final_output,
+                        code: exit_code,
+                    }
                 } else {
                     // Handle different result types
                     match starlark_result {
@@ -347,26 +356,31 @@ impl StarlarkProcessor {
         // Debug logging - immediate printing with flush
         if ctx.debug {
             eprintln!("  {}:", self.name);
-            
+
             // Show emit() calls
             let emissions = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
             for emission in &emissions {
                 eprintln!("    + emit: {:?}", emission);
             }
-            
-            // Show final decision  
+
+            // Show final decision
             match &result {
                 ProcessResult::Skip => eprintln!("    → SKIP"),
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     if let Some(output) = final_output {
                         eprintln!("    → EXIT {} with {:?}", code, output);
                     } else {
                         eprintln!("    → EXIT {}", code);
                     }
-                },
+                }
                 ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),
                 ProcessResult::Transform(record) => eprintln!("    → {:?}", record),
-                ProcessResult::FanOut(records) => eprintln!("    → FAN-OUT ({} records)", records.len()),
+                ProcessResult::FanOut(records) => {
+                    eprintln!("    → FAN-OUT ({} records)", records.len())
+                }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(p) = primary {
                         eprintln!("    → {:?} + {} emissions", p, emissions.len());
@@ -431,7 +445,11 @@ impl FilterProcessor {
         Self::from_script(name, expression)
     }
 
-    fn filter_matches(&self, record: &RecordData, ctx: &RecordContext) -> Result<bool, anyhow::Error> {
+    fn filter_matches(
+        &self,
+        record: &RecordData,
+        ctx: &RecordContext,
+    ) -> Result<bool, anyhow::Error> {
         // Set up context for global functions
         CURRENT_CONTEXT.with(|ctx_cell| {
             *ctx_cell.borrow_mut() = Some((
@@ -651,7 +669,9 @@ fn starlark_to_json_value(value: starlark::values::Value) -> anyhow::Result<serd
     } else if value.get_type() == "float" {
         // Use to_string and parse back to ensure we get the right value
         let s = value.to_string();
-        let f: f64 = s.parse().map_err(|_| anyhow::anyhow!("Failed to parse float value"))?;
+        let f: f64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Failed to parse float value"))?;
         serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
             .ok_or_else(|| anyhow::anyhow!("Float value cannot be represented as JSON number"))
@@ -703,31 +723,63 @@ impl DeriveProcessor {
         if name.is_empty() {
             return false;
         }
-        
+
         // First character must be letter or underscore
         let mut chars = name.chars();
         let first = chars.next().unwrap();
         if !first.is_ascii_alphabetic() && first != '_' {
             return false;
         }
-        
+
         // Remaining characters must be alphanumeric or underscore
         for c in chars {
             if !c.is_ascii_alphanumeric() && c != '_' {
                 return false;
             }
         }
-        
+
         // Check against Python/Starlark reserved words
-        !matches!(name, 
-            "True" | "False" | "None" | "and" | "or" | "not" | "if" | "else" | "elif" | 
-            "for" | "in" | "while" | "def" | "return" | "class" | "import" | "from" | 
-            "as" | "global" | "nonlocal" | "lambda" | "try" | "except" | "finally" | 
-            "raise" | "with" | "assert" | "del" | "pass" | "break" | "continue"
+        !matches!(
+            name,
+            "True"
+                | "False"
+                | "None"
+                | "and"
+                | "or"
+                | "not"
+                | "if"
+                | "else"
+                | "elif"
+                | "for"
+                | "in"
+                | "while"
+                | "def"
+                | "return"
+                | "class"
+                | "import"
+                | "from"
+                | "as"
+                | "global"
+                | "nonlocal"
+                | "lambda"
+                | "try"
+                | "except"
+                | "finally"
+                | "raise"
+                | "with"
+                | "assert"
+                | "del"
+                | "pass"
+                | "break"
+                | "continue"
         )
     }
 
-    fn inject_data_variables(&self, module: &Module, data: &serde_json::Value) -> Result<(), anyhow::Error> {
+    fn inject_data_variables(
+        &self,
+        module: &Module,
+        data: &serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
         if let serde_json::Value::Object(obj) = data {
             for (key, value) in obj {
                 if Self::is_valid_identifier(key) {
@@ -739,9 +791,13 @@ impl DeriveProcessor {
         Ok(())
     }
 
-    fn collect_variable_assignments(&self, module: &Module, original_data: &serde_json::Value) -> Result<serde_json::Value, anyhow::Error> {
+    fn collect_variable_assignments(
+        &self,
+        module: &Module,
+        original_data: &serde_json::Value,
+    ) -> Result<serde_json::Value, anyhow::Error> {
         let mut result_obj = serde_json::Map::new();
-        
+
         // Start with original data if it's an object
         if let serde_json::Value::Object(original_obj) = original_data {
             result_obj = original_obj.clone();
@@ -750,10 +806,14 @@ impl DeriveProcessor {
         // Get all variables from module that could be data fields
         for var_name in module.names() {
             let var_name_str = var_name.as_str();
-            
+
             // Skip stelp_ prefixed variables, built-ins, and prelude functions
-            if var_name_str.starts_with("stelp_") || 
-               matches!(var_name_str, "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc") {
+            if var_name_str.starts_with("stelp_")
+                || matches!(
+                    var_name_str,
+                    "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc"
+                )
+            {
                 continue;
             }
 
@@ -788,12 +848,18 @@ impl DeriveProcessor {
         Ok(serde_json::Value::Object(result_obj))
     }
 
-    fn execute_derive(&self, record: &RecordData, ctx: &RecordContext) -> Result<RecordData, anyhow::Error> {
+    fn execute_derive(
+        &self,
+        record: &RecordData,
+        ctx: &RecordContext,
+    ) -> Result<RecordData, anyhow::Error> {
         // Require structured data
         let data = match record {
             RecordData::Structured(data) => data,
             RecordData::Text(_) => {
-                return Err(anyhow::anyhow!("--derive requires structured data (use -f csv/jsonl/etc)"));
+                return Err(anyhow::anyhow!(
+                    "--derive requires structured data (use -f csv/jsonl/etc)"
+                ));
             }
         };
 
@@ -839,7 +905,7 @@ impl DeriveProcessor {
         module.set("False", starlark::values::Value::new_bool(false));
         module.set("None", starlark::values::Value::new_none());
 
-        // Add glob for prelude compatibility 
+        // Add glob for prelude compatibility
         module.set("glob", module.get("stelp_glob").unwrap());
 
         // Parse and execute script with f-strings enabled
@@ -926,7 +992,10 @@ impl RecordProcessor for DeriveProcessor {
                     let final_output = EXIT_MESSAGE
                         .with(|msg| msg.borrow().as_ref().map(|s| RecordData::text(s.clone())));
                     let exit_code = EXIT_CODE.with(|code| code.get());
-                    ProcessResult::Exit { data: final_output, code: exit_code }
+                    ProcessResult::Exit {
+                        data: final_output,
+                        code: exit_code,
+                    }
                 } else {
                     match emissions.is_empty() {
                         true => ProcessResult::Transform(derived_record),
@@ -947,26 +1016,31 @@ impl RecordProcessor for DeriveProcessor {
         // Debug logging
         if ctx.debug {
             eprintln!("  {}:", self.name);
-            
+
             // Show emit() calls
             let emissions = EMIT_BUFFER.with(|buffer| buffer.borrow().clone());
             for emission in &emissions {
                 eprintln!("    + emit: {:?}", emission);
             }
-            
-            // Show final decision  
+
+            // Show final decision
             match &result {
                 ProcessResult::Skip => eprintln!("    → SKIP"),
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     if let Some(output) = final_output {
                         eprintln!("    → EXIT {} with {:?}", code, output);
                     } else {
                         eprintln!("    → EXIT {}", code);
                     }
-                },
+                }
                 ProcessResult::Error(err) => eprintln!("    → ERROR: {}", err),
                 ProcessResult::Transform(record) => eprintln!("    → {:?}", record),
-                ProcessResult::FanOut(records) => eprintln!("    → FAN-OUT ({} records)", records.len()),
+                ProcessResult::FanOut(records) => {
+                    eprintln!("    → FAN-OUT ({} records)", records.len())
+                }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(p) = primary {
                         eprintln!("    → {:?} + {} emissions", p, emissions.len());
@@ -996,7 +1070,7 @@ impl ExtractProcessor {
     pub fn new(name: &str, pattern: &str) -> Result<Self, CompilationError> {
         let extractor = crate::pattern_extraction::PatternExtractor::new(pattern)
             .map_err(|e| CompilationError::ValidationError(format!("Invalid pattern: {}", e)))?;
-        
+
         Ok(ExtractProcessor {
             extractor,
             name: name.to_string(),
@@ -1011,35 +1085,39 @@ impl RecordProcessor for ExtractProcessor {
             RecordData::Text(text) => {
                 // Create a temporary module just for the heap
                 let module = Module::new();
-                
+
                 match self.extractor.extract(module.heap(), text) {
                     Ok(Some(extracted_data)) => {
                         // Convert Starlark value back to JSON for RecordData
                         match starlark_to_json_value(extracted_data) {
                             Ok(json_value) => {
-                                let result = ProcessResult::Transform(RecordData::Structured(json_value));
-                                
+                                let result =
+                                    ProcessResult::Transform(RecordData::Structured(json_value));
+
                                 // Debug logging
                                 if ctx.debug {
                                     eprintln!("  {}: → EXTRACTED", self.name);
                                     std::io::stderr().flush().ok();
                                 }
-                                
+
                                 result
                             }
                             Err(e) => {
                                 let result = ProcessResult::Error(ProcessingError::ScriptError {
                                     step: self.name.clone(),
                                     line: ctx.line_number,
-                                    source: anyhow::anyhow!("Failed to convert extracted data: {}", e),
+                                    source: anyhow::anyhow!(
+                                        "Failed to convert extracted data: {}",
+                                        e
+                                    ),
                                 });
-                                
+
                                 // Debug logging
                                 if ctx.debug {
                                     eprintln!("  {}: → CONVERSION ERROR: {}", self.name, e);
                                     std::io::stderr().flush().ok();
                                 }
-                                
+
                                 result
                             }
                         }
@@ -1047,25 +1125,25 @@ impl RecordProcessor for ExtractProcessor {
                     Ok(None) => {
                         // No match - pass through unchanged
                         let result = ProcessResult::Transform(record.clone());
-                        
+
                         // Debug logging
                         if ctx.debug {
                             eprintln!("  {}: → NO MATCH", self.name);
                             std::io::stderr().flush().ok();
                         }
-                        
+
                         result
                     }
                     Err(e) => {
                         // Type conversion error or other extraction error
                         // Log in debug mode but pass through unchanged (graceful handling)
                         let result = ProcessResult::Transform(record.clone());
-                        
+
                         if ctx.debug {
                             eprintln!("  {}: → TYPE ERROR: {}, passing through", self.name, e);
                             std::io::stderr().flush().ok();
                         }
-                        
+
                         result
                     }
                 }
@@ -1073,13 +1151,13 @@ impl RecordProcessor for ExtractProcessor {
             RecordData::Structured(_) => {
                 // Already structured data - pass through unchanged
                 let result = ProcessResult::Transform(record.clone());
-                
+
                 // Debug logging
                 if ctx.debug {
                     eprintln!("  {}: → ALREADY STRUCTURED", self.name);
                     std::io::stderr().flush().ok();
                 }
-                
+
                 result
             }
         }
@@ -1106,24 +1184,30 @@ impl LevelFilterProcessor {
                 .filter(|level| !level.is_empty())
                 .collect()
         });
-        
+
         let exclude_levels = exclude_levels.map(|s| {
             s.split(',')
                 .map(|level| level.trim().to_lowercase())
                 .filter(|level| !level.is_empty())
                 .collect()
         });
-        
+
         Self {
             include_levels,
             exclude_levels,
             level_keys: vec![
-                "level", "loglevel", "log_level", "lvl", "severity", "levelname", "@l"
+                "level",
+                "loglevel",
+                "log_level",
+                "lvl",
+                "severity",
+                "levelname",
+                "@l",
             ],
             name: name.to_string(),
         }
     }
-    
+
     /// Extract log level from record
     fn extract_level(&self, record: &RecordData) -> Option<String> {
         match record {
@@ -1137,7 +1221,7 @@ impl LevelFilterProcessor {
             }
         }
     }
-    
+
     /// Extract level from structured data
     fn extract_level_from_structured(&self, data: &serde_json::Value) -> Option<String> {
         if let serde_json::Value::Object(obj) = data {
@@ -1154,36 +1238,51 @@ impl LevelFilterProcessor {
         }
         None
     }
-    
+
     /// Extract level from text using pattern matching
     fn extract_level_from_text(&self, text: &str) -> Option<String> {
         let text_lower = text.to_lowercase();
-        
+
         // Look for common log level patterns
         let patterns: &[(&str, &[&str])] = &[
-            ("error", &["error", "err", "fatal", "panic", "alert", "crit", "critical", "emerg", "emergency", "severe"]),
+            (
+                "error",
+                &[
+                    "error",
+                    "err",
+                    "fatal",
+                    "panic",
+                    "alert",
+                    "crit",
+                    "critical",
+                    "emerg",
+                    "emergency",
+                    "severe",
+                ],
+            ),
             ("warn", &["warn", "warning"]),
             ("info", &["info", "informational", "notice"]),
             ("debug", &["debug", "finer", "config"]),
             ("trace", &["trace", "finest"]),
         ];
-        
+
         for (normalized_level, level_variants) in patterns {
             for &variant in *level_variants {
                 // Look for the level as a word boundary
-                if text_lower.contains(&format!(" {} ", variant)) ||
-                   text_lower.contains(&format!("[{}]", variant)) ||
-                   text_lower.contains(&format!("{}:", variant)) ||
-                   text_lower.starts_with(&format!("{} ", variant)) ||
-                   text_lower.ends_with(&format!(" {}", variant)) {
+                if text_lower.contains(&format!(" {} ", variant))
+                    || text_lower.contains(&format!("[{}]", variant))
+                    || text_lower.contains(&format!("{}:", variant))
+                    || text_lower.starts_with(&format!("{} ", variant))
+                    || text_lower.ends_with(&format!(" {}", variant))
+                {
                     return Some(normalized_level.to_string());
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Check if record should be included based on level filters
     fn should_include_record(&self, record: &RecordData) -> bool {
         let level = match self.extract_level(record) {
@@ -1193,19 +1292,19 @@ impl LevelFilterProcessor {
                 return self.include_levels.is_none();
             }
         };
-        
+
         // Priority: exclude_levels takes precedence over include_levels
         if let Some(ref exclude_levels) = self.exclude_levels {
             if exclude_levels.contains(&level) {
                 return false;
             }
         }
-        
+
         // Then check include_levels
         if let Some(ref include_levels) = self.include_levels {
             return include_levels.contains(&level);
         }
-        
+
         // No filters applied, include by default
         true
     }
@@ -1214,16 +1313,18 @@ impl LevelFilterProcessor {
 impl RecordProcessor for LevelFilterProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
         let should_include = self.should_include_record(record);
-        
+
         let result = if should_include {
             ProcessResult::Transform(record.clone())
         } else {
             ProcessResult::Skip
         };
-        
+
         // Debug logging
         if ctx.debug {
-            let level = self.extract_level(record).unwrap_or_else(|| "unknown".to_string());
+            let level = self
+                .extract_level(record)
+                .unwrap_or_else(|| "unknown".to_string());
             match &result {
                 ProcessResult::Transform(_) => eprintln!("  {}: level={} → PASS", self.name, level),
                 ProcessResult::Skip => eprintln!("  {}: level={} → SKIP", self.name, level),
@@ -1231,10 +1332,10 @@ impl RecordProcessor for LevelFilterProcessor {
             }
             std::io::stderr().flush().ok();
         }
-        
+
         result
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -1245,15 +1346,15 @@ fn create_window_starlark_list<'a>(
     heap: &'a starlark::values::Heap,
     window_buffer: &std::collections::VecDeque<crate::processors::window::WindowRecord>,
 ) -> anyhow::Result<starlark::values::Value<'a>> {
-    use starlark::values::dict::Dict;
     use starlark::collections::SmallMap;
-    
+    use starlark::values::dict::Dict;
+
     let window_records: Result<Vec<starlark::values::Value>, anyhow::Error> = window_buffer
         .iter()
         .map(|record| {
             // Create a dict for each window record
             let mut content = SmallMap::new();
-            
+
             // Add line field
             let line_value = if let Some(line) = &record.line {
                 heap.alloc(line.clone())
@@ -1261,10 +1362,12 @@ fn create_window_starlark_list<'a>(
                 starlark::values::Value::new_none()
             };
             content.insert_hashed(
-                heap.alloc("line").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc("line")
+                    .get_hashed()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
                 line_value,
             );
-            
+
             // Add data field
             let data_value = if let Some(data) = &record.data {
                 json_to_starlark_value(heap, data.clone())?
@@ -1272,24 +1375,30 @@ fn create_window_starlark_list<'a>(
                 starlark::values::Value::new_none()
             };
             content.insert_hashed(
-                heap.alloc("data").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc("data")
+                    .get_hashed()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
                 data_value,
             );
-            
+
             // Add metadata
             content.insert_hashed(
-                heap.alloc("line_number").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc("line_number")
+                    .get_hashed()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
                 heap.alloc(record.line_number as i32),
             );
             content.insert_hashed(
-                heap.alloc("record_count").get_hashed().map_err(|e| anyhow::anyhow!("{}", e))?,
+                heap.alloc("record_count")
+                    .get_hashed()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
                 heap.alloc(record.record_count as i32),
             );
-            
+
             let dict = Dict::new(content);
             Ok(heap.alloc(dict))
         })
         .collect();
-    
+
     Ok(heap.alloc(window_records?))
 }

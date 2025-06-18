@@ -16,6 +16,8 @@ pub use pipeline::*;
 
 pub use pipeline::config::{ErrorStrategy, PipelineConfig};
 pub use pipeline::context::{ProcessResult, ProcessingStats, RecordContext, RecordData};
-pub use pipeline::processors::{DeriveProcessor, ExtractProcessor, FilterProcessor, LevelFilterProcessor, StarlarkProcessor};
-pub use processors::{WindowProcessor};
+pub use pipeline::processors::{
+    DeriveProcessor, ExtractProcessor, FilterProcessor, LevelFilterProcessor, StarlarkProcessor,
+};
 pub use pipeline::stream::{RecordProcessor, StreamPipeline};
+pub use processors::WindowProcessor;

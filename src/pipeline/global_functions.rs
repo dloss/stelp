@@ -1,11 +1,11 @@
 // src/pipeline/global_functions.rs
-use crate::variables::GlobalVariables;
 use crate::processors::window::WINDOW_CONTEXT;
+use crate::variables::GlobalVariables;
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
+use dateparser;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
-use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
-use dateparser;
 
 thread_local! {
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -37,9 +37,11 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 IS_DATA_MODE.with(|flag| flag.get()) // fallback to thread-local flag
             }
         });
-        
+
         if is_data_mode {
-            return Err(anyhow::anyhow!("emit() can only be used in line mode (when 'data' is None)"));
+            return Err(anyhow::anyhow!(
+                "emit() can only be used in line mode (when 'data' is None)"
+            ));
         }
         EMIT_BUFFER.with(|buffer| {
             buffer.borrow_mut().push(text);
@@ -47,7 +49,10 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(starlark::values::none::NoneType)
     }
 
-    fn emit_all<'v>(heap: &'v Heap, items: Value<'v>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn emit_all<'v>(
+        heap: &'v Heap,
+        items: Value<'v>,
+    ) -> anyhow::Result<starlark::values::none::NoneType> {
         // Check if we're in data mode by looking at the current data variable
         let is_data_mode = CURRENT_MODULE.with(|module_ptr| {
             if let Some(module_ptr) = *module_ptr.borrow() {
@@ -62,9 +67,11 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 IS_DATA_MODE.with(|flag| flag.get()) // fallback to thread-local flag
             }
         });
-        
+
         if is_data_mode {
-            return Err(anyhow::anyhow!("emit_all() can only be used in line mode (when 'data' is None)"));
+            return Err(anyhow::anyhow!(
+                "emit_all() can only be used in line mode (when 'data' is None)"
+            ));
         }
         match items.iterate(heap) {
             Ok(mut iterable) => {
@@ -76,9 +83,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 });
                 Ok(starlark::values::none::NoneType)
             }
-            Err(_) => {
-                Err(anyhow::anyhow!("emit_all() requires an iterable argument"))
-            }
+            Err(_) => Err(anyhow::anyhow!("emit_all() requires an iterable argument")),
         }
     }
 
@@ -92,20 +97,31 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(starlark::values::none::NoneType)
     }
 
-    fn exit<'v>(arg1: Option<starlark::values::Value<'v>>, arg2: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn exit<'v>(
+        arg1: Option<starlark::values::Value<'v>>,
+        arg2: Option<String>,
+    ) -> anyhow::Result<starlark::values::none::NoneType> {
         let (code, msg) = match (arg1, arg2) {
             // exit() - no arguments
             (None, None) => (0, None),
             // exit(3) - integer as first argument
             (Some(val), None) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), None),
             // exit("message") - string as first argument (backward compatibility)
-            (Some(val), None) if val.unpack_str().is_some() => (0, Some(val.unpack_str().unwrap().to_string())),
+            (Some(val), None) if val.unpack_str().is_some() => {
+                (0, Some(val.unpack_str().unwrap().to_string()))
+            }
             // exit(3, "message") - both arguments
-            (Some(val), Some(msg)) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), Some(msg)),
+            (Some(val), Some(msg)) if val.unpack_i32().is_some() => {
+                (val.unpack_i32().unwrap(), Some(msg))
+            }
             // Invalid usage
-            _ => return Err(anyhow::anyhow!("exit() expects exit(code=0, msg=None) - code must be an integer")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "exit() expects exit(code=0, msg=None) - code must be an integer"
+                ))
+            }
         };
-        
+
         EXIT_FLAG.with(|flag| flag.set(true));
         EXIT_MESSAGE.with(|message| {
             *message.borrow_mut() = msg;
@@ -312,8 +328,14 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     fn parse_ts(text: String, format: Option<String>) -> anyhow::Result<i64> {
         if let Some(fmt) = format {
             // Parse with custom format
-            let dt = NaiveDateTime::parse_from_str(&text, &fmt)
-                .map_err(|e| anyhow::anyhow!("Failed to parse timestamp '{}' with format '{}': {}", text, fmt, e))?;
+            let dt = NaiveDateTime::parse_from_str(&text, &fmt).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse timestamp '{}' with format '{}': {}",
+                    text,
+                    fmt,
+                    e
+                )
+            })?;
             Ok(dt.and_utc().timestamp())
         } else {
             // Auto-detect common formats
@@ -321,38 +343,46 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
                 return Ok(dt.timestamp());
             }
-            
+
             // Try ISO 8601 without timezone (assume UTC)
             if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
                 return Ok(dt.and_utc().timestamp());
             }
-            
+
             // Try common log format
             if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
                 return Ok(dt.and_utc().timestamp());
             }
-            
+
             // Try date only
             if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d") {
                 return Ok(dt.and_utc().timestamp());
             }
-            
-            Err(anyhow::anyhow!("Failed to parse timestamp '{}' - unsupported format", text))
+
+            Err(anyhow::anyhow!(
+                "Failed to parse timestamp '{}' - unsupported format",
+                text
+            ))
         }
     }
 
-    fn format_ts<'v>(heap: &'v Heap, timestamp: i64, format: Option<String>) -> anyhow::Result<Value<'v>> {
-        let dt = Utc.timestamp_opt(timestamp, 0)
+    fn format_ts<'v>(
+        heap: &'v Heap,
+        timestamp: i64,
+        format: Option<String>,
+    ) -> anyhow::Result<Value<'v>> {
+        let dt = Utc
+            .timestamp_opt(timestamp, 0)
             .single()
             .ok_or_else(|| anyhow::anyhow!("Invalid timestamp: {}", timestamp))?;
-        
+
         let formatted = if let Some(fmt) = format {
             dt.format(&fmt).to_string()
         } else {
             // Default to ISO 8601
             dt.to_rfc3339()
         };
-        
+
         Ok(heap.alloc(formatted))
     }
 
@@ -378,103 +408,108 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                 if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
                     return Ok(dt.timestamp());
                 }
-                
+
                 // Try ISO 8601 without timezone (assume UTC)
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try common log format
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try date only
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try Apache/Nginx log format (e.g., "25/Dec/2021:10:24:56 +0000")
                 if let Ok(dt) = DateTime::parse_from_str(&text, "%d/%b/%Y:%H:%M:%S %z") {
                     return Ok(dt.timestamp());
                 }
-                
+
                 // Try syslog format (e.g., "Dec 25 10:24:56")
                 // Note: This assumes current year since syslog doesn't include year
                 let current_year = Utc::now().year();
                 let text_with_year = format!("{} {}", current_year, text);
-                if let Ok(dt) = NaiveDateTime::parse_from_str(&text_with_year, "%Y %b %d %H:%M:%S") {
+                if let Ok(dt) = NaiveDateTime::parse_from_str(&text_with_year, "%Y %b %d %H:%M:%S")
+                {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try compact format YYYYMMDDTHHMMSS (e.g., "20030925T104941")
                 if text.len() == 15 && text.chars().nth(8) == Some('T') {
                     if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y%m%dT%H%M%S") {
                         return Ok(dt.and_utc().timestamp());
                     }
                 }
-                
+
                 // Try compact format YYYYMMDDHHMM (e.g., "199709020900")
                 if text.len() == 12 && text.chars().all(|c| c.is_ascii_digit()) {
                     if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y%m%d%H%M") {
                         return Ok(dt.and_utc().timestamp());
                     }
                 }
-                
+
                 // Try German format DD.MM.YYYY HH:MM:SS (e.g., "27.01.2025 14:30:45")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d.%m.%Y %H:%M:%S") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try German date only DD.MM.YYYY (e.g., "27.01.2025")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d.%m.%Y") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try BGL format YYYY-MM-DD-HH.MM.SS.ffffff (e.g., "2025-01-27-14.30.45.123456")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%d-%H.%M.%S.%f") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try DD-MM-YYYY format (e.g., "27-01-2025")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d-%m-%Y") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try DD-MM-YYYY HH:MM:SS format (e.g., "27-01-2025 14:30:45")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%d-%m-%Y %H:%M:%S") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try Spark format YY/MM/DD HH:MM:SS (e.g., "25/01/27 14:30:45")
                 if let Ok(dt) = NaiveDateTime::parse_from_str(&text, "%y/%m/%d %H:%M:%S") {
                     return Ok(dt.and_utc().timestamp());
                 }
-                
+
                 // Try Apache bracket format [Day Mon DD HH:MM:SS YYYY] (e.g., "[Mon Jan 27 14:30:45 2025]")
                 if text.starts_with('[') && text.ends_with(']') {
-                    let inner = &text[1..text.len()-1];
+                    let inner = &text[1..text.len() - 1];
                     if let Ok(dt) = NaiveDateTime::parse_from_str(inner, "%a %b %d %H:%M:%S %Y") {
                         return Ok(dt.and_utc().timestamp());
                     }
                 }
-                
+
                 // Try Zookeeper format with comma separator (e.g., "2025-01-27 14:30:45,123")
                 if text.contains(',') {
                     let comma_replaced = text.replace(',', ".");
-                    if let Ok(dt) = NaiveDateTime::parse_from_str(&comma_replaced, "%Y-%m-%d %H:%M:%S.%f") {
+                    if let Ok(dt) =
+                        NaiveDateTime::parse_from_str(&comma_replaced, "%Y-%m-%d %H:%M:%S.%f")
+                    {
                         return Ok(dt.and_utc().timestamp());
                     }
                 }
-                
+
                 // Try nanosecond precision handling (truncate to microseconds)
                 // Handle formats like "2024-01-15T10:30:45.123456789Z" or "2024-01-15T10:30:45.123456789+01:00"
-                if text.contains('.') && (text.ends_with('Z') || text.contains('+') || text.contains('-')) {
+                if text.contains('.')
+                    && (text.ends_with('Z') || text.contains('+') || text.contains('-'))
+                {
                     // Find the fractional seconds part
                     if let Some(dot_pos) = text.rfind('.') {
                         let before_dot = &text[..dot_pos];
-                        let after_dot = &text[dot_pos+1..];
-                        
+                        let after_dot = &text[dot_pos + 1..];
+
                         // Find where timezone info starts
                         let mut tz_start = after_dot.len();
                         for (i, c) in after_dot.chars().enumerate() {
@@ -483,35 +518,41 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
                                 break;
                             }
                         }
-                        
+
                         let fractional = &after_dot[..tz_start];
                         let tz_part = &after_dot[tz_start..];
-                        
+
                         // Truncate fractional seconds to 6 digits (microseconds)
                         let truncated_fractional = if fractional.len() > 6 {
                             &fractional[..6]
                         } else {
                             fractional
                         };
-                        
-                        let reconstructed = format!("{}.{}{}", before_dot, truncated_fractional, tz_part);
-                        
+
+                        let reconstructed =
+                            format!("{}.{}{}", before_dot, truncated_fractional, tz_part);
+
                         // Try parsing the reconstructed timestamp
                         if let Ok(dt) = DateTime::parse_from_rfc3339(&reconstructed) {
                             return Ok(dt.timestamp());
                         }
-                        
+
                         // Try without timezone (assume UTC)
                         if tz_part == "Z" || tz_part.is_empty() {
                             let utc_format = format!("{}.{}", before_dot, truncated_fractional);
-                            if let Ok(dt) = NaiveDateTime::parse_from_str(&utc_format, "%Y-%m-%dT%H:%M:%S.%f") {
+                            if let Ok(dt) =
+                                NaiveDateTime::parse_from_str(&utc_format, "%Y-%m-%dT%H:%M:%S.%f")
+                            {
                                 return Ok(dt.and_utc().timestamp());
                             }
                         }
                     }
                 }
-                
-                Err(anyhow::anyhow!("Failed to parse timestamp '{}' - no recognized format", text))
+
+                Err(anyhow::anyhow!(
+                    "Failed to parse timestamp '{}' - no recognized format",
+                    text
+                ))
             }
         }
     }
@@ -520,19 +561,21 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     fn window_values<'v>(heap: &'v Heap, field_name: String) -> anyhow::Result<Value<'v>> {
         WINDOW_CONTEXT.with(|ctx| {
             if let Some(window_buffer) = ctx.borrow().as_ref() {
-                let values: Vec<Value> = window_buffer.iter()
+                let values: Vec<Value> = window_buffer
+                    .iter()
                     .filter_map(|record| {
                         // Extract field from either line or structured data
                         match (&record.line, &record.data) {
                             // For text records, only support "line" field
-                            (Some(line), None) if field_name == "line" => Some(heap.alloc(line.clone())),
-                            // For structured records, extract named field
-                            (None, Some(data)) => {
-                                data.get(&field_name)
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| heap.alloc(s.to_string()))
+                            (Some(line), None) if field_name == "line" => {
+                                Some(heap.alloc(line.clone()))
                             }
-                            _ => None
+                            // For structured records, extract named field
+                            (None, Some(data)) => data
+                                .get(&field_name)
+                                .and_then(|v| v.as_str())
+                                .map(|s| heap.alloc(s.to_string())),
+                            _ => None,
                         }
                     })
                     .collect();
@@ -546,20 +589,20 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     fn window_numbers<'v>(heap: &'v Heap, field_name: String) -> anyhow::Result<Value<'v>> {
         WINDOW_CONTEXT.with(|ctx| {
             if let Some(window_buffer) = ctx.borrow().as_ref() {
-                let values: Vec<Value> = window_buffer.iter()
+                let values: Vec<Value> = window_buffer
+                    .iter()
                     .filter_map(|record| {
                         match (&record.line, &record.data) {
                             // For structured records, extract and convert to number
-                            (None, Some(data)) => {
-                                data.get(&field_name)
-                                    .and_then(|v| v.as_f64())
-                                    .map(|f| heap.alloc(f))
-                            }
+                            (None, Some(data)) => data
+                                .get(&field_name)
+                                .and_then(|v| v.as_f64())
+                                .map(|f| heap.alloc(f)),
                             // For text records, try to parse as number
                             (Some(line), None) if field_name == "line" => {
                                 line.parse::<f64>().ok().map(|f| heap.alloc(f))
                             }
-                            _ => None
+                            _ => None,
                         }
                     })
                     .collect();
@@ -606,7 +649,7 @@ fn json_to_starlark_value(heap: &Heap, json: serde_json::Value) -> anyhow::Resul
         serde_json::Value::Object(obj) => {
             use starlark::collections::SmallMap;
             use starlark::values::dict::Dict;
-            
+
             let mut dict_map = SmallMap::new();
             for (k, v) in obj {
                 let key = heap.alloc(k.as_str());
@@ -803,7 +846,7 @@ mod tests {
         let script = r#"parse_ts("2015-03-26T01:27:38-04:00")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Expected timestamp for 2015-03-26T01:27:38-04:00 (UTC)
         let expected = 1427347658i64;
         assert_eq!(result.unpack_i32().unwrap() as i64, expected);
@@ -818,7 +861,7 @@ mod tests {
         let script = r#"parse_ts("2024-01-15T10:30:45")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Should parse as UTC
         let expected = 1705314645i64;
         assert_eq!(result.unpack_i32().unwrap() as i64, expected);
@@ -833,7 +876,7 @@ mod tests {
         let script = r#"parse_ts("2024-01-15 10:30:45")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let expected = 1705314645i64;
         assert_eq!(result.unpack_i32().unwrap() as i64, expected);
     }
@@ -847,7 +890,7 @@ mod tests {
         let script = r#"format_ts(1427347658)"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         assert_eq!(result.unpack_str().unwrap(), "2015-03-26T05:27:38+00:00");
     }
 
@@ -860,7 +903,7 @@ mod tests {
         let script = r#"format_ts(1427347658, "%Y-%m-%d %H:%M:%S")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         assert_eq!(result.unpack_str().unwrap(), "2015-03-26 05:27:38");
     }
 
@@ -873,7 +916,7 @@ mod tests {
         let script = r#"ts_diff(1427354858, 1427354800)"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         assert_eq!(result.unpack_i32().unwrap(), 58);
     }
 
@@ -886,7 +929,7 @@ mod tests {
         let script = r#"ts_add(1427354800, 58)"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         assert_eq!(result.unpack_i32().unwrap(), 1427354858);
     }
 
@@ -899,7 +942,7 @@ mod tests {
         let script = r#"now()"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Just check it's a reasonable timestamp (after 2020)
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1577836800); // 2020-01-01
@@ -915,7 +958,7 @@ mod tests {
         let script = r#"guess_ts("1511648546")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         assert_eq!(result.unpack_i32().unwrap() as i64, 1511648546);
     }
 
@@ -928,7 +971,7 @@ mod tests {
         let script = r#"guess_ts("2021-05-01T01:17:02.604456Z")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Should parse successfully
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1619827022); // Around 2021-05-01
@@ -943,7 +986,7 @@ mod tests {
         let script = r#"guess_ts("2019-11-29 08:08-08")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Should parse successfully
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1574000000); // Around 2019-11-29
@@ -958,7 +1001,7 @@ mod tests {
         let script = r#"guess_ts("May 25, 2021")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Should parse successfully
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1621900000); // Around May 25, 2021
@@ -973,7 +1016,7 @@ mod tests {
         let script = r#"guess_ts("4/8/2014 22:05")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         // Should parse successfully
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1396900000); // Around April 2014
@@ -988,8 +1031,8 @@ mod tests {
         let script = r#"guess_ts("25/Dec/2021:10:24:56 +0000")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
-        // Should parse successfully 
+
+        // Should parse successfully
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1640420000); // Around Dec 25, 2021
     }
@@ -1004,7 +1047,7 @@ mod tests {
         let script = r#"guess_ts("2024-01-15")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1705276800); // Around Jan 15, 2024
     }
@@ -1019,7 +1062,7 @@ mod tests {
         let script = r#"guess_ts("20030925T104941")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1064000000); // Around Sept 25, 2003
     }
@@ -1034,7 +1077,7 @@ mod tests {
         let script = r#"guess_ts("27.01.2025 14:30:45")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
@@ -1049,7 +1092,7 @@ mod tests {
         let script = r#"guess_ts("2025-01-27-14.30.45.123456")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
@@ -1064,7 +1107,7 @@ mod tests {
         let script = r#"guess_ts("2024-01-15T10:30:45.123456789Z")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert_eq!(timestamp, 1705314645); // Should parse correctly
     }
@@ -1079,7 +1122,7 @@ mod tests {
         let script = r#"guess_ts("2025-01-27 14:30:45,123")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
@@ -1094,7 +1137,7 @@ mod tests {
         let script = r#"guess_ts("[Mon Jan 27 14:30:45 2025]")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let timestamp = result.unpack_i32().unwrap() as i64;
         assert!(timestamp > 1737900000); // Around Jan 27, 2025
     }
@@ -1108,10 +1151,10 @@ mod tests {
         let script = r#"dump_json({"name": "Alice", "age": 30})"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let json_str = result.unpack_str().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
-        
+
         assert_eq!(parsed["name"], "Alice");
         assert_eq!(parsed["age"], 30);
     }
@@ -1125,10 +1168,10 @@ mod tests {
         let script = r#"original = {"name": "Bob", "items": [1, 2, 3], "count": 42}; json_str = dump_json(original); parsed_back = parse_json(json_str); dump_json(parsed_back)"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let json_str = result.unpack_str().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
-        
+
         assert_eq!(parsed["name"], "Bob");
         assert_eq!(parsed["items"].as_array().unwrap().len(), 3);
         assert_eq!(parsed["count"], 42);
@@ -1140,13 +1183,14 @@ mod tests {
         let module = Module::new();
         let mut eval = Evaluator::new(&module);
 
-        let script = r#"dump_json({"user": {"profile": {"name": "Charlie"}}, "scores": [{"test": 95}]})"#;
+        let script =
+            r#"dump_json({"user": {"profile": {"name": "Charlie"}}, "scores": [{"test": 95}]})"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
-        
+
         let json_str = result.unpack_str().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
-        
+
         assert_eq!(parsed["user"]["profile"]["name"], "Charlie");
         assert_eq!(parsed["scores"][0]["test"], 95);
     }
@@ -1167,20 +1211,31 @@ pub(crate) fn derive_globals_with_prefix(builder: &mut starlark::environment::Gl
         Ok(starlark::values::none::NoneType)
     }
 
-    fn stelp_exit<'v>(arg1: Option<starlark::values::Value<'v>>, arg2: Option<String>) -> anyhow::Result<starlark::values::none::NoneType> {
+    fn stelp_exit<'v>(
+        arg1: Option<starlark::values::Value<'v>>,
+        arg2: Option<String>,
+    ) -> anyhow::Result<starlark::values::none::NoneType> {
         let (code, msg) = match (arg1, arg2) {
             // stelp_exit() - no arguments
             (None, None) => (0, None),
             // stelp_exit(3) - integer as first argument
             (Some(val), None) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), None),
             // stelp_exit("message") - string as first argument (backward compatibility)
-            (Some(val), None) if val.unpack_str().is_some() => (0, Some(val.unpack_str().unwrap().to_string())),
+            (Some(val), None) if val.unpack_str().is_some() => {
+                (0, Some(val.unpack_str().unwrap().to_string()))
+            }
             // stelp_exit(3, "message") - both arguments
-            (Some(val), Some(msg)) if val.unpack_i32().is_some() => (val.unpack_i32().unwrap(), Some(msg)),
+            (Some(val), Some(msg)) if val.unpack_i32().is_some() => {
+                (val.unpack_i32().unwrap(), Some(msg))
+            }
             // Invalid usage
-            _ => return Err(anyhow::anyhow!("stelp_exit() expects stelp_exit(code=0, msg=None) - code must be an integer")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "stelp_exit() expects stelp_exit(code=0, msg=None) - code must be an integer"
+                ))
+            }
         };
-        
+
         EXIT_FLAG.with(|flag| flag.set(true));
         EXIT_MESSAGE.with(|message| {
             *message.borrow_mut() = msg;

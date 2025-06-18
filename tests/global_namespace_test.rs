@@ -2,8 +2,8 @@
 use std::io::Cursor;
 use stelp::config::PipelineConfig;
 use stelp::context::{RecordContext, RecordData};
-use stelp::StarlarkProcessor;
 use stelp::variables::GlobalVariables;
+use stelp::StarlarkProcessor;
 use stelp::StreamPipeline;
 
 #[test]

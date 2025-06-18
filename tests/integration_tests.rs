@@ -4,9 +4,9 @@ use stelp::config::{ErrorStrategy, PipelineConfig};
 use stelp::context::{RecordContext, RecordData};
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
-use stelp::{FilterProcessor, StarlarkProcessor};
 use stelp::variables::GlobalVariables;
 use stelp::StreamPipeline;
+use stelp::{FilterProcessor, StarlarkProcessor};
 
 #[test]
 fn test_exit_working() {
@@ -377,18 +377,17 @@ fn test_emit_all_and_no_implicit_fanout() {
     let mut pipeline = StreamPipeline::new(config);
 
     // Test that lists no longer fan out implicitly - they should output as string representations
-    let list_processor = StarlarkProcessor::from_script("list_test", "[line + '0', line + '1']").unwrap();
+    let list_processor =
+        StarlarkProcessor::from_script("list_test", "[line + '0', line + '1']").unwrap();
     pipeline.add_processor(Box::new(list_processor));
 
     let input = Cursor::new("a\nb\n");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     // Should output list as strings, not fan out individual items
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 2);
@@ -402,20 +401,19 @@ fn test_emit_all_function() {
 
     // Test emit_all function for explicit fan-out
     let emit_all_processor = StarlarkProcessor::from_script(
-        "emit_all_test", 
-        "emit_all([line + '0', line + '1']); skip()"
-    ).unwrap();
+        "emit_all_test",
+        "emit_all([line + '0', line + '1']); skip()",
+    )
+    .unwrap();
     pipeline.add_processor(Box::new(emit_all_processor));
 
     let input = Cursor::new("x\ny\n");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     // Should emit all items from the list, and skip the original record
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 4); // 2 items emitted per input line
@@ -432,7 +430,7 @@ fn test_begin_end_basic() {
     let begin_processor = StarlarkProcessor::from_script("BEGIN", "\"=== HEADER ===\"").unwrap();
     pipeline.set_begin_processor(Box::new(begin_processor));
 
-    // Set up main processor  
+    // Set up main processor
     let main_processor = StarlarkProcessor::from_script("main", "line.upper()").unwrap();
     pipeline.add_processor(Box::new(main_processor));
 
@@ -443,12 +441,10 @@ fn test_begin_end_basic() {
     let input = Cursor::new("hello\nworld\n");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 4); // 2 input + BEGIN + END
     assert_eq!(output_str, "=== HEADER ===\nHELLO\nWORLD\n=== FOOTER ===\n");
@@ -464,24 +460,26 @@ fn test_begin_end_with_global_state() {
     pipeline.set_begin_processor(Box::new(begin_processor));
 
     // Main: Count and transform
-    let main_processor = StarlarkProcessor::from_script("main", 
-        "glob['count'] = glob.get('count', 0) + 1; line.upper()").unwrap();
+    let main_processor = StarlarkProcessor::from_script(
+        "main",
+        "glob['count'] = glob.get('count', 0) + 1; line.upper()",
+    )
+    .unwrap();
     pipeline.add_processor(Box::new(main_processor));
 
     // END: Output total count
-    let end_processor = StarlarkProcessor::from_script("END", 
-        "count = glob.get('count', 0); f'Total: {count}'").unwrap();
+    let end_processor =
+        StarlarkProcessor::from_script("END", "count = glob.get('count', 0); f'Total: {count}'")
+            .unwrap();
     pipeline.set_end_processor(Box::new(end_processor));
 
     let input = Cursor::new("a\nb\nc\n");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 4); // 3 input + END output
     assert_eq!(output_str, "A\nB\nC\nTotal: 3\n");
@@ -493,8 +491,8 @@ fn test_begin_early_exit() {
     let mut pipeline = StreamPipeline::new(config);
 
     // BEGIN with early exit
-    let begin_processor = StarlarkProcessor::from_script("BEGIN", 
-        "exit('Early termination')").unwrap();
+    let begin_processor =
+        StarlarkProcessor::from_script("BEGIN", "exit('Early termination')").unwrap();
     pipeline.set_begin_processor(Box::new(begin_processor));
 
     // This should not execute
@@ -504,12 +502,10 @@ fn test_begin_early_exit() {
     let input = Cursor::new("a\nb\nc\n");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     assert_eq!(stats.records_processed, 0); // No input lines processed
     assert_eq!(stats.records_output, 1); // Only BEGIN exit message
     assert_eq!(output_str, "Early termination\n");
@@ -524,19 +520,17 @@ fn test_begin_end_empty_input() {
     let begin_processor = StarlarkProcessor::from_script("BEGIN", "\"Start\"").unwrap();
     pipeline.set_begin_processor(Box::new(begin_processor));
 
-    // END processor  
+    // END processor
     let end_processor = StarlarkProcessor::from_script("END", "\"End\"").unwrap();
     pipeline.set_end_processor(Box::new(end_processor));
 
     let input = Cursor::new("");
     let mut output = Vec::new();
 
-    let stats = pipeline
-        .process_stream(input, &mut output, None)
-        .unwrap();
+    let stats = pipeline.process_stream(input, &mut output, None).unwrap();
 
     let output_str = String::from_utf8(output).unwrap();
-    
+
     assert_eq!(stats.records_processed, 0); // No input lines
     assert_eq!(stats.records_output, 2); // BEGIN + END
     assert_eq!(output_str, "Start\nEnd\n");
@@ -545,7 +539,7 @@ fn test_begin_end_empty_input() {
 #[test]
 fn test_syslog_rfc5424_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -563,30 +557,36 @@ msg = data["msg"]
 # Create formatted string as data for output
 data = {"formatted": f"PRI={pri} FAC={facility} SEV={severity} HOST={host} PROG={prog} MSG={msg}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // RFC5424 syslog message
-    let input = std::io::Cursor::new("<165>1 2023-10-11T22:14:15.003Z server01 sshd 1234 ID47 - Failed password for user\n");
+    let input = std::io::Cursor::new(
+        "<165>1 2023-10-11T22:14:15.003Z server01 sshd 1234 ID47 - Failed password for user\n",
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("PRI=165 FAC=20 SEV=5 HOST=server01 PROG=sshd MSG=Failed password for user"));
+    assert!(output_str
+        .contains("PRI=165 FAC=20 SEV=5 HOST=server01 PROG=sshd MSG=Failed password for user"));
 }
 
 #[test]
 fn test_syslog_rfc3164_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -603,21 +603,26 @@ pid = data.get("pid", "none")
 msg = data["msg"]
 data = {"formatted": f"TS={ts} HOST={host} PROG={prog} PID={pid} MSG={msg}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // RFC3164 syslog message
-    let input = std::io::Cursor::new("Oct 11 22:14:15 server01 sshd[1234]: Failed password for user from 192.168.1.100\n");
+    let input = std::io::Cursor::new(
+        "Oct 11 22:14:15 server01 sshd[1234]: Failed password for user from 192.168.1.100\n",
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now returns JSON with formatted field
     assert!(output_str.contains("TS=Oct 11 22:14:15 HOST=server01 PROG=sshd PID=1234 MSG=Failed password for user from 192.168.1.100"));
@@ -626,7 +631,7 @@ data = {"formatted": f"TS={ts} HOST={host} PROG={prog} PID={pid} MSG={msg}"}
 #[test]
 fn test_syslog_rfc3164_no_pid() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -642,37 +647,42 @@ msg = data["msg"]
 # Create formatted string as data for output
 data = {"formatted": f"HOST={host} PROG={prog} HAS_PID={has_pid} MSG={msg}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // RFC3164 syslog message without PID
-    let input = std::io::Cursor::new("Oct 11 22:14:15 server01 kernel: Out of memory: Kill process 1234\n");
+    let input =
+        std::io::Cursor::new("Oct 11 22:14:15 server01 kernel: Out of memory: Kill process 1234\n");
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("HOST=server01 PROG=kernel HAS_PID=False MSG=Out of memory: Kill process 1234"));
+    assert!(output_str
+        .contains("HOST=server01 PROG=kernel HAS_PID=False MSG=Out of memory: Kill process 1234"));
 }
 
 #[test]
 fn test_syslog_facility_severity_calculation() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
 
     // Test various priority values
     let processor = StarlarkProcessor::from_script(
-        "syslog_test", 
+        "syslog_test",
         r#"
 pri = data["pri"]
 facility = data["facility"]
@@ -680,13 +690,14 @@ severity = data["severity"]
 # Create formatted string as data for output
 data = {"formatted": f"PRI={pri} FAC={facility} SEV={severity}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // Test different priority values:
     // <0> = facility 0, severity 0 (kernel, emergency)
-    // <33> = facility 4, severity 1 (security, alert) 
+    // <33> = facility 4, severity 1 (security, alert)
     // <165> = facility 20, severity 5 (local4, notice)
     let input = std::io::Cursor::new(
         "<0>1 2023-10-11T22:14:15Z host prog - - - kernel emergency\n<33>1 2023-10-11T22:14:15Z host prog - - - security alert\n<165>1 2023-10-11T22:14:15Z host prog - - - local4 notice\n"
@@ -694,23 +705,25 @@ data = {"formatted": f"PRI={pri} FAC={facility} SEV={severity}"}
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 3);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("PRI=0 FAC=0 SEV=0"));      // kernel.emergency
-    assert!(output_str.contains("PRI=33 FAC=4 SEV=1"));     // security.alert  
-    assert!(output_str.contains("PRI=165 FAC=20 SEV=5"));   // local4.notice
+    assert!(output_str.contains("PRI=0 FAC=0 SEV=0")); // kernel.emergency
+    assert!(output_str.contains("PRI=33 FAC=4 SEV=1")); // security.alert
+    assert!(output_str.contains("PRI=165 FAC=20 SEV=5")); // local4.notice
 }
 
 #[test]
 fn test_syslog_invalid_format_error_handling() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -724,7 +737,9 @@ fn test_syslog_invalid_format_error_handling() {
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Syslog));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.log"))
+        .unwrap();
 
     // Should skip invalid lines according to default error strategy
     assert_eq!(stats.records_processed, 0);
@@ -737,7 +752,7 @@ fn test_syslog_invalid_format_error_handling() {
 #[test]
 fn test_combined_log_format_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -755,31 +770,38 @@ ua = data["ua"]
 # Create formatted string as data for output
 data = {"formatted": f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={ua}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // Combined Log Format entry
-    let input = std::io::Cursor::new(r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api/v1/users HTTP/1.1" 200 1234 "https://example.com/page" "Mozilla/5.0 (Windows NT 10.0)"
-"#);
+    let input = std::io::Cursor::new(
+        r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api/v1/users HTTP/1.1" 200 1234 "https://example.com/page" "Mozilla/5.0 (Windows NT 10.0)"
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("IP=192.168.1.1 GET /api/v1/users STATUS=200 SIZE=1234 UA=Mozilla/5.0 (Windows NT 10.0)"));
+    assert!(output_str.contains(
+        "IP=192.168.1.1 GET /api/v1/users STATUS=200 SIZE=1234 UA=Mozilla/5.0 (Windows NT 10.0)"
+    ));
 }
 
 #[test]
 fn test_combined_common_format_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -799,21 +821,25 @@ has_referer = "referer" in data
 data = {"formatted": f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={has_ua} REF={has_referer}"}
         "#,
     ).unwrap();
-    
+
     pipeline.add_processor(Box::new(processor));
 
     // Common Log Format entry (no referer/user_agent)
-    let input = std::io::Cursor::new(r#"10.0.0.1 - admin [25/Dec/2023:14:23:45 +0000] "POST /login HTTP/1.1" 302 -
-"#);
+    let input = std::io::Cursor::new(
+        r#"10.0.0.1 - admin [25/Dec/2023:14:23:45 +0000] "POST /login HTTP/1.1" 302 -
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
     assert!(output_str.contains("IP=10.0.0.1 POST /login STATUS=302 SIZE=none UA=False REF=False"));
@@ -822,7 +848,7 @@ data = {"formatted": f"IP={ip} {method} {path} STATUS={status} SIZE={size} UA={h
 #[test]
 fn test_combined_request_parsing() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -838,27 +864,33 @@ proto = data.get("proto", "none")
 # Create formatted string as data for output
 data = {"formatted": f"REQ=[{req}] METHOD={method} PATH={path} PROTO={proto}"}
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // Test various request formats
-    let input = std::io::Cursor::new(r#"127.0.0.1 - - [01/Jan/2024:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 2048
+    let input = std::io::Cursor::new(
+        r#"127.0.0.1 - - [01/Jan/2024:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 2048
 127.0.0.1 - - [01/Jan/2024:12:00:01 +0000] "POST /api/data" 201 512
 127.0.0.1 - - [01/Jan/2024:12:00:02 +0000] "INVALID" 400 0
-"#);
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 3);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("REQ=[GET /index.html HTTP/1.1] METHOD=GET PATH=/index.html PROTO=HTTP/1.1"));
+    assert!(output_str
+        .contains("REQ=[GET /index.html HTTP/1.1] METHOD=GET PATH=/index.html PROTO=HTTP/1.1"));
     assert!(output_str.contains("REQ=[POST /api/data] METHOD=POST PATH=/api/data PROTO=none"));
     assert!(output_str.contains("REQ=[INVALID] METHOD=INVALID PATH=none PROTO=none"));
 }
@@ -866,7 +898,7 @@ data = {"formatted": f"REQ=[{req}] METHOD={method} PATH={path} PROTO={proto}"}
 #[test]
 fn test_combined_status_filtering() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -885,23 +917,28 @@ status = data["status"]
 # Create formatted string as data for output
 data = {"formatted": f"{status} {method} {path} from {ip}"}
         "#,
-    ).unwrap();
+    )
+    .unwrap();
     pipeline.add_processor(Box::new(processor));
 
-    let input = std::io::Cursor::new(r#"192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET /ok HTTP/1.1" 200 1234
+    let input = std::io::Cursor::new(
+        r#"192.168.1.1 - - [10/Oct/2023:13:55:36 +0000] "GET /ok HTTP/1.1" 200 1234
 192.168.1.2 - - [10/Oct/2023:13:55:37 +0000] "GET /notfound HTTP/1.1" 404 512
 192.168.1.3 - - [10/Oct/2023:13:55:38 +0000] "POST /api HTTP/1.1" 500 256
 192.168.1.4 - - [10/Oct/2023:13:55:39 +0000] "GET /success HTTP/1.1" 201 128
-"#);
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 4);
     assert_eq!(stats.records_output, 2); // Only 404 and 500 should pass filter
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
     assert!(output_str.contains("404 GET /notfound from 192.168.1.2"));
@@ -911,7 +948,7 @@ data = {"formatted": f"{status} {method} {path} from {ip}"}
 #[test]
 fn test_combined_invalid_format_error_handling() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let config = stelp::config::PipelineConfig::default();
     let mut pipeline = stelp::StreamPipeline::new(config);
 
@@ -924,7 +961,9 @@ fn test_combined_invalid_format_error_handling() {
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("access.log"))
+        .unwrap();
 
     // Should skip invalid lines according to default error strategy
     assert_eq!(stats.records_processed, 0);
@@ -937,7 +976,7 @@ fn test_combined_invalid_format_error_handling() {
 #[test]
 fn test_combined_extended_apache_format() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -958,21 +997,25 @@ timing = data["timing"]
 data = {"formatted": f"{ip}@{host}:{port} {method} {path} -> {status} query={query} timing={timing}"}
         "#,
     ).unwrap();
-    
+
     pipeline.add_processor(Box::new(processor));
 
     // Extended Apache format log entry
-    let input = std::io::Cursor::new(r#"48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018 12:39:39:258969] "GET /search?q=test HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396 5002278
-"#);
+    let input = std::io::Cursor::new(
+        r#"48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018 12:39:39:258969] "GET /search?q=test HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396 5002278
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("apache.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("apache.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 1);
     assert_eq!(stats.records_output, 1);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
     assert!(output_str.contains("48.178.166.185@www.buttercup.com:443 GET /search?q=test -> 503 query=?q=test timing=101 2396 5002278"));
@@ -981,7 +1024,7 @@ data = {"formatted": f"{ip}@{host}:{port} {method} {path} -> {status} query={que
 #[test]
 fn test_combined_format_compatibility() {
     use stelp::input_format::{InputFormat, InputFormatWrapper};
-    
+
     let mut config = stelp::config::PipelineConfig::default();
     config.output_format = stelp::output_format::OutputFormat::Jsonl;
     let mut pipeline = stelp::StreamPipeline::new(config);
@@ -1001,40 +1044,48 @@ has_timing = "timing" in data
 data = {"formatted": f"{ip} {method} -> {status} (host={has_host} port={has_port} query={has_query} timing={has_timing})"}
         "#,
     ).unwrap();
-    
+
     pipeline.add_processor(Box::new(processor));
 
     // Test multiple format variants
-    let input = std::io::Cursor::new(r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api HTTP/1.1" 200 1234 "https://example.com" "Mozilla/5.0"
+    let input = std::io::Cursor::new(
+        r#"192.168.1.1 - user [10/Oct/2023:13:55:36 +0000] "GET /api HTTP/1.1" 200 1234 "https://example.com" "Mozilla/5.0"
 48.178.166.185 www.buttercup.com - jgrayc 443 [01/Aug/2018:12:39:39:258969] "POST /api HTTP/1.1" "?q=test" 503 938 "https://example.com/" "Mozilla/5.0" 101 2396
 127.0.0.1 - - [01/Jan/2024:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 2048
-"#);
+"#,
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Combined));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("mixed.log")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("mixed.log"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 3);
     assert_eq!(stats.records_output, 3);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     // Now outputs JSON with formatted field
-    assert!(output_str.contains("192.168.1.1 GET -> 200 (host=False port=False query=False timing=False)"));  // Standard combined
-    assert!(output_str.contains("48.178.166.185 POST -> 503 (host=True port=True query=True timing=True)"));    // Extended Apache
-    assert!(output_str.contains("127.0.0.1 GET -> 200 (host=False port=False query=False timing=False)"));    // Common format
+    assert!(output_str
+        .contains("192.168.1.1 GET -> 200 (host=False port=False query=False timing=False)")); // Standard combined
+    assert!(output_str
+        .contains("48.178.166.185 POST -> 503 (host=True port=True query=True timing=True)")); // Extended Apache
+    assert!(output_str
+        .contains("127.0.0.1 GET -> 200 (host=False port=False query=False timing=False)"));
+    // Common format
 }
 
 #[test]
 fn test_tsv_input_output() {
     println!("=== Testing TSV input and output ===");
-    
+
     let config = PipelineConfig {
         output_format: OutputFormat::Tsv,
         ..Default::default()
     };
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add a simple transformation processor
     let processor = StarlarkProcessor::from_script(
         "test_transform",
@@ -1044,44 +1095,51 @@ if "age" in data:
     data["age"] = str(int(data["age"]) + 1)
 data
         "#,
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     pipeline.add_processor(Box::new(processor));
 
     // Test TSV input with tabs and quoted fields
-    let input = std::io::Cursor::new("name\tage\tdescription\nJohn\t25\t\"Lives in:\tNew York\"\nJane\t30\t\"Age:\t30\"");
+    let input = std::io::Cursor::new(
+        "name\tage\tdescription\nJohn\t25\t\"Lives in:\tNew York\"\nJane\t30\t\"Age:\t30\"",
+    );
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Tsv));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 2);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     println!("TSV output:\n{}", output_str);
-    
+
     // Check that TSV output format is correct
     let lines: Vec<&str> = output_str.trim().split('\n').collect();
     assert_eq!(lines.len(), 3); // headers + 2 data rows
-    
+
     // Check headers (order may vary based on get_key_order)
-    assert!(lines[0].contains("age") && lines[0].contains("description") && lines[0].contains("name"));
-    
+    assert!(
+        lines[0].contains("age") && lines[0].contains("description") && lines[0].contains("name")
+    );
+
     // Check that ages were incremented
     assert!(output_str.contains("26")); // John's age: 25 + 1
     assert!(output_str.contains("31")); // Jane's age: 30 + 1
-    
+
     // Check that quoted fields with tabs are handled correctly
     assert!(output_str.contains("Lives in:\tNew York"));
     assert!(output_str.contains("Age:\t30"));
 }
 
-#[test] 
+#[test]
 fn test_tsv_to_jsonl() {
     println!("=== Testing TSV to JSONL conversion ===");
-    
+
     let config = PipelineConfig {
         output_format: OutputFormat::Jsonl,
         ..Default::default()
@@ -1093,27 +1151,29 @@ fn test_tsv_to_jsonl() {
     let mut output = Vec::new();
 
     let wrapper = InputFormatWrapper::new(Some(&InputFormat::Tsv));
-    let stats = wrapper.process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv")).unwrap();
+    let stats = wrapper
+        .process_with_pipeline(input, &mut pipeline, &mut output, Some("test.tsv"))
+        .unwrap();
 
     assert_eq!(stats.records_processed, 2);
     assert_eq!(stats.records_output, 2);
     assert_eq!(stats.errors, 0);
-    
+
     let output_str = String::from_utf8(output).unwrap();
     println!("JSONL output:\n{}", output_str);
-    
+
     // Check that JSONL output format is correct
     let lines: Vec<&str> = output_str.trim().split('\n').collect();
     assert_eq!(lines.len(), 2);
-    
+
     // Parse JSON lines to verify structure
     let json1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     let json2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-    
+
     assert_eq!(json1["name"], "John");
     assert_eq!(json1["age"], "25");
     assert_eq!(json1["city"], "New York");
-    
+
     assert_eq!(json2["name"], "Jane");
     assert_eq!(json2["age"], "30");
     assert_eq!(json2["city"], "Boston");

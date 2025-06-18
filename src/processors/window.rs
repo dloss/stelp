@@ -1,9 +1,9 @@
 // src/processors/window.rs
-use crate::pipeline::context::{RecordContext, RecordData, ProcessResult};
+use crate::pipeline::context::{ProcessResult, RecordContext, RecordData};
 use crate::pipeline::stream::RecordProcessor;
-use std::collections::VecDeque;
-use std::cell::RefCell;
 use serde_json;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 
 /// Record stored in window buffer
 #[derive(Debug, Clone)]
@@ -46,9 +46,9 @@ impl WindowProcessor {
 
     fn add_to_buffer(&mut self, record: &RecordData, ctx: &RecordContext) {
         let window_record = WindowRecord::from_record_data(record, ctx);
-        
+
         self.buffer.push_back(window_record);
-        
+
         // Keep buffer at target size
         while self.buffer.len() > self.window_size {
             self.buffer.pop_front();
@@ -60,20 +60,20 @@ impl RecordProcessor for WindowProcessor {
     fn process(&mut self, record: &RecordData, ctx: &RecordContext) -> ProcessResult {
         // Add current record to window buffer
         self.add_to_buffer(record, ctx);
-        
+
         // Set up window context for functions to access
         WINDOW_CONTEXT.with(|window_ctx| {
             *window_ctx.borrow_mut() = Some(self.buffer.clone());
         });
-        
+
         // Process with inner processor (which will have access to window variables)
         let result = self.inner_processor.process(record, ctx);
-        
+
         // Clear window context
         WINDOW_CONTEXT.with(|window_ctx| {
             *window_ctx.borrow_mut() = None;
         });
-        
+
         result
     }
 

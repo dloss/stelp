@@ -87,7 +87,8 @@ fn test_level_filter_priority_exclude_over_include() {
     };
 
     // Include error,warn,info but exclude error
-    let mut processor = LevelFilterProcessor::new("test_filter", Some("error,warn,info"), Some("error"));
+    let mut processor =
+        LevelFilterProcessor::new("test_filter", Some("error,warn,info"), Some("error"));
 
     // Test error level - should be skipped (excluded takes priority)
     let record1 = RecordData::text("ERROR: Database connection failed".to_string());
@@ -230,7 +231,7 @@ fn test_level_filter_in_pipeline() {
     let config = PipelineConfig::default();
 
     let mut pipeline = StreamPipeline::new(config);
-    
+
     // Add level filter processor
     let level_filter = LevelFilterProcessor::new("level_filter", Some("error,warn"), None);
     pipeline.add_processor(Box::new(level_filter));
@@ -247,13 +248,13 @@ fn test_level_filter_in_pipeline() {
 
     let output_str = String::from_utf8(output).unwrap();
     println!("Pipeline output: {}", output_str);
-    
+
     // Should only contain ERROR and WARN lines
     assert!(output_str.contains("ERROR: Database connection failed"));
     assert!(output_str.contains("WARN: Deprecated function used"));
     assert!(!output_str.contains("INFO: Application started"));
     assert!(!output_str.contains("DEBUG: Query executed"));
-    
+
     // Should have processed 4 records but only output 2
     assert_eq!(stats.records_processed, 4);
     assert_eq!(stats.records_output, 2);

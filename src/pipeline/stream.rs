@@ -32,11 +32,11 @@ pub struct StreamPipeline {
 impl StreamPipeline {
     pub fn new(config: PipelineConfig) -> Self {
         let output_formatter = OutputFormatter::new_with_plain(
-            config.output_format, 
-            config.keys.clone(), 
+            config.output_format,
+            config.keys.clone(),
             config.remove_keys.clone(),
             config.color_preference,
-            config.plain
+            config.plain,
         );
         StreamPipeline {
             processors: Vec::new(),
@@ -69,7 +69,7 @@ impl StreamPipeline {
     pub fn get_config(&self) -> &PipelineConfig {
         &self.config
     }
-    
+
     pub fn get_output_formatter(&self) -> &OutputFormatter {
         &self.output_formatter
     }
@@ -120,10 +120,10 @@ impl StreamPipeline {
                 global_vars: &self.context.global_vars,
                 debug: self.config.debug,
             };
-            
+
             // Create empty record for BEGIN (no actual input data)
             let empty_record = RecordData::text(String::new());
-            
+
             match begin_processor.process(&empty_record, &begin_ctx) {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -147,7 +147,8 @@ impl StreamPipeline {
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(primary_record) = primary {
-                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record)
+                        {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e.into());
                             }
@@ -165,7 +166,10 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -198,7 +202,10 @@ impl StreamPipeline {
             file_stats.records_processed += 1;
 
             // Process the record through the pipeline
-            match self.process_record(&record).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? {
+            match self
+                .process_record(&record)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+            {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.output_formatter.write_record(output, &output_record) {
                         // Handle broken pipe gracefully
@@ -243,7 +250,10 @@ impl StreamPipeline {
                 ProcessResult::Skip => {
                     file_stats.records_skipped += 1;
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -278,10 +288,10 @@ impl StreamPipeline {
                 global_vars: &self.context.global_vars,
                 debug: self.config.debug,
             };
-            
+
             // Create empty record for END (no actual input data)
             let empty_record = RecordData::text(String::new());
-            
+
             match end_processor.process(&empty_record, &end_ctx) {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -305,7 +315,8 @@ impl StreamPipeline {
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(primary_record) = primary {
-                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record)
+                        {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e.into());
                             }
@@ -323,7 +334,10 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -386,10 +400,10 @@ impl StreamPipeline {
                 global_vars: &self.context.global_vars,
                 debug: self.config.debug,
             };
-            
+
             // Create empty record for BEGIN (no actual input data)
             let empty_record = RecordData::text(String::new());
-            
+
             match begin_processor.process(&empty_record, &begin_ctx) {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -413,7 +427,8 @@ impl StreamPipeline {
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(primary_record) = primary {
-                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record)
+                        {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e);
                             }
@@ -431,7 +446,10 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -521,7 +539,10 @@ impl StreamPipeline {
                 ProcessResult::Skip => {
                     file_stats.records_skipped += 1;
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -556,10 +577,10 @@ impl StreamPipeline {
                 global_vars: &self.context.global_vars,
                 debug: self.config.debug,
             };
-            
+
             // Create empty record for END (no actual input data)
             let empty_record = RecordData::text(String::new());
-            
+
             match end_processor.process(&empty_record, &end_ctx) {
                 ProcessResult::Transform(output_record) => {
                     if let Err(e) = self.output_formatter.write_record(output, &output_record) {
@@ -583,7 +604,8 @@ impl StreamPipeline {
                 }
                 ProcessResult::TransformWithEmissions { primary, emissions } => {
                     if let Some(primary_record) = primary {
-                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record)
+                        {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e);
                             }
@@ -601,7 +623,10 @@ impl StreamPipeline {
                         file_stats.records_output += 1;
                     }
                 }
-                ProcessResult::Exit { data: final_output, code } => {
+                ProcessResult::Exit {
+                    data: final_output,
+                    code,
+                } => {
                     self.exit_code = code;
                     if let Some(output_record) = final_output {
                         if let Err(e) = self.output_formatter.write_record(output, &output_record) {
