@@ -25,18 +25,7 @@ enum PipelineStep {
 #[command(about = "Process text streams with Starlark scripts (Starlark Event and Line Processor)")]
 #[command(version)]
 struct Args {
-    /// Input files to process (default: stdin if none provided)
-    #[arg(value_name = "FILE")]
-    input_files: Vec<PathBuf>,
-
-    /// Extract structured data using named patterns like '{field}' or '{field:type}'
-    #[arg(long = "extract-vars")]
-    extract_pattern: Option<String>,
-
-    /// Include Starlark files (processed in order)
-    #[arg(short = 'I', long = "include", action = ArgAction::Append)]
-    includes: Vec<PathBuf>,
-
+    // === CORE PROCESSING ===
     /// Pipeline evaluation expressions (executed in order)
     #[arg(short = 'e', long = "eval", action = ArgAction::Append)]
     evals: Vec<String>,
@@ -45,13 +34,9 @@ struct Args {
     #[arg(short = 's', long = "script")]
     script_file: Option<PathBuf>,
 
-    /// Filter expressions - Only keep lines where expression is true
-    #[arg(long = "filter", action = ArgAction::Append)]
-    filters: Vec<String>,
-
-    /// Derive expressions - Transform structured data by injecting field variables
-    #[arg(short = 'd', long = "derive", action = ArgAction::Append)]
-    derives: Vec<String>,
+    /// Include Starlark files (processed in order)
+    #[arg(short = 'I', long = "include", action = ArgAction::Append)]
+    includes: Vec<PathBuf>,
 
     /// BEGIN expression - Run before processing any input lines
     #[arg(long = "begin")]
@@ -61,9 +46,31 @@ struct Args {
     #[arg(long = "end")]
     end: Option<String>,
 
+    // === DATA EXTRACTION & TRANSFORMATION ===
+    /// Extract structured data using named patterns like '{field}' or '{field:type}'
+    #[arg(long = "extract-vars")]
+    extract_pattern: Option<String>,
+
+    /// Filter expressions - Only keep lines where expression is true
+    #[arg(long = "filter", action = ArgAction::Append)]
+    filters: Vec<String>,
+
+    /// Derive expressions - Transform structured data by injecting field variables
+    #[arg(short = 'd', long = "derive", action = ArgAction::Append)]
+    derives: Vec<String>,
+
+    // === INPUT/OUTPUT FORMATS ===
+    /// Input files to process (default: stdin if none provided)
+    #[arg(value_name = "FILE")]
+    input_files: Vec<PathBuf>,
+
     /// Input format for structured parsing
     #[arg(short = 'f', long = "input-format", value_enum)]
     input_format: Option<InputFormat>,
+
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long = "output")]
+    output_file: Option<PathBuf>,
 
     /// Output format
     #[arg(short = 'F', long = "output-format", value_enum)]
@@ -77,22 +84,7 @@ struct Args {
     #[arg(short = 'K', long = "remove-keys")]
     remove_keys: Option<String>,
 
-    /// Output file (default: stdout)
-    #[arg(short = 'o', long = "output")]
-    output_file: Option<PathBuf>,
-
-    /// Debug mode - show processing details
-    #[arg(long)]
-    debug: bool,
-
-    /// Show processing statistics
-    #[arg(long)]
-    stats: bool,
-
-    /// Fail on first error instead of skipping lines
-    #[arg(long)]
-    fail_fast: bool,
-
+    // === PROCESSING CONTROL ===
     /// Process N lines at a time
     #[arg(long)]
     chunk_lines: Option<usize>,
@@ -109,14 +101,11 @@ struct Args {
     #[arg(long = "window")]
     window_size: Option<usize>,
 
-    /// Force colored output even when not on TTY
-    #[arg(long = "color", action = ArgAction::SetTrue)]
-    force_color: bool,
+    /// Fail on first error instead of skipping lines
+    #[arg(long)]
+    fail_fast: bool,
 
-    /// Disable colored output even on TTY
-    #[arg(long = "no-color", action = ArgAction::SetTrue)]
-    no_color: bool,
-
+    // === OUTPUT CONTROL ===
     /// Print only values, not keys (plain output mode)
     #[arg(short = 'p', long = "plain")]
     plain: bool,
@@ -128,6 +117,22 @@ struct Args {
     /// Hide records with these log levels (comma-separated)
     #[arg(short = 'L', long = "exclude-levels")]
     exclude_levels: Option<String>,
+
+    /// Force colored output even when not on TTY
+    #[arg(long = "color", action = ArgAction::SetTrue)]
+    force_color: bool,
+
+    /// Disable colored output even when not TTY
+    #[arg(long = "no-color", action = ArgAction::SetTrue)]
+    no_color: bool,
+
+    /// Show processing statistics
+    #[arg(long)]
+    stats: bool,
+
+    /// Debug mode - show processing details
+    #[arg(long)]
+    debug: bool,
 }
 
 impl Args {
