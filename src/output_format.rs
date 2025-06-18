@@ -52,6 +52,7 @@ pub struct OutputFormatter {
     csv_schema_keys: Option<Vec<String>>, // Keys from first record (for warning)
     missing_keys_warned: std::collections::HashSet<String>, // Track warned keys
     color_preference: Option<bool>, // None = auto-detect, Some(true/false) = forced
+    plain: bool, // Print only values, not keys
 }
 
 impl OutputFormatter {
@@ -64,6 +65,10 @@ impl OutputFormatter {
     }
 
     pub fn new_with_colors(format: OutputFormat, keys: Option<Vec<String>>, remove_keys: Option<Vec<String>>, color_preference: Option<bool>) -> Self {
+        Self::new_with_plain(format, keys, remove_keys, color_preference, false)
+    }
+
+    pub fn new_with_plain(format: OutputFormat, keys: Option<Vec<String>>, remove_keys: Option<Vec<String>>, color_preference: Option<bool>, plain: bool) -> Self {
         OutputFormatter {
             format,
             csv_headers_written: false,
@@ -72,6 +77,7 @@ impl OutputFormatter {
             csv_schema_keys: None,
             missing_keys_warned: std::collections::HashSet::new(),
             color_preference,
+            plain,
         }
     }
 
@@ -313,9 +319,15 @@ impl OutputFormatter {
         // Apply filtering before formatting
         let filtered_record = self.filter_data(record);
         
-        // Use the new formatter to get formatted output
-        let formatted = formatter.format_record(&filtered_record);
-        writeln!(output, "{}", formatted)?;
+        if self.plain {
+            // Plain mode: use logfmt formatting but output only values (no keys/equals)
+            let formatted = formatter.format_record_plain(&filtered_record);
+            writeln!(output, "{}", formatted)?;
+        } else {
+            // Normal logfmt mode with keys
+            let formatted = formatter.format_record(&filtered_record);
+            writeln!(output, "{}", formatted)?;
+        }
         
         Ok(())
     }

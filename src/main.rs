@@ -116,6 +116,10 @@ struct Args {
     /// Disable colored output even on TTY
     #[arg(long = "no-color", action = ArgAction::SetTrue)]
     no_color: bool,
+
+    /// Print only values, not keys (plain output mode)
+    #[arg(short = 'p', long = "plain")]
+    plain: bool,
 }
 
 impl Args {
@@ -303,10 +307,10 @@ fn main() {
     let output_format = match args.output_format {
         Some(format) => format, // User explicitly specified output format
         None => {
-            // Default to logfmt for structured data, line for text
+            // Default based on input format and plain mode
             match input_format {
                 Some(InputFormat::Line) => OutputFormat::Line, // Text input defaults to text output
-                _ => OutputFormat::Logfmt, // All structured formats default to logfmt
+                _ => OutputFormat::Logfmt, // All structured formats default to logfmt (plain mode affects rendering, not format choice)
             }
         }
     };
@@ -337,6 +341,7 @@ fn main() {
         keys,
         remove_keys,
         color_preference,
+        plain: args.plain,
         ..Default::default()
     };
 

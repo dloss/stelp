@@ -14,6 +14,7 @@ pub struct PipelineConfig {
     pub keys: Option<Vec<String>>,
     pub remove_keys: Option<Vec<String>>,
     pub color_preference: Option<bool>, // None = auto-detect, Some(true/false) = forced
+    pub plain: bool, // Print only values, not keys
 }
 
 impl Default for PipelineConfig {
@@ -29,6 +30,7 @@ impl Default for PipelineConfig {
             keys: None,
             remove_keys: None,
             color_preference: None,   // Auto-detect
+            plain: false,
         }
     }
 }

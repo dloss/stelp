@@ -123,6 +123,42 @@ impl LogfmtFormatter {
         }
     }
 
+    /// Format a value for plain mode (only value with color, minimal quoting)
+    fn format_value_plain(&self, key: &str, value: &str) -> String {
+        // Choose color based on field type and value content
+        let color = if self.is_level_field(key) {
+            self.level_color(value)
+        } else {
+            // Most values are uncolored in klp default scheme
+            self.colors.string
+        };
+
+        // In plain mode, don't quote values - just output them as-is
+        // Users can handle spacing/parsing themselves since there are no keys
+        let display_value = value.to_string();
+
+        if color.is_empty() {
+            display_value
+        } else {
+            format!("{}{}{}", color, display_value, self.colors.reset)
+        }
+    }
+
+    /// Format structured fields in plain mode (space-separated values only, no keys)
+    pub fn format_fields_plain(&self, fields: &HashMap<String, String>) -> String {
+        if fields.is_empty() {
+            return String::new();
+        }
+
+        let sorted_fields = self.sort_fields_by_priority(fields);
+        let formatted_values: Vec<String> = sorted_fields
+            .iter()
+            .map(|(key, value)| self.format_value_plain(key, value))
+            .collect();
+
+        formatted_values.join(" ")
+    }
+
     /// Get appropriate color for log level values
     fn level_color(&self, level: &str) -> &str {
         match level.to_lowercase().as_str() {
@@ -182,6 +218,19 @@ impl RecordFormatter for LogfmtFormatter {
             RecordData::Structured(data) => {
                 let fields = self.value_to_string_map(data);
                 self.format_fields_standard(&fields)
+            }
+        }
+    }
+}
+
+impl LogfmtFormatter {
+    /// Format record in plain mode (values only, no keys)
+    pub fn format_record_plain(&self, record: &RecordData) -> String {
+        match record {
+            RecordData::Text(text) => text.clone(),
+            RecordData::Structured(data) => {
+                let fields = self.value_to_string_map(data);
+                self.format_fields_plain(&fields)
             }
         }
     }

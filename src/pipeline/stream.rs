@@ -31,11 +31,12 @@ pub struct StreamPipeline {
 
 impl StreamPipeline {
     pub fn new(config: PipelineConfig) -> Self {
-        let output_formatter = OutputFormatter::new_with_colors(
+        let output_formatter = OutputFormatter::new_with_plain(
             config.output_format, 
             config.keys.clone(), 
             config.remove_keys.clone(),
-            config.color_preference
+            config.color_preference,
+            config.plain
         );
         StreamPipeline {
             processors: Vec::new(),
