@@ -82,25 +82,30 @@ impl LogfmtFormatter {
 
     /// Format a single key=value pair with appropriate colors
     pub fn format_key_value_pair(&self, key: &str, value: &str) -> String {
-        let colored_key = format!("{}{}{}", self.colors.key, key, self.colors.reset);
-        let colored_equals = format!("{}{}{}", self.colors.equals, "=", self.colors.reset);
+        let colored_key = if self.colors.key.is_empty() {
+            key.to_string()
+        } else {
+            format!("{}{}{}", self.colors.key, key, self.colors.reset)
+        };
+        
+        let equals = if self.colors.equals.is_empty() {
+            "=".to_string()
+        } else {
+            format!("{}{}{}", self.colors.equals, "=", self.colors.reset)
+        };
+        
         let colored_value = self.format_value(key, value);
         
-        format!("{}{}{}", colored_key, colored_equals, colored_value)
+        format!("{}{}{}", colored_key, equals, colored_value)
     }
 
     /// Format a value with color and quoting based on content and field type
     fn format_value(&self, key: &str, value: &str) -> String {
         // Choose color based on field type and value content
-        let color = if self.is_timestamp_field(key) {
-            self.colors.timestamp
-        } else if self.is_level_field(key) {
+        let color = if self.is_level_field(key) {
             self.level_color(value)
-        } else if self.looks_like_number(value) {
-            self.colors.number
-        } else if self.looks_like_boolean(value) {
-            self.colors.boolean
         } else {
+            // Most values are uncolored in klp default scheme
             self.colors.string
         };
 
@@ -111,17 +116,28 @@ impl LogfmtFormatter {
             value.to_string()
         };
 
-        format!("{}{}{}", color, quoted_value, self.colors.reset)
+        if color.is_empty() {
+            quoted_value
+        } else {
+            format!("{}{}{}", color, quoted_value, self.colors.reset)
+        }
     }
 
     /// Get appropriate color for log level values
     fn level_color(&self, level: &str) -> &str {
         match level.to_lowercase().as_str() {
-            "error" | "err" | "fatal" | "crit" | "critical" => self.colors.level_error,   // Red
-            "warn" | "warning" => self.colors.level_warn,                                 // Yellow
-            "info" | "information" => self.colors.level_info,                            // White  
-            "debug" | "trace" | "verbose" => self.colors.level_debug,                    // Gray
-            _ => self.colors.string,                                                     // Default to string color
+            // Bright red for error levels
+            "error" | "err" | "fatal" | "panic" | "alert" | "crit" | "critical" | "emerg" | "emergency" | "severe" => self.colors.level_error,
+            // Bright yellow for warning levels
+            "warn" | "warning" => self.colors.level_warn,
+            // Bright green for info levels
+            "info" | "informational" | "notice" => self.colors.level_info,
+            // Bright cyan for debug levels
+            "debug" | "finer" | "config" => self.colors.level_debug,
+            // Cyan for trace levels
+            "trace" | "finest" => self.colors.level_trace,
+            // Default to no color for unknown levels
+            _ => "",
         }
     }
 
@@ -140,15 +156,6 @@ impl LogfmtFormatter {
         self.message_keys.iter().any(|&mk| mk == key)
     }
 
-    /// Check if value looks like a number
-    fn looks_like_number(&self, value: &str) -> bool {
-        value.parse::<f64>().is_ok()
-    }
-
-    /// Check if value looks like a boolean
-    fn looks_like_boolean(&self, value: &str) -> bool {
-        matches!(value.to_lowercase().as_str(), "true" | "false")
-    }
 
     /// Check if value needs to be quoted per logfmt rules
     fn needs_quoting(&self, value: &str) -> bool {
