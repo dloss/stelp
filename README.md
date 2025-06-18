@@ -54,6 +54,7 @@ stelp [OPTIONS] [FILES...]
     --filter <EXPR>         Filter expressions (keep lines where true)
 -d, --derive <EXPR>         Transform structured data with field variable injection
 -s, --script <FILE>         Script file with processing logic
+-I, --include <FILE>        Include Starlark files (processed in order)
     --begin/--end <EXPR>    Run before/after input processing
 
 # Data formats  
@@ -62,11 +63,21 @@ stelp [OPTIONS] [FILES...]
 -k, --keys <KEYS>           Select/order output columns (comma-separated)
 -K, --remove-keys <KEYS>    Remove keys from structured output (comma-separated)
 
-# Control
+# Processing control
     --window <N>            Keep last N records for window functions
--o, --output <FILE>         Output file (default: stdout)
-    --debug                 Show processing details
+    --chunk-lines <N>       Process N lines at a time
+    --chunk-start <PATTERN> Start new chunk on pattern match (regex)
+    --chunk-delim <DELIM>   Chunks separated by delimiter
     --fail-fast             Stop on first error (default: skip errors)
+
+# Output control
+-o, --output <FILE>         Output file (default: stdout)
+-p, --plain                 Print only values, not keys (plain output mode)
+-l, --levels <LEVELS>       Show only records with these log levels
+-L, --exclude-levels <LEVELS> Hide records with these log levels
+    --color/--no-color      Force/disable colored output
+    --debug                 Show processing details
+    --stats                 Show processing statistics
 ```
 
 ## Format Auto-Detection
@@ -291,6 +302,58 @@ cat /var/log/syslog | stelp -f syslog -F jsonl --filter 'data.get("severity", 0)
 ```bash
 # Cross-file state tracking
 stelp -e 'file_lines = inc(f"lines_{FILENAME}"); total = inc("total"); f"[{FILENAME}:{LINENUM}] {total} {line}"' *.log
+```
+
+### Log Level Filtering
+```bash
+# Show only errors and warnings (--levels/-l)
+stelp -f syslog --levels error,warning /var/log/syslog
+
+# Hide debug messages (--exclude-levels/-L)
+stelp -f logfmt -L debug app.log
+
+# Works with any format containing level fields (level, loglevel, log_level, lvl, severity, levelname, @l)
+echo 'severity=info msg=starting' | stelp -f logfmt -l info,error
+```
+
+### Plain Output Mode
+```bash
+# Default: key=value pairs
+echo '{"name":"alice","age":25}' | stelp -f jsonl -F logfmt
+# → name=alice age=25
+
+# Plain mode: values only (--plain/-p)
+echo '{"name":"alice","age":25}' | stelp -f jsonl -F logfmt -p
+# → alice 25
+
+# Useful for CSV-like output from structured data
+stelp -f jsonl -F logfmt --plain -k name,age users.jsonl
+```
+
+### Chunking
+```bash
+# Process 1000 lines at a time
+stelp --chunk-lines 1000 -e 'f"Chunk {inc(\"chunks\")}: {line}"' large.log
+
+# Start new chunk on pattern (like headers)
+stelp --chunk-start '^=== .* ===$' -e 'f"Section {inc(\"sections\")}: {line}"' report.txt
+
+# Split on delimiter
+echo -e "a\nb\n---\nc\nd" | stelp --chunk-delim '---' -e 'f"Chunk {inc(\"chunks\")}: {line}"'
+```
+
+### Script Includes
+```bash
+# common.star
+def format_timestamp(ts):
+    return format_ts(parse_ts(ts), "%Y-%m-%d %H:%M:%S")
+
+# process.star  
+formatted_time = format_timestamp(data["timestamp"])
+data["formatted_time"] = formatted_time
+
+# Usage
+stelp -I common.star -I process.star -f jsonl data.jsonl
 ```
 
 ## Script Files
