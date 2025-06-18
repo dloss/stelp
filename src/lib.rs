@@ -1,11 +1,14 @@
 // src/lib.rs
 pub mod chunking;
+pub mod colors;
 pub mod error;
+pub mod formatters;
 pub mod input_format;
 pub mod output_format;
 pub mod pattern_extraction;
 pub mod pipeline;
 pub mod processors;
+pub mod tty;
 pub mod variables;
 
 pub use error::*;

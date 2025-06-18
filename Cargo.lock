@@ -1590,6 +1590,7 @@ dependencies = [
  "clap",
  "csv",
  "dateparser",
+ "is-terminal",
  "predicates",
  "regex",
  "serde",

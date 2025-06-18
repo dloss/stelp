@@ -31,7 +31,12 @@ pub struct StreamPipeline {
 
 impl StreamPipeline {
     pub fn new(config: PipelineConfig) -> Self {
-        let output_formatter = OutputFormatter::new_with_remove_keys(config.output_format, config.keys.clone(), config.remove_keys.clone());
+        let output_formatter = OutputFormatter::new_with_colors(
+            config.output_format, 
+            config.keys.clone(), 
+            config.remove_keys.clone(),
+            config.color_preference
+        );
         StreamPipeline {
             processors: Vec::new(),
             begin_processor: None,

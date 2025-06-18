@@ -13,6 +13,7 @@ pub struct PipelineConfig {
     pub output_format: OutputFormat,
     pub keys: Option<Vec<String>>,
     pub remove_keys: Option<Vec<String>>,
+    pub color_preference: Option<bool>, // None = auto-detect, Some(true/false) = forced
 }
 
 impl Default for PipelineConfig {
@@ -24,9 +25,10 @@ impl Default for PipelineConfig {
             max_line_length: 1048576, // 1MB
             progress_interval: 0,     // Disabled
             input_format: None,
-            output_format: OutputFormat::default(), // defaults to jsonl
+            output_format: OutputFormat::default(), // defaults to logfmt
             keys: None,
             remove_keys: None,
+            color_preference: None,   // Auto-detect
         }
     }
 }

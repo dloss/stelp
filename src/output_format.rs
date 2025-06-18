@@ -1,5 +1,8 @@
 use crate::error::ProcessingError;
 use crate::pipeline::context::RecordData;
+use crate::formatters::logfmt::LogfmtFormatter;
+use crate::formatters::RecordFormatter;
+use crate::tty::should_use_colors;
 use serde_json::Value;
 use std::io::Write;
 
@@ -37,7 +40,7 @@ impl std::str::FromStr for OutputFormat {
 
 impl Default for OutputFormat {
     fn default() -> Self {
-        OutputFormat::Line
+        OutputFormat::Logfmt
     }
 }
 
@@ -48,6 +51,7 @@ pub struct OutputFormatter {
     csv_headers_written: bool,
     csv_schema_keys: Option<Vec<String>>, // Keys from first record (for warning)
     missing_keys_warned: std::collections::HashSet<String>, // Track warned keys
+    color_preference: Option<bool>, // None = auto-detect, Some(true/false) = forced
 }
 
 impl OutputFormatter {
@@ -56,6 +60,10 @@ impl OutputFormatter {
     }
 
     pub fn new_with_remove_keys(format: OutputFormat, keys: Option<Vec<String>>, remove_keys: Option<Vec<String>>) -> Self {
+        Self::new_with_colors(format, keys, remove_keys, None)
+    }
+
+    pub fn new_with_colors(format: OutputFormat, keys: Option<Vec<String>>, remove_keys: Option<Vec<String>>, color_preference: Option<bool>) -> Self {
         OutputFormatter {
             format,
             csv_headers_written: false,
@@ -63,6 +71,7 @@ impl OutputFormatter {
             remove_keys,
             csv_schema_keys: None,
             missing_keys_warned: std::collections::HashSet::new(),
+            color_preference,
         }
     }
 
@@ -94,19 +103,26 @@ impl OutputFormatter {
     }
 
     fn filter_data(&self, record: &RecordData) -> RecordData {
-        // Apply remove_keys filtering if specified
-        if let Some(ref remove_keys) = self.remove_keys {
-            if let RecordData::Structured(data) = record {
-                if let serde_json::Value::Object(mut obj) = data.clone() {
-                    // Remove specified keys
-                    for key in remove_keys {
-                        obj.remove(key);
+        match record {
+            RecordData::Structured(data) => {
+                // Apply key filtering first (if specified)
+                let filtered_by_keys = self.filter_keys(data);
+                
+                // Then apply remove_keys filtering if specified
+                if let Some(ref remove_keys) = self.remove_keys {
+                    if let serde_json::Value::Object(mut obj) = filtered_by_keys {
+                        // Remove specified keys
+                        for key in remove_keys {
+                            obj.remove(key);
+                        }
+                        return RecordData::Structured(serde_json::Value::Object(obj));
                     }
-                    return RecordData::Structured(serde_json::Value::Object(obj));
                 }
+                
+                RecordData::Structured(filtered_by_keys)
             }
+            _ => record.clone()
         }
-        record.clone()
     }
 
     pub fn write_record<W: Write>(
@@ -288,39 +304,19 @@ impl OutputFormatter {
         output: &mut W,
         record: &RecordData,
     ) -> Result<(), ProcessingError> {
-        match record {
-            RecordData::Text(text) => {
-                writeln!(output, "text={}", self.logfmt_escape(text))?;
-            }
-            RecordData::Structured(data) => {
-                let data = self.filter_keys(data);
-                if let Value::Object(obj) = data {
-                    let key_order = self.get_key_order(&obj);
-                    let mut pairs = Vec::new();
-                    
-                    for key in &key_order {
-                        let value = &obj[key];
-                        let value_str = match value {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            serde_json::Value::Null => String::new(),
-                            other => {
-                                serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())
-                            }
-                        };
-                        let key_clean = self.logfmt_escape_key(key);
-                        let value_clean = self.logfmt_escape(&value_str);
-                        pairs.push(format!("{}={}", key_clean, value_clean));
-                    }
-                    writeln!(output, "{}", pairs.join(" "))?;
-                } else {
-                    return Err(ProcessingError::OutputError(
-                        "Logfmt format requires object records".to_string(),
-                    ));
-                }
-            }
-        }
+        // Determine whether to use colors
+        let use_colors = self.color_preference.unwrap_or_else(should_use_colors);
+        
+        // Create the colored logfmt formatter
+        let formatter = LogfmtFormatter::new(use_colors);
+        
+        // Apply filtering before formatting
+        let filtered_record = self.filter_data(record);
+        
+        // Use the new formatter to get formatted output
+        let formatted = formatter.format_record(&filtered_record);
+        writeln!(output, "{}", formatted)?;
+        
         Ok(())
     }
 
@@ -372,17 +368,6 @@ impl OutputFormatter {
         }
     }
 
-    fn logfmt_escape(&self, value: &str) -> String {
-        if value.contains(' ') || value.contains('=') || value.contains('"') {
-            format!("\"{}\"", value.replace('"', "\\\""))
-        } else {
-            value.to_string()
-        }
-    }
-
-    fn logfmt_escape_key(&self, key: &str) -> String {
-        key.replace(' ', "_").replace('=', "_")
-    }
 
     pub fn reset(&mut self) {
         self.csv_headers_written = false;

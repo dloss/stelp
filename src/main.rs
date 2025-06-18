@@ -108,6 +108,14 @@ struct Args {
     /// Window size - keep last N records for window functions
     #[arg(long = "window")]
     window_size: Option<usize>,
+
+    /// Force colored output even when not on TTY
+    #[arg(long = "color", action = ArgAction::SetTrue)]
+    force_color: bool,
+
+    /// Disable colored output even on TTY
+    #[arg(long = "no-color", action = ArgAction::SetTrue)]
+    no_color: bool,
 }
 
 impl Args {
@@ -218,6 +226,17 @@ impl Args {
             Ok(None)
         }
     }
+
+    /// Determine whether to use colors based on flags and environment
+    fn determine_color_usage(&self) -> Option<bool> {
+        if self.force_color {
+            Some(true)
+        } else if self.no_color {
+            Some(false)
+        } else {
+            None  // Auto-detect based on TTY
+        }
+    }
 }
 
 /// Build the final script by concatenating includes and user script
@@ -277,21 +296,17 @@ fn main() {
         std::process::exit(1);
     });
 
+    // Extract color preference before moving args
+    let color_preference = args.determine_color_usage();
+
     // Build configuration with smart output format defaulting
     let output_format = match args.output_format {
         Some(format) => format, // User explicitly specified output format
         None => {
-            // Default output format based on input format
+            // Default to logfmt for structured data, line for text
             match input_format {
-                Some(InputFormat::Line) => OutputFormat::Line, // Line format defaults to line output
-                Some(InputFormat::Jsonl) => OutputFormat::Jsonl,
-                Some(InputFormat::Csv) => OutputFormat::Csv,
-                Some(InputFormat::Tsv) => OutputFormat::Tsv,
-                Some(InputFormat::Logfmt) => OutputFormat::Logfmt,
-                Some(InputFormat::Syslog) => OutputFormat::Jsonl,
-                Some(InputFormat::Combined) => OutputFormat::Jsonl,
-                Some(InputFormat::Fields) => OutputFormat::Fields,
-                None => OutputFormat::Line, // Default when no input format (backwards compatibility)
+                Some(InputFormat::Line) => OutputFormat::Line, // Text input defaults to text output
+                _ => OutputFormat::Logfmt, // All structured formats default to logfmt
             }
         }
     };
@@ -321,6 +336,7 @@ fn main() {
         output_format, // Use the determined format
         keys,
         remove_keys,
+        color_preference,
         ..Default::default()
     };
 

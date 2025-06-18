@@ -8,6 +8,8 @@ fn test_keys_option_jsonl() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
         .arg("jsonl")
+        .arg("-F")
+        .arg("jsonl")
         .arg("-k")
         .arg("name,age")
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC","job":"engineer"}"#)
@@ -49,6 +51,8 @@ fn test_keys_option_key_order() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
         .arg("jsonl")
+        .arg("-F")
+        .arg("jsonl")
         .arg("-k")
         .arg("age,name")  // Different order than input
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}"#)
@@ -61,6 +65,8 @@ fn test_keys_option_key_order() {
 fn test_keys_option_missing_keys() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
+        .arg("jsonl")
+        .arg("-F")
         .arg("jsonl")
         .arg("-k")
         .arg("name,missing,age")
@@ -75,6 +81,8 @@ fn test_keys_option_single_key() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
         .arg("jsonl")
+        .arg("-F")
+        .arg("jsonl")
         .arg("-k")
         .arg("name")
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}"#)
@@ -87,6 +95,8 @@ fn test_keys_option_single_key() {
 fn test_keys_option_with_filter() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
+        .arg("jsonl")
+        .arg("-F")
         .arg("jsonl")
         .arg("--filter")
         .arg(r#"data["age"] > 25"#)
@@ -104,6 +114,8 @@ fn test_keys_option_with_transform() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
         .arg("jsonl")
+        .arg("-F")
+        .arg("jsonl")
         .arg("-e")
         .arg(r#"data = {"name": data["name"].upper(), "age": data["age"]}"#)
         .arg("-k")
@@ -120,6 +132,8 @@ fn test_keys_option_no_keys_no_filtering() {
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
         .arg("jsonl")
+        .arg("-F")
+        .arg("jsonl")
         .write_stdin(r#"{"name":"alice","age":30,"city":"NYC"}"#)
         .assert()
         .success()
@@ -133,6 +147,8 @@ fn test_keys_option_empty_keys() {
     // Test edge case with empty keys (should show no fields)
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.arg("-f")
+        .arg("jsonl")
+        .arg("-F")
         .arg("jsonl")
         .arg("-k")
         .arg("")
