@@ -160,11 +160,11 @@ fn test_empty_input() {
 
 #[test]
 fn test_invalid_arguments() {
-    // Invalid arguments should show error with stelp prefix
+    // Running with no arguments should show concise usage screen
     let mut cmd = Command::cargo_bin("stelp").unwrap();
     cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("stelp:"));
+        .success()
+        .stdout(predicate::str::contains("Usage: stelp"));
 }
 
 #[test]

@@ -811,7 +811,7 @@ impl DeriveProcessor {
             if var_name_str.starts_with("stelp_")
                 || matches!(
                     var_name_str,
-                    "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc"
+                    "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc" | "line"
                 )
             {
                 continue;
@@ -853,13 +853,12 @@ impl DeriveProcessor {
         record: &RecordData,
         ctx: &RecordContext,
     ) -> Result<RecordData, anyhow::Error> {
-        // Require structured data
-        let data = match record {
-            RecordData::Structured(data) => data,
-            RecordData::Text(_) => {
-                return Err(anyhow::anyhow!(
-                    "--derive requires structured data (use -f csv/jsonl/etc)"
-                ));
+        // Support both structured and text data
+        let (data, line_text) = match record {
+            RecordData::Structured(data) => (data.clone(), None),
+            RecordData::Text(text) => {
+                // For text data, start with empty data dict and provide line variable separately
+                (serde_json::Value::Object(serde_json::Map::new()), Some(text.clone()))
             }
         };
 
@@ -898,7 +897,12 @@ impl DeriveProcessor {
         module.set("stelp_data", starlark_data);
 
         // Inject data fields as direct variables (the main feature)
-        self.inject_data_variables(&module, data)?;
+        self.inject_data_variables(&module, &data)?;
+
+        // For text input, inject the line variable
+        if let Some(line_text) = line_text {
+            module.set("line", module.heap().alloc(line_text));
+        }
 
         // Add constants
         module.set("True", starlark::values::Value::new_bool(true));
@@ -944,7 +948,7 @@ impl DeriveProcessor {
         }
 
         // Collect variable assignments and build new data
-        let new_data = self.collect_variable_assignments(&module, data)?;
+        let new_data = self.collect_variable_assignments(&module, &data)?;
 
         // Clear context
         CURRENT_CONTEXT.with(|current_ctx| {

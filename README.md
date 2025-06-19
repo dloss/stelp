@@ -118,29 +118,30 @@ stelp --filter '"192" in line' -e 'ip, user = cols(line, 0, 1); f"User {user.upp
 
 ## Advanced Features (when you need them)
 
-### Column Extraction (Primary Method)
+### Column Extraction
 ```bash
-# Extract columns by index (0-based, negative indexing supported)
-echo "alpha beta gamma delta" | stelp -e 'cols(line, 0)'        # "alpha" (first)
-echo "alpha beta gamma delta" | stelp -e 'cols(line, -1)'       # "delta" (last)
+# Basic column extraction from log entries
+echo "GET /api/users HTTP/1.1 200" | stelp -e 'cols(line, 0)'        # "GET" (method)
+echo "alice 127.0.0.1 admin login" | stelp -e 'cols(line, -1)'       # "login" (action)
 
-# Extract multiple columns (returns list)
-echo "GET /api/users HTTP/1.1" | stelp -e 'method, path, version = cols(line, 0, 1, 2)'
+# Parse HTTP access logs 
+echo "GET /api/users HTTP/1.1 200" | stelp -e 'method, path, status = cols(line, 0, 1, -1); f"{method} {path} -> {status}"'
+# Returns: "GET /api/users -> 200"
 
-# Slice notation for ranges
-echo "a b c d e f g" | stelp -e 'cols(line, "1:3")'    # "b c" (columns 1-2)
-echo "a b c d e f g" | stelp -e 'cols(line, "2:")'     # "c d e f g" (from 2 to end)
-echo "a b c d e f g" | stelp -e 'cols(line, ":3")'     # "a b c" (start to 2)
+# Extract ranges for log analysis
+echo "2024-01-15 10:30:45 INFO user.login alice success" | stelp -e 'timestamp = cols(line, "0:2"); level = cols(line, 2); f"{level}: {timestamp}"'
+# Returns: "INFO: 2024-01-15 10:30:45"
 
-# Multiple indices with custom separators
-echo "alice,25,engineer" | stelp -e 'cols(line, "0,2", sep=",")'        # "alice engineer"
-echo "a b c d" | stelp -e 'cols(line, "0,2", outsep=":")'               # "a:c"
+# CSV-like data with custom separators  
+echo "alice,25,engineer,remote" | stelp -e 'cols(line, "0,2", sep=",")'  # "alice engineer"
 
-# Mix different selector types in one call
-echo "a b c d e f g h i j" | stelp -e 'first, middle, range, last = cols(line, 0, "1,3", "5:8", -1)'
-# Returns: ["a", "b d", "f g h", "j"]
-# - Integer args (0, -1) return individual columns
-# - String args ("1,3", "5:8") combine/slice columns with outsep
+# Create structured data from text using --derive
+echo "alice 127.0.0.1 login success" | stelp --derive 'user, ip, action, result = cols(line, 0, 1, 2, 3)' -F jsonl
+# Returns: {"action":"login","ip":"127.0.0.1","result":"success","user":"alice"}
+
+# Process server logs into structured format
+echo "2024-01-15 ERROR database connection timeout" | stelp --derive 'date, level, service, error = cols(line, 0, 1, 2, "3:")' -F logfmt
+# Returns: date=2024-01-15 level=ERROR service=database error="connection timeout"
 ```
 
 ### Built-in Pattern Extraction
