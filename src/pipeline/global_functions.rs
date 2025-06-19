@@ -6,6 +6,7 @@ use dateparser;
 use regex::Regex;
 use starlark::starlark_module;
 use starlark::values::{Heap, Value};
+use starlark::values::tuple::UnpackTuple;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
@@ -689,6 +690,51 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             }
         })
     }
+
+    // Column extraction function - klp-compatible cols()
+    fn cols<'v>(
+        heap: &'v Heap,
+        text: String,
+        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        sep: Option<String>,
+        outsep: Option<String>,
+    ) -> anyhow::Result<Value<'v>> {
+        let separator = sep.as_deref().unwrap_or_default(); // Empty string = whitespace split
+        let output_sep = outsep.as_deref().unwrap_or(" ");
+        
+        // Split input text
+        let columns: Vec<String> = if separator.is_empty() {
+            text.split_whitespace().map(|s| s.to_string()).collect()
+        } else {
+            text.split(separator).map(|s| s.to_string()).collect()
+        };
+        
+        // Parse column specs from arguments
+        let mut results = Vec::new();
+        for arg in args.items {
+            let spec_str = if let Some(s) = arg.unpack_str() {
+                s.to_string()
+            } else if let Some(i) = arg.unpack_i32() {
+                i.to_string()
+            } else {
+                return Err(anyhow::anyhow!("Column spec must be string or integer"));
+            };
+            
+            let spec = parse_column_spec(&spec_str)?;
+            let result = extract_columns(&columns, &spec, output_sep);
+            results.push(result);
+        }
+        
+        // Return single value or list
+        if results.len() == 1 {
+            Ok(heap.alloc(results.into_iter().next().unwrap()))
+        } else {
+            let starlark_list: Vec<Value> = results.into_iter()
+                .map(|s| heap.alloc(s))
+                .collect();
+            Ok(heap.alloc(starlark_list))
+        }
+    }
 }
 
 // Helper functions for JSON conversion
@@ -757,6 +803,107 @@ fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
         Ok(serde_json::Value::Object(obj))
     } else {
         Ok(serde_json::Value::String(value.to_string()))
+    }
+}
+
+// Column specification parsing and extraction for cols() function
+#[derive(Debug, PartialEq)]
+enum ColumnSpec {
+    Index(i32),                    // 0, 1, -1, -2
+    MultiIndex(Vec<i32>),          // "0,2,4"
+    Slice(Option<i32>, Option<i32>), // "1:3", "2:", ":5"
+}
+
+fn parse_column_spec(spec: &str) -> anyhow::Result<ColumnSpec> {
+    if spec.contains(':') {
+        // Slice notation: "1:3", "2:", ":5"
+        let parts: Vec<&str> = spec.split(':').collect();
+        if parts.len() > 2 {
+            return Err(anyhow::anyhow!("Invalid slice format: {}", spec));
+        }
+        
+        let start = if parts[0].is_empty() { 
+            None 
+        } else { 
+            Some(parts[0].parse::<i32>()?) 
+        };
+        
+        let end = if parts.len() > 1 && !parts[1].is_empty() { 
+            Some(parts[1].parse::<i32>()?) 
+        } else { 
+            None 
+        };
+        
+        Ok(ColumnSpec::Slice(start, end))
+    } else if spec.contains(',') {
+        // Multiple indices: "0,2,4"
+        let indices: Result<Vec<i32>, _> = spec
+            .split(',')
+            .map(|s| s.trim().parse::<i32>())
+            .collect();
+        Ok(ColumnSpec::MultiIndex(indices?))
+    } else {
+        // Single index: "0", "-1"
+        Ok(ColumnSpec::Index(spec.parse::<i32>()?))
+    }
+}
+
+fn extract_columns(columns: &[String], spec: &ColumnSpec, outsep: &str) -> String {
+    match spec {
+        ColumnSpec::Index(idx) => {
+            let index = if *idx < 0 { 
+                columns.len() as i32 + idx 
+            } else { 
+                *idx 
+            };
+            
+            if index >= 0 && (index as usize) < columns.len() {
+                columns[index as usize].clone()
+            } else {
+                String::new() // Out of bounds returns empty string
+            }
+        },
+        ColumnSpec::MultiIndex(indices) => {
+            indices.iter()
+                .filter_map(|&idx| {
+                    let index = if idx < 0 { 
+                        columns.len() as i32 + idx 
+                    } else { 
+                        idx 
+                    };
+                    
+                    if index >= 0 && (index as usize) < columns.len() {
+                        Some(columns[index as usize].clone())
+                    } else {
+                        None // Skip out of bounds indices
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(outsep)
+        },
+        ColumnSpec::Slice(start, end) => {
+            let len = columns.len() as i32;
+            
+            // Handle negative indices and defaults
+            let start_idx = match start {
+                Some(s) if *s < 0 => (len + s).max(0) as usize,
+                Some(s) => (*s).max(0) as usize,
+                None => 0,
+            };
+            
+            let end_idx = match end {
+                Some(e) if *e < 0 => (len + e).max(0) as usize,
+                Some(e) => (*e).min(len) as usize,
+                None => len as usize,
+            };
+            
+            if start_idx < columns.len() && start_idx < end_idx {
+                columns[start_idx..end_idx.min(columns.len())]
+                    .join(outsep)
+            } else {
+                String::new()
+            }
+        }
     }
 }
 
@@ -1365,6 +1512,235 @@ mod tests {
         let result = eval.eval_module(ast, &globals).unwrap();
 
         assert_eq!(result.unpack_str().unwrap(), "1.2.3-beta.1");
+    }
+
+    // Column spec parsing tests
+    #[test]
+    fn test_parse_column_spec_single_index() {
+        assert_eq!(parse_column_spec("0").unwrap(), ColumnSpec::Index(0));
+        assert_eq!(parse_column_spec("5").unwrap(), ColumnSpec::Index(5));
+        assert_eq!(parse_column_spec("-1").unwrap(), ColumnSpec::Index(-1));
+        assert_eq!(parse_column_spec("-2").unwrap(), ColumnSpec::Index(-2));
+    }
+
+    #[test]
+    fn test_parse_column_spec_multi_index() {
+        assert_eq!(parse_column_spec("0,2").unwrap(), ColumnSpec::MultiIndex(vec![0, 2]));
+        assert_eq!(parse_column_spec("1,3,5").unwrap(), ColumnSpec::MultiIndex(vec![1, 3, 5]));
+        assert_eq!(parse_column_spec("-2,-1").unwrap(), ColumnSpec::MultiIndex(vec![-2, -1]));
+        assert_eq!(parse_column_spec("0, 2, 4").unwrap(), ColumnSpec::MultiIndex(vec![0, 2, 4]));
+    }
+
+    #[test]
+    fn test_parse_column_spec_slice() {
+        assert_eq!(parse_column_spec("1:3").unwrap(), ColumnSpec::Slice(Some(1), Some(3)));
+        assert_eq!(parse_column_spec("2:").unwrap(), ColumnSpec::Slice(Some(2), None));
+        assert_eq!(parse_column_spec(":3").unwrap(), ColumnSpec::Slice(None, Some(3)));
+        assert_eq!(parse_column_spec(":").unwrap(), ColumnSpec::Slice(None, None));
+        assert_eq!(parse_column_spec("1:-1").unwrap(), ColumnSpec::Slice(Some(1), Some(-1)));
+    }
+
+    #[test]
+    fn test_parse_column_spec_invalid() {
+        assert!(parse_column_spec("1:2:3").is_err()); // Too many colons
+        assert!(parse_column_spec("abc").is_err()); // Non-numeric
+        assert!(parse_column_spec("1,abc").is_err()); // Mixed valid/invalid
+    }
+
+    // Column extraction tests
+    #[test]
+    fn test_extract_columns_single_index() {
+        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(0), " "), "a");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(2), " "), "c");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-1), " "), "d");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-2), " "), "c");
+        
+        // Out of bounds
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(10), " "), "");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-10), " "), "");
+    }
+
+    #[test]
+    fn test_extract_columns_multi_index() {
+        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        
+        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 2]), " "), "a c");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![1, 3]), ":"), "b:d");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![-2, -1]), " "), "c d");
+        
+        // With some out of bounds (should skip them)
+        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 10, 2]), " "), "a c");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![10, 20]), " "), "");
+    }
+
+    #[test]
+    fn test_extract_columns_slice() {
+        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()];
+        
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(3)), " "), "b c");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(2), None), " "), "c d e");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(None, Some(3)), " "), "a b c");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(None, None), " "), "a b c d e");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(-1)), " "), "b c d");
+        
+        // Edge cases
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(10), Some(20)), " "), "");
+        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(3), Some(2)), " "), ""); // start > end
+    }
+
+    // Integration tests for cols() function
+    fn test_cols_script(script: &str) -> Result<String, String> {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+        
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended)
+            .map_err(|e| format!("Parse error: {}", e))?;
+        let result = eval
+            .eval_module(ast, &globals)
+            .map_err(|e| format!("Eval error: {}", e))?;
+        
+        if let Some(s) = result.unpack_str() {
+            Ok(s.to_string())
+        } else {
+            Ok(result.to_string())
+        }
+    }
+
+    fn test_cols_script_list(script: &str) -> Result<Vec<String>, String> {
+        use starlark::values::list::ListRef;
+        
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+        
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended)
+            .map_err(|e| format!("Parse error: {}", e))?;
+        let result = eval
+            .eval_module(ast, &globals)
+            .map_err(|e| format!("Eval error: {}", e))?;
+        
+        if let Some(list) = ListRef::from_value(result) {
+            Ok(list.iter().map(|v| {
+                if let Some(s) = v.unpack_str() {
+                    s.to_string()
+                } else {
+                    v.to_string()
+                }
+            }).collect())
+        } else {
+            Err("Result is not a list".to_string())
+        }
+    }
+
+    #[test]
+    fn test_cols_basic_usage() {
+        // Single column access
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", 0)"#).unwrap(), "alpha");
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", 1)"#).unwrap(), "beta");
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", -1)"#).unwrap(), "gamma");
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", -2)"#).unwrap(), "beta");
+    }
+
+    #[test]
+    fn test_cols_multiple_columns() {
+        // Multiple columns should return a list
+        let result = test_cols_script_list(r#"cols("alpha beta gamma", 0, 2)"#).unwrap();
+        assert_eq!(result, vec!["alpha", "gamma"]);
+        
+        let result = test_cols_script_list(r#"cols("alpha beta gamma delta", 1, -1)"#).unwrap();
+        assert_eq!(result, vec!["beta", "delta"]);
+    }
+
+    #[test]
+    fn test_cols_multi_index_string() {
+        // Multiple indices as string
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "0,2")"#).unwrap(), "alpha gamma");
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "1,3")"#).unwrap(), "beta delta");
+        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "-2,-1")"#).unwrap(), "gamma delta");
+    }
+
+    #[test]
+    fn test_cols_slices() {
+        // Slice notation
+        assert_eq!(test_cols_script(r#"cols("a b c d e", "1:3")"#).unwrap(), "b c");
+        assert_eq!(test_cols_script(r#"cols("a b c d e", "2:")"#).unwrap(), "c d e");
+        assert_eq!(test_cols_script(r#"cols("a b c d e", ":3")"#).unwrap(), "a b c");
+        assert_eq!(test_cols_script(r#"cols("a b c d e", "1:-1")"#).unwrap(), "b c d");
+    }
+
+    #[test]
+    fn test_cols_custom_separators() {
+        // Custom input separator
+        assert_eq!(test_cols_script(r#"cols("alice,bob,charlie", 1, sep=",")"#).unwrap(), "bob");
+        assert_eq!(test_cols_script(r#"cols("alice|bob|charlie", 0, sep="|")"#).unwrap(), "alice");
+        
+        // Custom output separator
+        assert_eq!(test_cols_script(r#"cols("a b c d", "0,2", outsep=":")"#).unwrap(), "a:c");
+        assert_eq!(test_cols_script(r#"cols("a b c d", "1:3", outsep="-")"#).unwrap(), "b-c");
+    }
+
+    #[test]
+    fn test_cols_mixed_selectors() {
+        // Mix of different selector types
+        let result = test_cols_script_list(r#"cols("a b c d e f", 0, "2:4", -1)"#).unwrap();
+        assert_eq!(result, vec!["a", "c d", "f"]);
+        
+        let result = test_cols_script_list(r#"cols("a b c d e f", "0,1", "3:")"#).unwrap();
+        assert_eq!(result, vec!["a b", "d e f"]);
+    }
+
+    #[test]
+    fn test_cols_edge_cases() {
+        // Empty string
+        assert_eq!(test_cols_script(r#"cols("", 0)"#).unwrap(), "");
+        
+        // Out of bounds
+        assert_eq!(test_cols_script(r#"cols("a b c", 10)"#).unwrap(), "");
+        assert_eq!(test_cols_script(r#"cols("a b c", -10)"#).unwrap(), "");
+        
+        // Single word
+        assert_eq!(test_cols_script(r#"cols("hello", 0)"#).unwrap(), "hello");
+        assert_eq!(test_cols_script(r#"cols("hello", 1)"#).unwrap(), "");
+    }
+
+    #[test]
+    fn test_cols_http_request_example() {
+        // Real-world example: HTTP request parsing
+        let result = test_cols_script_list(r#"cols("GET /api/users HTTP/1.1", 0, 1, 2)"#).unwrap();
+        assert_eq!(result, vec!["GET", "/api/users", "HTTP/1.1"]);
+    }
+
+    #[test]
+    fn test_cols_csv_example() {
+        // CSV parsing with custom separator
+        let result = test_cols_script_list(r#"cols("alice,25,engineer,remote", 0, 1, 2, sep=",")"#).unwrap();
+        assert_eq!(result, vec!["alice", "25", "engineer"]);
+    }
+
+    #[test]
+    fn test_cols_mixed_selector_types() {
+        // Mix integers, comma-separated strings, and slices
+        let result = test_cols_script_list(r#"cols("a b c d e f g h i j", 0, "1,3", "5:8", -1)"#).unwrap();
+        assert_eq!(result, vec!["a", "b d", "f g h", "j"]);
+        
+        // Another complex mix
+        let result = test_cols_script_list(r#"cols("alpha beta gamma delta epsilon zeta eta theta", 0, "2,4", "6:", -2)"#).unwrap();
+        assert_eq!(result, vec!["alpha", "gamma epsilon", "eta theta", "eta"]);
+        
+        // With custom separators
+        let result = test_cols_script_list(r#"cols("a,b,c,d,e,f,g", 0, "1,3", "4:6", -1, sep=",", outsep=":")"#).unwrap();
+        assert_eq!(result, vec!["a", "b:d", "e:f", "g"]);
+    }
+
+    #[test]
+    fn test_cols_error_cases() {
+        // Invalid column specs should return errors
+        assert!(test_cols_script(r#"cols("a b c", "invalid")"#).is_err());
+        assert!(test_cols_script(r#"cols("a b c", "1:2:3")"#).is_err());
+        assert!(test_cols_script(r#"cols("a b c", 1.5)"#).is_err()); // Float not allowed
     }
 }
 

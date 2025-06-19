@@ -10,18 +10,18 @@ cargo install --git https://github.com/dloss/stelp
 ## Start Simple
 
 ```bash
-# Turn unstructured logs into structured data
+# Extract structured data from logs using column patterns
 echo "2024-01-15 ERROR Connection timeout after 30 seconds" | \
-  stelp --extract-vars '{date} {level} {message}' --derive 'severity = 1 if level == "ERROR" else 5' -F jsonl
+  stelp -e 'date, level, message = cols(line, 0, 1, "2:"); f"[{level}] {date}: {message}"'
+
+# Parse HTTP requests with column extraction
+echo "GET /api/users HTTP/1.1" | stelp -e 'method, path, protocol = cols(line, 0, 1, 2); f"{method} -> {path}"'
 
 # Count errors in real-time with state
 tail -f app.log | stelp --filter '"ERROR" in line' -e 'count = inc("errors"); f"Error #{count}: {line}"'
 
-# Process JSON logs instantly
-echo '{"level":"error","msg":"failed"}' | stelp -f jsonl --filter 'data["level"] == "error"' -k msg
-
-# Extract emails from any text
-echo "Contact support@example.com for help" | stelp -e 'extract_pattern("email", line)'
+# Extract specific columns from CSV-like data
+echo "alice,25,engineer,remote" | stelp -e 'name, age, role = cols(line, 0, 1, 2, sep=","); f"{name} is a {age}yo {role}"'
 ```
 
 ## Common Tasks
@@ -35,9 +35,9 @@ stelp -f combined -k ip,status --filter 'int(data["status"]) >= 400' access.log
 tail -f /var/log/auth.log | stelp --filter '"Failed password" in line' \
   -e 'count = inc("failed_ssh"); f"SSH failure #{count}: {line}"'
 
-# Parse custom log formats
+# Parse structured log components
 echo "2024-01-15 ERROR user:alice msg:login_failed" | \
-  stelp --extract-vars '{date} {level:word} user:{user} msg:{message}' -F jsonl
+  stelp -e 'date, level, userpart, msgpart = cols(line, 0, 1, 2, 3); user = userpart.split(":")[1]; msg = msgpart.split(":")[1]; f"[{level}] {user}: {msg}"'
 
 # Find slow database queries in JSON logs
 stelp -f jsonl --filter 'data["query_time"] > 1.0' -k timestamp,query,query_time slow.jsonl
@@ -76,6 +76,9 @@ Force format with `-f`: `stelp -f jsonl data.txt`
 ### Text Processing (Default Mode)
 ```python
 line                    # Current line text
+cols(line, 0, 1, 2)     # Extract columns (whitespace split)
+cols(line, "1:3")       # Extract column ranges (slice notation)
+cols(line, "0,2", sep=",") # Extract columns with custom separator
 LINENUM, FILENAME, RECNUM # Line number, filename, record number
 glob["key"]             # Global counters/state
 inc("counter")          # Increment counter, returns new value
@@ -104,8 +107,8 @@ f"Count: {count}"
 
 ### Processing Pipeline
 ```bash
-# Commands run in order: extract → filter → transform
-stelp --extract-vars '{ip} {user}' --filter 'data["ip"].startswith("192")' -e 'data["user"].upper()'
+# Commands run in order: filter → transform
+stelp --filter '"192" in line' -e 'ip, user = cols(line, 0, 1); f"User {user.upper()} from {ip}"'
 ```
 
 ### Data vs Line Mode
@@ -115,13 +118,34 @@ stelp --extract-vars '{ip} {user}' --filter 'data["ip"].startswith("192")' -e 'd
 
 ## Advanced Features (when you need them)
 
-### Pattern Extraction
+### Column Extraction (Primary Method)
 ```bash
-# Extract structured data from text
-echo "user=alice score=85 attempts=3" | \
-  stelp --extract-vars 'user={user} score={score:int} attempts={attempts:int}' -F jsonl
+# Extract columns by index (0-based, negative indexing supported)
+echo "alpha beta gamma delta" | stelp -e 'cols(line, 0)'        # "alpha" (first)
+echo "alpha beta gamma delta" | stelp -e 'cols(line, -1)'       # "delta" (last)
 
-# Built-in patterns
+# Extract multiple columns (returns list)
+echo "GET /api/users HTTP/1.1" | stelp -e 'method, path, version = cols(line, 0, 1, 2)'
+
+# Slice notation for ranges
+echo "a b c d e f g" | stelp -e 'cols(line, "1:3")'    # "b c" (columns 1-2)
+echo "a b c d e f g" | stelp -e 'cols(line, "2:")'     # "c d e f g" (from 2 to end)
+echo "a b c d e f g" | stelp -e 'cols(line, ":3")'     # "a b c" (start to 2)
+
+# Multiple indices with custom separators
+echo "alice,25,engineer" | stelp -e 'cols(line, "0,2", sep=",")'        # "alice engineer"
+echo "a b c d" | stelp -e 'cols(line, "0,2", outsep=":")'               # "a:c"
+
+# Mix different selector types in one call (klp-compatible)
+echo "a b c d e f g h i j" | stelp -e 'first, middle, range, last = cols(line, 0, "1,3", "5:8", -1)'
+# Returns: ["a", "b d", "f g h", "j"]
+# - Integer args (0, -1) return individual columns
+# - String args ("1,3", "5:8") combine/slice columns with outsep
+```
+
+### Built-in Pattern Extraction
+```bash
+# Extract emails, IPs, URLs, etc. from text
 echo "Contact support@example.com for help" | stelp -e 'extract_pattern("email", line)'
 stelp --list-patterns    # Show all available patterns
 ```
@@ -152,9 +176,8 @@ stelp [OPTIONS] [FILES...]
 # Essential options
 -f, --input-format <FMT>    Input: line, jsonl, csv, logfmt, syslog, combined
 -F, --output-format <FMT>   Output: line, jsonl, csv, logfmt  
--e, --eval <EXPR>           Transform expression
+-e, --eval <EXPR>           Transform expression  
     --filter <EXPR>         Keep lines where expression is true
-    --extract-vars <PATTERN> Extract data using {field} or {field:type} patterns
 -k, --keys <KEYS>           Select/order output columns
     --levels <LEVELS>       Show only these log levels
     --window <N>            Keep last N records for analysis
@@ -164,6 +187,11 @@ stelp [OPTIONS] [FILES...]
 ## Built-in Functions
 
 ```python
+# Column Extraction (Primary)
+cols(text, 0, 1, 2)            # Extract multiple columns 
+cols(text, "1:3")              # Extract column ranges (slice)
+cols(text, "0,2", sep=",")     # Custom input/output separators
+
 # Text/Regex
 regex_match(pattern, text)      # Test if pattern matches
 regex_replace(pattern, repl, text)  # Replace matches

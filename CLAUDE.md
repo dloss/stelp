@@ -92,6 +92,32 @@ echo -e "name,price,quantity\nAlice,10.50,3\nBob,25.00,2\nCharlie,5.00,1" | carg
 
 # Remove keys at output stage
 echo -e "name,price,quantity,debug\nAlice,10.50,3,temp\nBob,25.00,2,test" | cargo run -- -f csv --derive 'total = float(price) * float(quantity)' --remove-keys debug
+
+# Column extraction with cols() function - klp-compatible
+echo "alpha beta gamma delta epsilon" | cargo run -- -e 'cols(line, 0)'  # First column
+echo "alpha beta gamma delta epsilon" | cargo run -- -e 'cols(line, -1)' # Last column
+
+# Multiple column selection
+echo "GET /api/users HTTP/1.1" | cargo run -- -e 'method, path, protocol = cols(line, 0, 1, 2); f"{method} -> {path}"'
+
+# Column ranges and slices
+echo "a b c d e f g" | cargo run -- -e 'cols(line, "1:3")'  # Columns 1-2 (b c)
+echo "a b c d e f g" | cargo run -- -e 'cols(line, "2:")'   # From column 2 to end
+echo "a b c d e f g" | cargo run -- -e 'cols(line, ":3")'   # From start to column 2
+
+# Multiple indices as string
+echo "alpha beta gamma delta" | cargo run -- -e 'cols(line, "0,2")'     # First and third columns
+echo "alpha beta gamma delta" | cargo run -- -e 'cols(line, "-2,-1")'   # Last two columns
+
+# Custom separators
+echo "alice,25,engineer,remote" | cargo run -- -e 'name, age, role = cols(line, 0, 1, 2, sep=",")'
+echo "a b c d" | cargo run -- -e 'cols(line, "0,2", outsep=":")'  # Custom output separator
+
+# Structured data with cols()
+echo '{"request": "GET /api/users HTTP/1.1"}' | cargo run -- -f jsonl --derive 'method = cols(request, 0); path = cols(request, 1)'
+
+# Apache log processing with cols()
+echo '192.168.1.1 - - [25/Dec/2021:10:24:56 +0000] "GET /api/status HTTP/1.1" 200 1234' | cargo run -- -e 'ip = cols(line, 0); method = cols(line, 4); f"Request from {ip}: {method}"'
 ```
 
 ## Architecture Overview
@@ -190,6 +216,7 @@ Scripts have access to:
 - JSON functions: `parse_json()`, `dump_json()`
 - CSV functions: `parse_csv()`, `dump_csv()`
 - Timestamp functions: `parse_ts()`, `format_ts()`, `now()`, `ts_diff()`, `ts_add()`, `guess_ts()`
+- Column extraction: `cols()` - klp-compatible column extraction with slice and multi-index support
 - Global state via `glob` dictionary
 - Meta variables: `LINENUM`, `FILENAME`, `RECNUM`
 
