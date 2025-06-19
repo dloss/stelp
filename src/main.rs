@@ -154,6 +154,7 @@ impl Args {
         let has_chunking =
             self.chunk_lines.is_some() || self.chunk_start.is_some() || self.chunk_delim.is_some();
         let has_level_filters = self.levels.is_some() || self.exclude_levels.is_some();
+        let has_input_files = !self.input_files.is_empty();
 
         // Check for mutually exclusive chunking options
         let chunk_options_count = [
@@ -174,12 +175,13 @@ impl Args {
         let has_format_or_utility =
             has_input_format || has_output_format || has_chunking || has_level_filters;
 
-        match (has_script_file, has_any_processing, has_format_or_utility) {
-            (true, true, _) => Err("Cannot use --script with other processing options".to_string()),
-            (true, false, _) => Ok(()),     // Script file only
-            (false, true, _) => Ok(()),     // Processing arguments
-            (false, false, true) => Ok(()), // Format/utility options only
-            (false, false, false) => {
+        match (has_script_file, has_any_processing, has_format_or_utility, has_input_files) {
+            (true, true, _, _) => Err("Cannot use --script with other processing options".to_string()),
+            (true, false, _, _) => Ok(()),     // Script file only
+            (false, true, _, _) => Ok(()),     // Processing arguments
+            (false, false, true, _) => Ok(()), // Format/utility options only
+            (false, false, false, true) => Ok(()), // Input files only - allow smart defaults
+            (false, false, false, false) => {
                 Err("Must provide a processing option (try --help for options)".to_string())
             }
         }
@@ -516,6 +518,23 @@ fn main() {
                 pipeline.add_processor(final_processor);
             }
         }
+    }
+
+    // Add default identity processor if no processing steps were provided
+    if steps.is_empty() && !args.input_files.is_empty() {
+        // For structured formats, a simple identity transform that preserves the data
+        // For line format, just pass through the line
+        let identity_script = match input_format.as_ref().unwrap_or(&InputFormat::Line) {
+            InputFormat::Line => "line",  // Pass through the line as-is
+            _ => "data",  // Pass through structured data (gets formatted by output formatter)
+        };
+        
+        let processor = StarlarkProcessor::from_script("identity", identity_script)
+            .unwrap_or_else(|e| {
+                eprintln!("stelp: failed to compile default identity processor: {}", e);
+                std::process::exit(1);
+            });
+        pipeline.add_processor(Box::new(processor));
     }
 
     // Add BEGIN processor if specified
