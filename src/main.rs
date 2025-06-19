@@ -296,7 +296,7 @@ fn main() {
     // Handle --list-patterns option early
     if args.list_patterns {
         use stelp::pipeline::global_functions::get_pattern_list;
-        
+
         for (name, description) in get_pattern_list() {
             println!("{:<15} - {}", name, description);
         }

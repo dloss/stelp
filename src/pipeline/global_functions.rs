@@ -3,13 +3,13 @@ use crate::processors::window::WINDOW_CONTEXT;
 use crate::variables::GlobalVariables;
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use dateparser;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use starlark::starlark_module;
-use starlark::values::{Heap, Value};
 use starlark::values::tuple::UnpackTuple;
+use starlark::values::{Heap, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use once_cell::sync::Lazy;
 
 thread_local! {
     pub(crate) static EMIT_BUFFER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -23,42 +23,179 @@ thread_local! {
     pub(crate) static CURRENT_MODULE: RefCell<Option<*const starlark::environment::Module>> = const { RefCell::new(None) };
 }
 
-// Builtin regex patterns
-pub static BUILTIN_REGEXES: Lazy<HashMap<&'static str, (&'static str, &'static str)>> = Lazy::new(|| {
-    let mut patterns = HashMap::new();
-    
-    // Basic data types
-    patterns.insert("duration", (r"(?:\d+\.?\d*(?:ns|us|μs|ms|s|m|h|d|w|y))+", "duration (e.g., '2h30m', '1.5s')"));
-    patterns.insert("email", (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "email address"));
-    patterns.insert("fqdn", (r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b", "fully qualified domain name (FQDN)"));
-    patterns.insert("function", (r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(", "function call"));
-    patterns.insert("gitcommit", (r"\b[a-f0-9]{7,40}\b", "git commit hash"));
-    patterns.insert("hexnum", (r"\b0x[a-fA-F0-9]+\b", "hex number with 0x prefix"));
-    patterns.insert("hexcolor", (r"#[a-fA-F0-9]{3,8}\b", "hex color code"));
-    patterns.insert("ipv4", (r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b", "IPv4 address"));
-    patterns.insert("ipv4_port", (r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?):[0-9]+\b", "IPv4 address:port"));
-    patterns.insert("ipv6", (r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b|\b::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b", "IPv6 address"));
-    patterns.insert("isotime", (r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b", "ISO 8601 datetime string"));
-    patterns.insert("json", (r"\{.*\}|\[.*\]", "JSON string"));
-    patterns.insert("jwt", (r"\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "JSON Web Token (JWT)"));
-    patterns.insert("mac", (r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b", "MAC address"));
-    patterns.insert("md5", (r"\b[a-f0-9]{32}\b", "MD5 hash"));
-    patterns.insert("num", (r"[+-]?(?:\d*\.)?\d+", "number (integer or float)"));
-    patterns.insert("path", (r"(?:/[^/\s]*)+/?", "Unix file path"));
-    patterns.insert("oauth", (r"\b[A-Za-z0-9_-]{20,}\b", "OAuth token"));
-    patterns.insert("sha1", (r"\b[a-f0-9]{40}\b", "SHA-1 hash"));
-    patterns.insert("sha256", (r"\b[a-f0-9]{64}\b", "SHA-256 hash"));
-    patterns.insert("sql", (r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|GRANT|REVOKE)\b.*?;?", "SQL query"));
-    patterns.insert("url", (r"https?://[^\s<>]+", "URL"));
-    patterns.insert("uuid", (r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", "UUID"));
-    patterns.insert("version", (r"\b\d+(?:\.\d+){1,3}(?:-[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*)?\b", "software version identifier"));
-    patterns.insert("winregistry", (r"\\(?:HKEY_[A-Z_]+\\)?(?:[^\\]+\\)*[^\\]*", "Windows registry key"));
-    
+// Precompiled builtin regex patterns
+pub static BUILTIN_REGEXES: Lazy<HashMap<&'static str, (Regex, &'static str)>> = Lazy::new(|| {
+    let mut patterns: HashMap<&'static str, (Regex, &'static str)> = HashMap::new();
+
+    patterns.insert(
+        "duration",
+        (
+            Regex::new(r"(?:\d+\.?\d*(?:ns|us|μs|ms|s|m|h|d|w|y))+").unwrap(),
+            "duration (e.g., '2h30m', '1.5s')",
+        ),
+    );
+    patterns.insert(
+        "email",
+        (
+            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(),
+            "email address",
+        ),
+    );
+    patterns.insert(
+        "fqdn",
+        (
+            Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+                .unwrap(),
+            "fully qualified domain name (FQDN)",
+        ),
+    );
+    patterns.insert(
+        "function",
+        (
+            Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(").unwrap(),
+            "function call",
+        ),
+    );
+    patterns.insert(
+        "gitcommit",
+        (
+            Regex::new(r"\b[a-f0-9]{7,40}\b").unwrap(),
+            "git commit hash",
+        ),
+    );
+    patterns.insert(
+        "hexnum",
+        (
+            Regex::new(r"\b0x[a-fA-F0-9]+\b").unwrap(),
+            "hex number with 0x prefix",
+        ),
+    );
+    patterns.insert(
+        "hexcolor",
+        (
+            Regex::new(r"#[a-fA-F0-9]{3,8}\b").unwrap(),
+            "hex color code",
+        ),
+    );
+    patterns.insert(
+        "ipv4",
+        (
+            Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
+            "IPv4 address",
+        ),
+    );
+    patterns.insert(
+        "ipv4_port",
+        (
+            Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?):[0-9]+\b").unwrap(),
+            "IPv4 address:port",
+        ),
+    );
+    patterns.insert(
+        "ipv6",
+        (
+            Regex::new(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b|\b::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
+            "IPv6 address",
+        ),
+    );
+    patterns.insert(
+        "isotime",
+        (
+            Regex::new(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
+                .unwrap(),
+            "ISO 8601 datetime string",
+        ),
+    );
+    patterns.insert(
+        "json",
+        (Regex::new(r"\{.*\}|\[.*\]").unwrap(), "JSON string"),
+    );
+    patterns.insert(
+        "jwt",
+        (
+            Regex::new(r"\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b").unwrap(),
+            "JSON Web Token (JWT)",
+        ),
+    );
+    patterns.insert(
+        "mac",
+        (
+            Regex::new(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b").unwrap(),
+            "MAC address",
+        ),
+    );
+    patterns.insert(
+        "md5",
+        (Regex::new(r"\b[a-f0-9]{32}\b").unwrap(), "MD5 hash"),
+    );
+    patterns.insert(
+        "num",
+        (
+            Regex::new(r"[+-]?(?:\d*\.)?\d+").unwrap(),
+            "number (integer or float)",
+        ),
+    );
+    patterns.insert(
+        "path",
+        (Regex::new(r"(?:/[^/\s]*)+/?").unwrap(), "Unix file path"),
+    );
+    patterns.insert(
+        "oauth",
+        (
+            Regex::new(r"\b[A-Za-z0-9_-]{20,}\b").unwrap(),
+            "OAuth token",
+        ),
+    );
+    patterns.insert(
+        "sha1",
+        (Regex::new(r"\b[a-f0-9]{40}\b").unwrap(), "SHA-1 hash"),
+    );
+    patterns.insert(
+        "sha256",
+        (Regex::new(r"\b[a-f0-9]{64}\b").unwrap(), "SHA-256 hash"),
+    );
+    patterns.insert(
+        "sql",
+        (
+            Regex::new(
+                r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|GRANT|REVOKE)\b.*?;?",
+            )
+            .unwrap(),
+            "SQL query",
+        ),
+    );
+    patterns.insert("url", (Regex::new(r"https?://[^\s<>]+").unwrap(), "URL"));
+    patterns.insert(
+        "uuid",
+        (
+            Regex::new(
+                r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            )
+            .unwrap(),
+            "UUID",
+        ),
+    );
+    patterns.insert(
+        "version",
+        (
+            Regex::new(r"\b\d+(?:\.\d+){1,3}(?:-[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*)?\b").unwrap(),
+            "software version identifier",
+        ),
+    );
+    patterns.insert(
+        "winregistry",
+        (
+            Regex::new(r"\\(?:HKEY_[A-Z_]+\\)?(?:[^\\]+\\)*[^\\]*").unwrap(),
+            "Windows registry key",
+        ),
+    );
+
     patterns
 });
 
 pub fn get_pattern_list() -> Vec<(&'static str, &'static str)> {
-    let mut patterns: Vec<_> = BUILTIN_REGEXES.iter()
+    let mut patterns: Vec<_> = BUILTIN_REGEXES
+        .iter()
         .map(|(name, (_, desc))| (*name, *desc))
         .collect();
     patterns.sort_by_key(|(name, _)| *name);
@@ -209,25 +346,20 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(heap.alloc(matches))
     }
 
-    // Pattern extraction function
+    // Pattern extraction using precompiled regexes
     fn extract_pattern<'v>(
         heap: &'v Heap,
         pattern_name: String,
         text: String,
     ) -> anyhow::Result<Value<'v>> {
-        if let Some((pattern, _)) = BUILTIN_REGEXES.get(pattern_name.as_str()) {
-            match Regex::new(pattern) {
-                Ok(regex) => {
-                    if let Some(m) = regex.find(&text) {
-                        Ok(heap.alloc(m.as_str().to_string()))
-                    } else {
-                        Ok(Value::new_none())
-                    }
-                }
-                Err(_) => Ok(Value::new_none()), // Invalid regex - return None
+        if let Some((regex, _desc)) = BUILTIN_REGEXES.get(pattern_name.as_str()) {
+            if let Some(m) = regex.find(&text) {
+                Ok(heap.alloc(m.as_str().to_string()))
+            } else {
+                Ok(Value::new_none())
             }
         } else {
-            Ok(Value::new_none()) // Pattern name not found
+            Ok(Value::new_none())
         }
     }
 
@@ -701,14 +833,14 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
     ) -> anyhow::Result<Value<'v>> {
         let separator = sep.as_deref().unwrap_or_default(); // Empty string = whitespace split
         let output_sep = outsep.as_deref().unwrap_or(" ");
-        
+
         // Split input text
         let columns: Vec<String> = if separator.is_empty() {
             text.split_whitespace().map(|s| s.to_string()).collect()
         } else {
             text.split(separator).map(|s| s.to_string()).collect()
         };
-        
+
         // Parse column specs from arguments
         let mut results = Vec::new();
         for arg in args.items {
@@ -719,19 +851,17 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             } else {
                 return Err(anyhow::anyhow!("Column spec must be string or integer"));
             };
-            
+
             let spec = parse_column_spec(&spec_str)?;
             let result = extract_columns(&columns, &spec, output_sep);
             results.push(result);
         }
-        
+
         // Return single value or list
         if results.len() == 1 {
             Ok(heap.alloc(results.into_iter().next().unwrap()))
         } else {
-            let starlark_list: Vec<Value> = results.into_iter()
-                .map(|s| heap.alloc(s))
-                .collect();
+            let starlark_list: Vec<Value> = results.into_iter().map(|s| heap.alloc(s)).collect();
             Ok(heap.alloc(starlark_list))
         }
     }
@@ -809,8 +939,8 @@ fn starlark_to_json_value(value: Value) -> anyhow::Result<serde_json::Value> {
 // Column specification parsing and extraction for cols() function
 #[derive(Debug, PartialEq)]
 enum ColumnSpec {
-    Index(i32),                    // 0, 1, -1, -2
-    MultiIndex(Vec<i32>),          // "0,2,4"
+    Index(i32),                      // 0, 1, -1, -2
+    MultiIndex(Vec<i32>),            // "0,2,4"
     Slice(Option<i32>, Option<i32>), // "1:3", "2:", ":5"
 }
 
@@ -821,26 +951,24 @@ fn parse_column_spec(spec: &str) -> anyhow::Result<ColumnSpec> {
         if parts.len() > 2 {
             return Err(anyhow::anyhow!("Invalid slice format: {}", spec));
         }
-        
-        let start = if parts[0].is_empty() { 
-            None 
-        } else { 
-            Some(parts[0].parse::<i32>()?) 
+
+        let start = if parts[0].is_empty() {
+            None
+        } else {
+            Some(parts[0].parse::<i32>()?)
         };
-        
-        let end = if parts.len() > 1 && !parts[1].is_empty() { 
-            Some(parts[1].parse::<i32>()?) 
-        } else { 
-            None 
+
+        let end = if parts.len() > 1 && !parts[1].is_empty() {
+            Some(parts[1].parse::<i32>()?)
+        } else {
+            None
         };
-        
+
         Ok(ColumnSpec::Slice(start, end))
     } else if spec.contains(',') {
         // Multiple indices: "0,2,4"
-        let indices: Result<Vec<i32>, _> = spec
-            .split(',')
-            .map(|s| s.trim().parse::<i32>())
-            .collect();
+        let indices: Result<Vec<i32>, _> =
+            spec.split(',').map(|s| s.trim().parse::<i32>()).collect();
         Ok(ColumnSpec::MultiIndex(indices?))
     } else {
         // Single index: "0", "-1"
@@ -851,27 +979,28 @@ fn parse_column_spec(spec: &str) -> anyhow::Result<ColumnSpec> {
 fn extract_columns(columns: &[String], spec: &ColumnSpec, outsep: &str) -> String {
     match spec {
         ColumnSpec::Index(idx) => {
-            let index = if *idx < 0 { 
-                columns.len() as i32 + idx 
-            } else { 
-                *idx 
+            let index = if *idx < 0 {
+                columns.len() as i32 + idx
+            } else {
+                *idx
             };
-            
+
             if index >= 0 && (index as usize) < columns.len() {
                 columns[index as usize].clone()
             } else {
                 String::new() // Out of bounds returns empty string
             }
-        },
+        }
         ColumnSpec::MultiIndex(indices) => {
-            indices.iter()
+            indices
+                .iter()
                 .filter_map(|&idx| {
-                    let index = if idx < 0 { 
-                        columns.len() as i32 + idx 
-                    } else { 
-                        idx 
+                    let index = if idx < 0 {
+                        columns.len() as i32 + idx
+                    } else {
+                        idx
                     };
-                    
+
                     if index >= 0 && (index as usize) < columns.len() {
                         Some(columns[index as usize].clone())
                     } else {
@@ -880,26 +1009,25 @@ fn extract_columns(columns: &[String], spec: &ColumnSpec, outsep: &str) -> Strin
                 })
                 .collect::<Vec<_>>()
                 .join(outsep)
-        },
+        }
         ColumnSpec::Slice(start, end) => {
             let len = columns.len() as i32;
-            
+
             // Handle negative indices and defaults
             let start_idx = match start {
                 Some(s) if *s < 0 => (len + s).max(0) as usize,
                 Some(s) => (*s).max(0) as usize,
                 None => 0,
             };
-            
+
             let end_idx = match end {
                 Some(e) if *e < 0 => (len + e).max(0) as usize,
                 Some(e) => (*e).min(len) as usize,
                 None => len as usize,
             };
-            
+
             if start_idx < columns.len() && start_idx < end_idx {
-                columns[start_idx..end_idx.min(columns.len())]
-                    .join(outsep)
+                columns[start_idx..end_idx.min(columns.len())].join(outsep)
             } else {
                 String::new()
             }
@@ -1455,11 +1583,15 @@ mod tests {
         let module = Module::new();
         let mut eval = Evaluator::new(&module);
 
-        let script = r#"extract_pattern("uuid", "Session ID: 550e8400-e29b-41d4-a716-446655440000")"#;
+        let script =
+            r#"extract_pattern("uuid", "Session ID: 550e8400-e29b-41d4-a716-446655440000")"#;
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
 
-        assert_eq!(result.unpack_str().unwrap(), "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            result.unpack_str().unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 
     #[test]
@@ -1525,19 +1657,46 @@ mod tests {
 
     #[test]
     fn test_parse_column_spec_multi_index() {
-        assert_eq!(parse_column_spec("0,2").unwrap(), ColumnSpec::MultiIndex(vec![0, 2]));
-        assert_eq!(parse_column_spec("1,3,5").unwrap(), ColumnSpec::MultiIndex(vec![1, 3, 5]));
-        assert_eq!(parse_column_spec("-2,-1").unwrap(), ColumnSpec::MultiIndex(vec![-2, -1]));
-        assert_eq!(parse_column_spec("0, 2, 4").unwrap(), ColumnSpec::MultiIndex(vec![0, 2, 4]));
+        assert_eq!(
+            parse_column_spec("0,2").unwrap(),
+            ColumnSpec::MultiIndex(vec![0, 2])
+        );
+        assert_eq!(
+            parse_column_spec("1,3,5").unwrap(),
+            ColumnSpec::MultiIndex(vec![1, 3, 5])
+        );
+        assert_eq!(
+            parse_column_spec("-2,-1").unwrap(),
+            ColumnSpec::MultiIndex(vec![-2, -1])
+        );
+        assert_eq!(
+            parse_column_spec("0, 2, 4").unwrap(),
+            ColumnSpec::MultiIndex(vec![0, 2, 4])
+        );
     }
 
     #[test]
     fn test_parse_column_spec_slice() {
-        assert_eq!(parse_column_spec("1:3").unwrap(), ColumnSpec::Slice(Some(1), Some(3)));
-        assert_eq!(parse_column_spec("2:").unwrap(), ColumnSpec::Slice(Some(2), None));
-        assert_eq!(parse_column_spec(":3").unwrap(), ColumnSpec::Slice(None, Some(3)));
-        assert_eq!(parse_column_spec(":").unwrap(), ColumnSpec::Slice(None, None));
-        assert_eq!(parse_column_spec("1:-1").unwrap(), ColumnSpec::Slice(Some(1), Some(-1)));
+        assert_eq!(
+            parse_column_spec("1:3").unwrap(),
+            ColumnSpec::Slice(Some(1), Some(3))
+        );
+        assert_eq!(
+            parse_column_spec("2:").unwrap(),
+            ColumnSpec::Slice(Some(2), None)
+        );
+        assert_eq!(
+            parse_column_spec(":3").unwrap(),
+            ColumnSpec::Slice(None, Some(3))
+        );
+        assert_eq!(
+            parse_column_spec(":").unwrap(),
+            ColumnSpec::Slice(None, None)
+        );
+        assert_eq!(
+            parse_column_spec("1:-1").unwrap(),
+            ColumnSpec::Slice(Some(1), Some(-1))
+        );
     }
 
     #[test]
@@ -1550,13 +1709,18 @@ mod tests {
     // Column extraction tests
     #[test]
     fn test_extract_columns_single_index() {
-        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
-        
+        let columns = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
+
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(0), " "), "a");
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(2), " "), "c");
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-1), " "), "d");
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-2), " "), "c");
-        
+
         // Out of bounds
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(10), " "), "");
         assert_eq!(extract_columns(&columns, &ColumnSpec::Index(-10), " "), "");
@@ -1564,30 +1728,77 @@ mod tests {
 
     #[test]
     fn test_extract_columns_multi_index() {
-        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
-        
-        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 2]), " "), "a c");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![1, 3]), ":"), "b:d");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![-2, -1]), " "), "c d");
-        
+        let columns = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
+
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 2]), " "),
+            "a c"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::MultiIndex(vec![1, 3]), ":"),
+            "b:d"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::MultiIndex(vec![-2, -1]), " "),
+            "c d"
+        );
+
         // With some out of bounds (should skip them)
-        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 10, 2]), " "), "a c");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::MultiIndex(vec![10, 20]), " "), "");
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::MultiIndex(vec![0, 10, 2]), " "),
+            "a c"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::MultiIndex(vec![10, 20]), " "),
+            ""
+        );
     }
 
     #[test]
     fn test_extract_columns_slice() {
-        let columns = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()];
-        
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(3)), " "), "b c");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(2), None), " "), "c d e");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(None, Some(3)), " "), "a b c");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(None, None), " "), "a b c d e");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(-1)), " "), "b c d");
-        
+        let columns = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+        ];
+
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(3)), " "),
+            "b c"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(Some(2), None), " "),
+            "c d e"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(None, Some(3)), " "),
+            "a b c"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(None, None), " "),
+            "a b c d e"
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(Some(1), Some(-1)), " "),
+            "b c d"
+        );
+
         // Edge cases
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(10), Some(20)), " "), "");
-        assert_eq!(extract_columns(&columns, &ColumnSpec::Slice(Some(3), Some(2)), " "), ""); // start > end
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(Some(10), Some(20)), " "),
+            ""
+        );
+        assert_eq!(
+            extract_columns(&columns, &ColumnSpec::Slice(Some(3), Some(2)), " "),
+            ""
+        ); // start > end
     }
 
     // Integration tests for cols() function
@@ -1595,13 +1806,13 @@ mod tests {
         let globals = GlobalsBuilder::new().with(global_functions).build();
         let module = Module::new();
         let mut eval = Evaluator::new(&module);
-        
+
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended)
             .map_err(|e| format!("Parse error: {}", e))?;
         let result = eval
             .eval_module(ast, &globals)
             .map_err(|e| format!("Eval error: {}", e))?;
-        
+
         if let Some(s) = result.unpack_str() {
             Ok(s.to_string())
         } else {
@@ -1611,25 +1822,28 @@ mod tests {
 
     fn test_cols_script_list(script: &str) -> Result<Vec<String>, String> {
         use starlark::values::list::ListRef;
-        
+
         let globals = GlobalsBuilder::new().with(global_functions).build();
         let module = Module::new();
         let mut eval = Evaluator::new(&module);
-        
+
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended)
             .map_err(|e| format!("Parse error: {}", e))?;
         let result = eval
             .eval_module(ast, &globals)
             .map_err(|e| format!("Eval error: {}", e))?;
-        
+
         if let Some(list) = ListRef::from_value(result) {
-            Ok(list.iter().map(|v| {
-                if let Some(s) = v.unpack_str() {
-                    s.to_string()
-                } else {
-                    v.to_string()
-                }
-            }).collect())
+            Ok(list
+                .iter()
+                .map(|v| {
+                    if let Some(s) = v.unpack_str() {
+                        s.to_string()
+                    } else {
+                        v.to_string()
+                    }
+                })
+                .collect())
         } else {
             Err("Result is not a list".to_string())
         }
@@ -1638,10 +1852,22 @@ mod tests {
     #[test]
     fn test_cols_basic_usage() {
         // Single column access
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", 0)"#).unwrap(), "alpha");
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", 1)"#).unwrap(), "beta");
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", -1)"#).unwrap(), "gamma");
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma", -2)"#).unwrap(), "beta");
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma", 0)"#).unwrap(),
+            "alpha"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma", 1)"#).unwrap(),
+            "beta"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma", -1)"#).unwrap(),
+            "gamma"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma", -2)"#).unwrap(),
+            "beta"
+        );
     }
 
     #[test]
@@ -1649,7 +1875,7 @@ mod tests {
         // Multiple columns should return a list
         let result = test_cols_script_list(r#"cols("alpha beta gamma", 0, 2)"#).unwrap();
         assert_eq!(result, vec!["alpha", "gamma"]);
-        
+
         let result = test_cols_script_list(r#"cols("alpha beta gamma delta", 1, -1)"#).unwrap();
         assert_eq!(result, vec!["beta", "delta"]);
     }
@@ -1657,29 +1883,62 @@ mod tests {
     #[test]
     fn test_cols_multi_index_string() {
         // Multiple indices as string
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "0,2")"#).unwrap(), "alpha gamma");
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "1,3")"#).unwrap(), "beta delta");
-        assert_eq!(test_cols_script(r#"cols("alpha beta gamma delta", "-2,-1")"#).unwrap(), "gamma delta");
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma delta", "0,2")"#).unwrap(),
+            "alpha gamma"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma delta", "1,3")"#).unwrap(),
+            "beta delta"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alpha beta gamma delta", "-2,-1")"#).unwrap(),
+            "gamma delta"
+        );
     }
 
     #[test]
     fn test_cols_slices() {
         // Slice notation
-        assert_eq!(test_cols_script(r#"cols("a b c d e", "1:3")"#).unwrap(), "b c");
-        assert_eq!(test_cols_script(r#"cols("a b c d e", "2:")"#).unwrap(), "c d e");
-        assert_eq!(test_cols_script(r#"cols("a b c d e", ":3")"#).unwrap(), "a b c");
-        assert_eq!(test_cols_script(r#"cols("a b c d e", "1:-1")"#).unwrap(), "b c d");
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d e", "1:3")"#).unwrap(),
+            "b c"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d e", "2:")"#).unwrap(),
+            "c d e"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d e", ":3")"#).unwrap(),
+            "a b c"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d e", "1:-1")"#).unwrap(),
+            "b c d"
+        );
     }
 
     #[test]
     fn test_cols_custom_separators() {
         // Custom input separator
-        assert_eq!(test_cols_script(r#"cols("alice,bob,charlie", 1, sep=",")"#).unwrap(), "bob");
-        assert_eq!(test_cols_script(r#"cols("alice|bob|charlie", 0, sep="|")"#).unwrap(), "alice");
-        
+        assert_eq!(
+            test_cols_script(r#"cols("alice,bob,charlie", 1, sep=",")"#).unwrap(),
+            "bob"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("alice|bob|charlie", 0, sep="|")"#).unwrap(),
+            "alice"
+        );
+
         // Custom output separator
-        assert_eq!(test_cols_script(r#"cols("a b c d", "0,2", outsep=":")"#).unwrap(), "a:c");
-        assert_eq!(test_cols_script(r#"cols("a b c d", "1:3", outsep="-")"#).unwrap(), "b-c");
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d", "0,2", outsep=":")"#).unwrap(),
+            "a:c"
+        );
+        assert_eq!(
+            test_cols_script(r#"cols("a b c d", "1:3", outsep="-")"#).unwrap(),
+            "b-c"
+        );
     }
 
     #[test]
@@ -1687,7 +1946,7 @@ mod tests {
         // Mix of different selector types
         let result = test_cols_script_list(r#"cols("a b c d e f", 0, "2:4", -1)"#).unwrap();
         assert_eq!(result, vec!["a", "c d", "f"]);
-        
+
         let result = test_cols_script_list(r#"cols("a b c d e f", "0,1", "3:")"#).unwrap();
         assert_eq!(result, vec!["a b", "d e f"]);
     }
@@ -1696,11 +1955,11 @@ mod tests {
     fn test_cols_edge_cases() {
         // Empty string
         assert_eq!(test_cols_script(r#"cols("", 0)"#).unwrap(), "");
-        
+
         // Out of bounds
         assert_eq!(test_cols_script(r#"cols("a b c", 10)"#).unwrap(), "");
         assert_eq!(test_cols_script(r#"cols("a b c", -10)"#).unwrap(), "");
-        
+
         // Single word
         assert_eq!(test_cols_script(r#"cols("hello", 0)"#).unwrap(), "hello");
         assert_eq!(test_cols_script(r#"cols("hello", 1)"#).unwrap(), "");
@@ -1716,22 +1975,30 @@ mod tests {
     #[test]
     fn test_cols_csv_example() {
         // CSV parsing with custom separator
-        let result = test_cols_script_list(r#"cols("alice,25,engineer,remote", 0, 1, 2, sep=",")"#).unwrap();
+        let result =
+            test_cols_script_list(r#"cols("alice,25,engineer,remote", 0, 1, 2, sep=",")"#).unwrap();
         assert_eq!(result, vec!["alice", "25", "engineer"]);
     }
 
     #[test]
     fn test_cols_mixed_selector_types() {
         // Mix integers, comma-separated strings, and slices
-        let result = test_cols_script_list(r#"cols("a b c d e f g h i j", 0, "1,3", "5:8", -1)"#).unwrap();
+        let result =
+            test_cols_script_list(r#"cols("a b c d e f g h i j", 0, "1,3", "5:8", -1)"#).unwrap();
         assert_eq!(result, vec!["a", "b d", "f g h", "j"]);
-        
+
         // Another complex mix
-        let result = test_cols_script_list(r#"cols("alpha beta gamma delta epsilon zeta eta theta", 0, "2,4", "6:", -2)"#).unwrap();
+        let result = test_cols_script_list(
+            r#"cols("alpha beta gamma delta epsilon zeta eta theta", 0, "2,4", "6:", -2)"#,
+        )
+        .unwrap();
         assert_eq!(result, vec!["alpha", "gamma epsilon", "eta theta", "eta"]);
-        
+
         // With custom separators
-        let result = test_cols_script_list(r#"cols("a,b,c,d,e,f,g", 0, "1,3", "4:6", -1, sep=",", outsep=":")"#).unwrap();
+        let result = test_cols_script_list(
+            r#"cols("a,b,c,d,e,f,g", 0, "1,3", "4:6", -1, sep=",", outsep=":")"#,
+        )
+        .unwrap();
         assert_eq!(result, vec!["a", "b:d", "e:f", "g"]);
     }
 
