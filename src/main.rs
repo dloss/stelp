@@ -182,7 +182,7 @@ impl Args {
             (false, false, true, _) => Ok(()), // Format/utility options only
             (false, false, false, true) => Ok(()), // Input files only - allow smart defaults
             (false, false, false, false) => {
-                Err("Must provide a processing option (try --help for options)".to_string())
+                Err("SHOW_HELP".to_string()) // Special case to trigger help display
             }
         }
     }
@@ -307,8 +307,15 @@ fn main() {
 
     // Validate arguments
     if let Err(e) = args.validate() {
-        eprintln!("stelp: {}", e);
-        std::process::exit(1);
+        if e == "SHOW_HELP" {
+            let mut cmd = Args::command();
+            println!("{}", cmd.render_usage());
+            println!("Try 'stelp --help' for more information.");
+            std::process::exit(0);
+        } else {
+            eprintln!("stelp: {}", e);
+            std::process::exit(1);
+        }
     }
 
     // Build pipeline steps first (before moving parts of args)
