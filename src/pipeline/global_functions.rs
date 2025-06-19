@@ -23,7 +23,7 @@ thread_local! {
     pub(crate) static CURRENT_MODULE: RefCell<Option<*const starlark::environment::Module>> = const { RefCell::new(None) };
 }
 
-// Builtin regex patterns adapted from KLP
+// Builtin regex patterns
 pub static BUILTIN_REGEXES: Lazy<HashMap<&'static str, (&'static str, &'static str)>> = Lazy::new(|| {
     let mut patterns = HashMap::new();
     
@@ -691,7 +691,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         })
     }
 
-    // Column extraction function - klp-compatible cols()
+    // Column extraction function
     fn cols<'v>(
         heap: &'v Heap,
         text: String,

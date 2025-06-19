@@ -136,7 +136,7 @@ echo "a b c d e f g" | stelp -e 'cols(line, ":3")'     # "a b c" (start to 2)
 echo "alice,25,engineer" | stelp -e 'cols(line, "0,2", sep=",")'        # "alice engineer"
 echo "a b c d" | stelp -e 'cols(line, "0,2", outsep=":")'               # "a:c"
 
-# Mix different selector types in one call (klp-compatible)
+# Mix different selector types in one call
 echo "a b c d e f g h i j" | stelp -e 'first, middle, range, last = cols(line, 0, "1,3", "5:8", -1)'
 # Returns: ["a", "b d", "f g h", "j"]
 # - Integer args (0, -1) return individual columns
