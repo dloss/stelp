@@ -2,6 +2,9 @@
 
 One-line log processing with Python-like syntax.
 
+> [!WARNING]  
+> Experimental tool. [Vibe-coded](https://en.wikipedia.org/wiki/Vibe_coding). APIs may change without notice.
+
 ```bash
 # Install
 cargo install --git https://github.com/dloss/stelp
