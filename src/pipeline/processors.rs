@@ -807,8 +807,9 @@ impl DeriveProcessor {
         for var_name in module.names() {
             let var_name_str = var_name.as_str();
 
-            // Skip stelp_ prefixed variables, built-ins, and prelude functions
+            // Skip stelp_ prefixed variables, built-ins, prelude functions, AND underscore
             if var_name_str.starts_with("stelp_")
+                || var_name_str == "_"
                 || matches!(
                     var_name_str,
                     "True" | "False" | "None" | "LINENUM" | "FILENAME" | "RECNUM" | "glob" | "inc" | "line"

@@ -148,6 +148,20 @@ echo "2024-01-15 ERROR database connection timeout" | stelp --derive 'date, leve
 # Returns: date=2024-01-15 level=ERROR service=database error="connection timeout"
 ```
 
+### Derive Mode (Structured Data Transformation)
+```bash
+# Transform CSV data with direct field access
+echo -e "name,price,quantity\nAlice,10.50,3" | stelp -f csv --derive 'total = float(price) * float(quantity)'
+
+# Working variables starting with underscore (not included in output)
+echo -e "name,score\nAlice,85" | stelp -f csv --derive '_ = float(score) / 100; _temp = "test"; temp_var = "normal"; grade = "A" if _ > 0.9 else "B"'
+# Output: name=Alice score=85 grade=B temp_var=normal (underscore-prefixed variables excluded)
+
+# Create/modify/delete fields
+echo '{"user":"alice","temp":123}' | stelp -f jsonl --derive 'active = True; temp = None' -F jsonl
+# Output: {"user":"alice","active":true} (temp field deleted)
+```
+
 ### Built-in Pattern Extraction
 ```bash
 # Extract emails, IPs, URLs, etc. from text
@@ -197,6 +211,7 @@ stelp [OPTIONS] [FILES...]
 -F, --output-format <FMT>   Output: line, jsonl, csv, logfmt  
 -e, --eval <EXPR>           Transform expression  
     --filter <EXPR>         Keep lines where expression is true
+    --derive <EXPR>         Transform structured data with direct field access
 -k, --keys <KEYS>           Select/order output columns
     --levels <LEVELS>       Show only these log levels
     --window <N>            Keep last N records for analysis
