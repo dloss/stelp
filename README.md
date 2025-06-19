@@ -41,6 +41,10 @@ echo "2024-01-15 ERROR user:alice msg:login_failed" | \
 
 # Find slow database queries in JSON logs
 stelp -f jsonl --filter 'data["query_time"] > 1.0' -k timestamp,query,query_time slow.jsonl
+
+# Process task durations from CSV data
+echo -e "task,duration\nbackup,5h30m\ncleanup,2h 30m\narchive,1 day" | \
+  stelp -f csv --derive 'hours = parse_duration(duration) / 3600; category = "long" if hours > 8 else "short"'
 ```
 
 ### Basic Text Operations (When You Need Them)
@@ -151,6 +155,20 @@ echo "Contact support@example.com for help" | stelp -e 'extract_pattern("email",
 stelp --list-patterns    # Show all available patterns
 ```
 
+### Duration Processing
+```bash
+# Parse various duration formats
+echo -e "5d\n3h30m\n2.5s\n2h 30m\n1 hour 30 minutes\n1y" | \
+  stelp -e 'seconds = parse_duration(line); hours = seconds / 3600; f"Duration: {line} = {hours} hours"'
+
+# Analyze log processing times
+echo "Processing completed in 2h45m" | stelp -e 'duration_str = line.split()[-1]; minutes = parse_duration(duration_str) / 60; f"Completed in {minutes} minutes"'
+
+# Filter tasks by duration
+echo -e "task,time\nbackup,12h\ncleanup,30m\nrestore,3d" | \
+  stelp -f csv --filter 'parse_duration(data["time"]) > 3600' -k task,time  # Over 1 hour
+```
+
 ### Window Functions
 ```bash
 # Show current and previous values
@@ -202,11 +220,12 @@ extract_pattern("email", text)  # Extract emails, IPs, URLs, etc.
 parse_json(text)               # Parse JSON string
 dump_json(obj)                 # Convert to JSON string
 
-# Timestamps  
+# Timestamps & Duration
 parse_ts(text)                 # Parse timestamp to Unix epoch
 format_ts(timestamp, "%Y-%m-%d")  # Format timestamp
 guess_ts(text)                 # Auto-detect timestamp format
 now()                          # Current Unix timestamp
+parse_duration(text)           # Parse duration to seconds (e.g., "5d", "2h30m", "1.5s")
 
 # Control Flow
 skip()                         # Skip current line

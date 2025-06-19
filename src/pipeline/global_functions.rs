@@ -757,6 +757,10 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         }
     }
 
+    fn parse_duration(duration: String) -> anyhow::Result<f64> {
+        parse_duration_hybrid(&duration)
+    }
+
     // Window functions
     fn window_values<'v>(heap: &'v Heap, field_name: String) -> anyhow::Result<Value<'v>> {
         WINDOW_CONTEXT.with(|ctx| {
@@ -864,6 +868,68 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             let starlark_list: Vec<Value> = results.into_iter().map(|s| heap.alloc(s)).collect();
             Ok(heap.alloc(starlark_list))
         }
+    }
+}
+
+// Helper function for duration parsing with hybrid approach
+fn parse_duration_hybrid(duration: &str) -> anyhow::Result<f64> {
+    // Try our compact implementation first (supports fractional numbers and compact format)
+    let pattern = regex::Regex::new(r"([-\d.]+)([a-z]+)").unwrap();
+    let matches: Vec<_> = pattern.find_iter(duration).collect();
+    
+    if !matches.is_empty() {
+        let mut total_seconds = 0.0;
+        let mut all_valid = true;
+        
+        for m in matches {
+            let full_match = m.as_str();
+            if let Some(caps) = pattern.captures(full_match) {
+                let value_str = caps.get(1).unwrap().as_str();
+                let unit = caps.get(2).unwrap().as_str();
+                
+                if let Ok(value) = value_str.parse::<f64>() {
+                    if value < 0.0 {
+                        return Err(anyhow::anyhow!("Durations cannot be negative: {}", duration));
+                    }
+                    
+                    let seconds = match unit {
+                        "us" => value / 1_000_000.0,
+                        "ms" => value / 1_000.0,
+                        "s" => value,
+                        "m" => value * 60.0,
+                        "h" => value * 3_600.0,
+                        "d" => value * 86_400.0,
+                        "w" => value * 604_800.0,
+                        _ => {
+                            all_valid = false;
+                            break;
+                        }
+                    };
+                    
+                    total_seconds += seconds;
+                } else {
+                    all_valid = false;
+                    break;
+                }
+            } else {
+                all_valid = false;
+                break;
+            }
+        }
+        
+        if all_valid {
+            return Ok(total_seconds);
+        }
+    }
+    
+    // If our implementation fails, try humantime as fallback
+    // (supports spaces, full words, years, months)
+    match humantime::parse_duration(duration) {
+        Ok(std_duration) => Ok(std_duration.as_secs_f64()),
+        Err(_) => Err(anyhow::anyhow!(
+            "Invalid duration format: '{}'. Supported formats include '5d', '3h30m', '2.5s', '2h 30m', '1 hour 30 minutes'", 
+            duration
+        )),
     }
 }
 
@@ -2009,6 +2075,300 @@ mod tests {
         assert!(test_cols_script(r#"cols("a b c", "1:2:3")"#).is_err());
         assert!(test_cols_script(r#"cols("a b c", 1.5)"#).is_err()); // Float not allowed
     }
+
+    // parse_duration() function tests - hybrid approach
+    #[test]
+    fn test_parse_duration_single_units() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test microseconds
+        let script = r#"parse_duration("500us")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 0.0005).abs() < f64::EPSILON);
+
+        // Test milliseconds
+        let script = r#"parse_duration("250ms")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 0.25).abs() < f64::EPSILON);
+
+        // Test seconds
+        let script = r#"parse_duration("5s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 5.0).abs() < f64::EPSILON);
+
+        // Test minutes
+        let script = r#"parse_duration("3m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 180.0).abs() < f64::EPSILON);
+
+        // Test hours
+        let script = r#"parse_duration("2h")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 7200.0).abs() < f64::EPSILON);
+
+        // Test days
+        let script = r#"parse_duration("1d")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 86400.0).abs() < f64::EPSILON);
+
+        // Test weeks
+        let script = r#"parse_duration("1w")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 604800.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_duration_combined_units() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test 3h30m (3.5 hours = 12600 seconds)
+        let script = r#"parse_duration("3h30m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 12600.0).abs() < f64::EPSILON);
+
+        // Test 5d12h (5.5 days = 475200 seconds)
+        let script = r#"parse_duration("5d12h")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 475200.0).abs() < f64::EPSILON);
+
+        // Test 2h30m45s (9045 seconds)
+        let script = r#"parse_duration("2h30m45s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 9045.0).abs() < f64::EPSILON);
+
+        // Test 1d2h3m4s5ms (93784.005 seconds)
+        let script = r#"parse_duration("1d2h3m4s5ms")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 93784.005).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_duration_fractional_values() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test 2.5s
+        let script = r#"parse_duration("2.5s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 2.5).abs() < f64::EPSILON);
+
+        // Test 1.5h (5400 seconds)
+        let script = r#"parse_duration("1.5h")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 5400.0).abs() < f64::EPSILON);
+
+        // Test 0.5m (30 seconds)
+        let script = r#"parse_duration("0.5m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 30.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_duration_error_cases() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test empty string
+        let script = r#"parse_duration("")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        assert!(eval.eval_module(ast, &globals).is_err());
+
+        // Test invalid format (no units)
+        let script = r#"parse_duration("123")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        assert!(eval.eval_module(ast, &globals).is_err());
+
+        // Test truly unsupported unit (both parsers fail)
+        let script = r#"parse_duration("5z")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        assert!(eval.eval_module(ast, &globals).is_err());
+
+        // Test invalid numeric value
+        let script = r#"parse_duration("abc s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        assert!(eval.eval_module(ast, &globals).is_err());
+
+        // Test negative duration
+        let script = r#"parse_duration("-5s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        assert!(eval.eval_module(ast, &globals).is_err());
+    }
+
+    #[test]
+    fn test_parse_duration_edge_cases() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test zero duration
+        let script = r#"parse_duration("0s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 0.0).abs() < f64::EPSILON);
+
+        // Test very small duration
+        let script = r#"parse_duration("1us")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 0.000001).abs() < f64::EPSILON);
+
+        // Test multiple same units (should add up)
+        let script = r#"parse_duration("1h1h")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 7200.0).abs() < f64::EPSILON); // 2 hours
+    }
+
+    #[test]
+    fn test_parse_duration_humantime_fallback() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test space-separated format (humantime fallback)
+        let script = r#"parse_duration("2h 30m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 9000.0).abs() < f64::EPSILON); // 2.5 hours
+
+        // Test full word format (humantime fallback)
+        let script = r#"parse_duration("1 hour 30 minutes")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 5400.0).abs() < f64::EPSILON); // 1.5 hours
+
+        // Test years (humantime fallback)
+        let script = r#"parse_duration("1y")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 31557600.0).abs() < f64::EPSILON); // 1 year = 365.25 days
+
+        // Test months (humantime fallback)  
+        let script = r#"parse_duration("1M")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 2630016.0).abs() < f64::EPSILON); // 1 month = 30.44 days
+
+        // Test "day" vs "d" (humantime handles both)
+        let script = r#"parse_duration("1 day")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 86400.0).abs() < f64::EPSILON); // 1 day
+
+        // Test mixed humantime format
+        let script = r#"parse_duration("1 hour 2 minutes 30 seconds")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 3750.0).abs() < f64::EPSILON); // 1h2m30s
+    }
+
+    #[test]
+    fn test_parse_duration_hybrid_priority() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test that our implementation takes priority for formats both can handle
+        let script = r#"parse_duration("5d")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 432000.0).abs() < f64::EPSILON); // 5 days
+
+        // Test that our implementation handles fractional (humantime cannot)
+        let script = r#"parse_duration("2.5s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 2.5).abs() < f64::EPSILON); // 2.5 seconds
+
+        // Test that compact format without spaces uses our implementation
+        let script = r#"parse_duration("3h30m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 12600.0).abs() < f64::EPSILON); // 3.5 hours
+
+        // Test that spaces fall back to humantime
+        let script = r#"parse_duration("3h 30m")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 12600.0).abs() < f64::EPSILON); // Same result, different parser
+    }
+
+    #[test]
+    fn test_parse_duration_error_handling_hybrid() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test that completely invalid formats fail with helpful message
+        let script = r#"parse_duration("invalid")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid duration format"));
+        assert!(error_msg.contains("Supported formats include"));
+
+        // Test negative durations still fail
+        let script = r#"parse_duration("-5s")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("cannot be negative"));
+
+        // Test empty string
+        let script = r#"parse_duration("")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+    }
 }
 
 // Additional globals for derive mode with stelp_ prefix
@@ -2072,5 +2432,9 @@ pub(crate) fn derive_globals_with_prefix(builder: &mut starlark::environment::Gl
                 Err(anyhow::anyhow!("No processing context available"))
             }
         })
+    }
+
+    fn stelp_parse_duration(duration: String) -> anyhow::Result<f64> {
+        parse_duration_hybrid(&duration)
     }
 }
