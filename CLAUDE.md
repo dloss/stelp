@@ -119,11 +119,14 @@ echo '{"request": "GET /api/users HTTP/1.1"}' | cargo run -- -f jsonl --derive '
 # Apache log processing with cols()
 echo '192.168.1.1 - - [25/Dec/2021:10:24:56 +0000] "GET /api/status HTTP/1.1" 200 1234' | cargo run -- -e 'ip = cols(line, 0); method = cols(line, 4); f"Request from {ip}: {method}"'
 
-# Path navigation examples
-echo '{"user": {"name": "Alice", "tags": ["admin", "user"]}, "items": [{"id": 1}, {"id": 2}]}' | cargo run -- -f jsonl --derive 'user_name = get_path("user.name", stelp_data); first_tag = get_path("user.tags.0", stelp_data); item_id = get_path("items.1.id", stelp_data)'
+# Path navigation examples  
+echo '{"user": {"name": "Alice", "tags": ["admin", "user"]}, "items": [{"id": 1}, {"id": 2}]}' | cargo run -- -f jsonl --derive 'user_name = get_path("name", user); first_tag = get_path("tags.0", user); item_id = get_path("1.id", items)'
 
 # Path navigation with defaults for missing data
-echo '{"config": {"timeout": 30}}' | cargo run -- -f jsonl --derive 'host = get_path("config.host", stelp_data, "localhost"); port = get_path("config.port", stelp_data, 8080)'
+echo '{"config": {"timeout": 30}}' | cargo run -- -f jsonl --derive 'host = get_path("host", config, "localhost"); port = get_path("port", config, 8080)'
+
+# For invalid identifiers (dashes, spaces), use stelp_data
+echo '{"user-name": "Bob", "meta-data": {"theme": "dark"}}' | cargo run -- -f jsonl --derive 'name = get_path("user-name", stelp_data); theme = get_path("meta-data.theme", stelp_data)'
 ```
 
 ## Architecture Overview
@@ -238,7 +241,8 @@ The `--derive` feature provides ergonomic structured data transformation by auto
 **Variable Injection**: Data fields become direct variables:
 ```python
 # CSV with columns: name,price,quantity
-total = price * quantity  # Direct access instead of data["price"] * data["quantity"]
+total = price * quantity                     # Direct access to fields
+theme = get_path("profile.settings.theme", user)  # Navigate from field variables
 ```
 
 **Conflict Resolution**: All Stelp functionality uses `stelp_` prefix:
