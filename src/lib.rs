@@ -2,6 +2,7 @@
 pub mod chunking;
 pub mod colors;
 pub mod error;
+pub mod flatten;
 pub mod formatters;
 pub mod input_format;
 pub mod output_format;

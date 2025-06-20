@@ -1,4 +1,5 @@
 use crate::error::ProcessingError;
+use crate::flatten::{flatten_data, has_nested_data};
 use crate::formatters::logfmt::LogfmtFormatter;
 use crate::formatters::RecordFormatter;
 use crate::pipeline::context::RecordData;
@@ -44,6 +45,17 @@ impl std::str::FromStr for OutputFormat {
 impl Default for OutputFormat {
     fn default() -> Self {
         OutputFormat::Logfmt
+    }
+}
+
+impl OutputFormat {
+    /// Check if this output format needs nested data to be flattened
+    pub fn needs_flattening(&self) -> bool {
+        matches!(self, 
+            OutputFormat::Csv | 
+            OutputFormat::Tsv | 
+            OutputFormat::Fields
+        )
     }
 }
 
@@ -125,11 +137,23 @@ impl OutputFormatter {
         }
     }
 
+    /// Apply flattening to structured data if the output format requires it
+    fn maybe_flatten_data(&self, data: &Value) -> Value {
+        if self.format.needs_flattening() && has_nested_data(data) {
+            flatten_data(data)
+        } else {
+            data.clone()
+        }
+    }
+
     fn filter_data(&self, record: &RecordData) -> RecordData {
         match record {
             RecordData::Structured(data) => {
-                // Apply key filtering first (if specified)
-                let filtered_by_keys = self.filter_keys(data);
+                // Apply flattening first if needed
+                let flattened_data = self.maybe_flatten_data(data);
+                
+                // Apply key filtering (if specified)
+                let filtered_by_keys = self.filter_keys(&flattened_data);
 
                 // Then apply remove_keys filtering if specified
                 if let Some(ref remove_keys) = self.remove_keys {
@@ -258,7 +282,7 @@ impl OutputFormatter {
         separator: char,
     ) -> Result<(), ProcessingError> {
         let separator_str = separator.to_string();
-
+        
         match record {
             RecordData::Text(text) => {
                 if !self.csv_headers_written {
@@ -268,8 +292,11 @@ impl OutputFormatter {
                 writeln!(output, "{}", self.field_escape(text, separator))?;
             }
             RecordData::Structured(data) => {
-                let data = self.filter_keys(data);
-                if let serde_json::Value::Object(obj) = data {
+                // Apply flattening before filtering and processing
+                let flattened_data = self.maybe_flatten_data(data);
+                let filtered_data = self.filter_keys(&flattened_data);
+                
+                if let serde_json::Value::Object(obj) = filtered_data {
                     let key_order = self.get_key_order(&obj);
 
                     // Write headers if not written yet
@@ -369,8 +396,11 @@ impl OutputFormatter {
                 writeln!(output, "{}", text)?;
             }
             RecordData::Structured(data) => {
-                let data = self.filter_keys(data);
-                if let Value::Object(obj) = data {
+                // Apply flattening before filtering and processing
+                let flattened_data = self.maybe_flatten_data(data);
+                let filtered_data = self.filter_keys(&flattened_data);
+                
+                if let Value::Object(obj) = filtered_data {
                     let key_order = self.get_key_order(&obj);
                     let mut values = Vec::new();
 

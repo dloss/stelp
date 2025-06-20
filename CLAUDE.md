@@ -93,6 +93,10 @@ echo -e "name,price,quantity\nAlice,10.50,3\nBob,25.00,2\nCharlie,5.00,1" | carg
 # Remove keys at output stage
 echo -e "name,price,quantity,debug\nAlice,10.50,3,temp\nBob,25.00,2,test" | cargo run -- -f csv --derive 'total = float(price) * float(quantity)' --remove-keys debug
 
+# Automatic flattening for flat output formats
+echo '{"user":{"name":"Alice","profile":{"age":30}},"tags":["admin","user"]}' | cargo run -- -f jsonl -F csv  # Outputs: tags.0,tags.1,user.name,user.profile.age
+echo '{"config":{"db":{"host":"localhost","port":5432}}}' | cargo run -- -f jsonl -F tsv     # Outputs: config.db.host   config.db.port
+
 # Column extraction with cols() function - klp-compatible
 echo "alpha beta gamma delta epsilon" | cargo run -- -e 'cols(line, 0)'  # First column
 echo "alpha beta gamma delta epsilon" | cargo run -- -e 'cols(line, -1)' # Last column
@@ -169,6 +173,7 @@ echo -e "name,score\nAlice,85\nBob,92\nCharlie,78\nDave,95" | cargo run -- -f cs
   - `glob_dict.rs` - Global variable management
 - `src/input_format.rs` - Input format parsing (JSON, CSV, logfmt)
 - `src/output_format.rs` - Output format handling
+- `src/flatten.rs` - Data flattening utilities for flat output formats
 - `src/variables.rs` - Global state management
 - `src/main.rs` - CLI argument parsing and pipeline setup
 
