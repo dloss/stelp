@@ -926,6 +926,102 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
 
         Ok(current)
     }
+
+    // Statistical functions
+    fn avg<'v>(heap: &'v Heap, sequence: Value<'v>) -> anyhow::Result<Value<'v>> {
+        use starlark::values::list::ListRef;
+        
+        let list = ListRef::from_value(sequence)
+            .ok_or_else(|| anyhow::anyhow!("avg() argument must be a list"))?;
+        
+        if list.is_empty() {
+            return Err(anyhow::anyhow!("avg() of empty sequence"));
+        }
+        
+        let mut sum = 0.0;
+        let mut count = 0;
+        
+        for item in list.iter() {
+            // Try to convert to number using available methods
+            let num_val = if let Some(i) = item.unpack_i32() {
+                i as f64
+            } else if let Some(s) = item.unpack_str() {
+                s.parse::<f64>().map_err(|_| anyhow::anyhow!("avg() requires numeric values, got non-numeric string: {}", s))?
+            } else {
+                // Try to convert via string representation
+                item.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("avg() requires numeric values, got: {}", item.get_type()))?
+            };
+            
+            sum += num_val;
+            count += 1;
+        }
+        
+        Ok(heap.alloc(sum / count as f64))
+    }
+
+    fn percentile<'v>(heap: &'v Heap, sequence: Value<'v>, p: Value<'v>) -> anyhow::Result<Value<'v>> {
+        use starlark::values::list::ListRef;
+        
+        let list = ListRef::from_value(sequence)
+            .ok_or_else(|| anyhow::anyhow!("percentile() first argument must be a list"))?;
+        
+        if list.is_empty() {
+            return Err(anyhow::anyhow!("percentile() of empty sequence"));
+        }
+        
+        // Extract percentile value
+        let p_val = if let Some(i) = p.unpack_i32() {
+            i as f64
+        } else if let Some(s) = p.unpack_str() {
+            s.parse::<f64>().map_err(|_| anyhow::anyhow!("percentile value must be numeric, got non-numeric string: {}", s))?
+        } else {
+            // Try to convert via string representation
+            p.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("percentile value must be numeric, got: {}", p.get_type()))?
+        };
+        
+        if p_val < 0.0 || p_val > 100.0 {
+            return Err(anyhow::anyhow!("percentile must be between 0 and 100, got: {}", p_val));
+        }
+        
+        // Extract and sort numeric values
+        let mut values: Vec<f64> = Vec::new();
+        for item in list.iter() {
+            // Try to convert to number using available methods
+            let num_val = if let Some(i) = item.unpack_i32() {
+                i as f64
+            } else if let Some(s) = item.unpack_str() {
+                s.parse::<f64>().map_err(|_| anyhow::anyhow!("percentile() requires numeric values, got non-numeric string: {}", s))?
+            } else {
+                // Try to convert via string representation
+                item.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("percentile() requires numeric values, got: {}", item.get_type()))?
+            };
+            
+            values.push(num_val);
+        }
+        
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Calculate percentile using linear interpolation method
+        let n = values.len();
+        let index = (p_val / 100.0) * (n - 1) as f64;
+        
+        if index.fract() == 0.0 {
+            // Exact index
+            let idx = index as usize;
+            Ok(heap.alloc(values[idx]))
+        } else {
+            // Interpolate between two values
+            let lower_idx = index.floor() as usize;
+            let upper_idx = index.ceil() as usize;
+            let fraction = index.fract();
+            
+            let lower_val = values[lower_idx];
+            let upper_val = values[upper_idx];
+            let result = lower_val + fraction * (upper_val - lower_val);
+            
+            Ok(heap.alloc(result))
+        }
+    }
 }
 
 // Helper function for duration parsing with hybrid approach
@@ -2551,6 +2647,183 @@ mod tests {
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals).unwrap();
         assert_eq!(result.unpack_str(), Some("hello"));
+    }
+
+    // Statistical function tests
+    #[test]
+    fn test_avg_basic() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test with integers
+        let script = r#"avg([1, 2, 3, 4, 5])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 3.0).abs() < f64::EPSILON);
+
+        // Test with floats
+        let script = r#"avg([1.5, 2.5, 3.5])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 2.5).abs() < f64::EPSILON);
+
+        // Test with mixed numbers
+        let script = r#"avg([10, 20.5, 15])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 15.166666666666666).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_avg_edge_cases() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test single element
+        let script = r#"avg([42])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 42.0).abs() < f64::EPSILON);
+
+        // Test negative numbers
+        let script = r#"avg([-1, -2, -3])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - (-2.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_avg_error_cases() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test empty list
+        let script = r#"avg([])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("avg() of empty sequence"));
+
+        // Test non-list argument
+        let script = r#"avg("not a list")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("avg() argument must be a list"));
+    }
+
+    #[test]
+    fn test_percentile_basic() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test median (50th percentile)
+        let script = r#"percentile([1, 2, 3, 4, 5], 50)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 3.0).abs() < f64::EPSILON);
+
+        // Test 0th percentile (minimum)
+        let script = r#"percentile([5, 1, 3, 2, 4], 0)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 1.0).abs() < f64::EPSILON);
+
+        // Test 100th percentile (maximum)
+        let script = r#"percentile([5, 1, 3, 2, 4], 100)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_interpolation() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test case requiring interpolation
+        let script = r#"percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 90)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 9.1).abs() < f64::EPSILON);
+
+        // Test 25th percentile
+        let script = r#"percentile([1, 2, 3, 4], 25)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 1.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_error_cases() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test empty list
+        let script = r#"percentile([], 50)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("percentile() of empty sequence"));
+
+        // Test invalid percentile value
+        let script = r#"percentile([1, 2, 3], 150)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("percentile must be between 0 and 100"));
+
+        // Test negative percentile
+        let script = r#"percentile([1, 2, 3], -10)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("percentile must be between 0 and 100"));
+
+        // Test non-list first argument
+        let script = r#"percentile("not a list", 50)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("percentile() first argument must be a list"));
+    }
+
+    #[test]
+    fn test_statistical_functions_with_floats() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test avg with decimal values
+        let script = r#"avg([10.5, 20.3, 15.7, 8.2])"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        assert!((value - 13.675).abs() < f64::EPSILON);
+
+        // Test percentile with decimal values and decimal percentile
+        let script = r#"percentile([1.1, 2.2, 3.3, 4.4, 5.5], 75.5)"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        let value = result.to_string().parse::<f64>().unwrap();
+        // Should interpolate between 3.3 and 4.4 at 75.5%
+        assert!((value - 4.422).abs() < 0.001);
     }
 }
 

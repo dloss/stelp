@@ -127,6 +127,14 @@ echo '{"config": {"timeout": 30}}' | cargo run -- -f jsonl --derive 'host = get_
 
 # For invalid identifiers (dashes, spaces), use stelp_data
 echo '{"user-name": "Bob", "meta-data": {"theme": "dark"}}' | cargo run -- -f jsonl --derive 'name = get_path("user-name", stelp_data); theme = get_path("meta-data.theme", stelp_data)'
+
+# Statistical function examples
+echo "[1, 2, 3, 4, 5]" | cargo run -- -e 'avg([1, 2, 3, 4, 5])'  # Output: 3.0
+
+echo "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]" | cargo run -- -e 'percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 90)'  # Output: 9.1
+
+# Statistical analysis with CSV data
+echo -e "name,score\nAlice,85\nBob,92\nCharlie,78\nDave,95" | cargo run -- -f csv --derive 'scores = [85, 92, 78, 95]; avg_score = avg(scores); top_10_percent = percentile(scores, 90)'
 ```
 
 ## Architecture Overview
@@ -227,6 +235,7 @@ Scripts have access to:
 - Timestamp functions: `parse_ts()`, `format_ts()`, `now()`, `ts_diff()`, `ts_add()`, `guess_ts()`
 - Column extraction: `cols()` - klp-compatible column extraction with slice and multi-index support
 - Path navigation: `get_path()` - navigate nested data structures using dot notation
+- Statistical functions: `avg()`, `percentile()` - calculate averages and percentiles of numeric lists
 - Global state via `glob` dictionary
 - Meta variables: `LINENUM`, `FILENAME`, `RECNUM`
 
@@ -279,3 +288,7 @@ stelp --derive 'total = price * qty' --remove-keys temp,debug data.csv
 - **Structured data only**: Use `-f csv/jsonl/etc` 
 - **Valid identifiers**: Data keys must be valid Starlark variable names
 - **Dict format**: Arrays and primitives not supported
+
+## Input Format Details
+
+- The input format parsers (e.g. -f jsonl) read their data into the "data" variable. If that is not None, data mode is active. In this mode stages don't pass their return value to the next stage, but only the data variable.
