@@ -118,6 +118,12 @@ echo '{"request": "GET /api/users HTTP/1.1"}' | cargo run -- -f jsonl --derive '
 
 # Apache log processing with cols()
 echo '192.168.1.1 - - [25/Dec/2021:10:24:56 +0000] "GET /api/status HTTP/1.1" 200 1234' | cargo run -- -e 'ip = cols(line, 0); method = cols(line, 4); f"Request from {ip}: {method}"'
+
+# Path navigation examples
+echo '{"user": {"name": "Alice", "tags": ["admin", "user"]}, "items": [{"id": 1}, {"id": 2}]}' | cargo run -- -f jsonl --derive 'user_name = get_path("user.name", stelp_data); first_tag = get_path("user.tags.0", stelp_data); item_id = get_path("items.1.id", stelp_data)'
+
+# Path navigation with defaults for missing data
+echo '{"config": {"timeout": 30}}' | cargo run -- -f jsonl --derive 'host = get_path("config.host", stelp_data, "localhost"); port = get_path("config.port", stelp_data, 8080)'
 ```
 
 ## Architecture Overview
@@ -217,6 +223,7 @@ Scripts have access to:
 - CSV functions: `parse_csv()`, `dump_csv()`
 - Timestamp functions: `parse_ts()`, `format_ts()`, `now()`, `ts_diff()`, `ts_add()`, `guess_ts()`
 - Column extraction: `cols()` - klp-compatible column extraction with slice and multi-index support
+- Path navigation: `get_path()` - navigate nested data structures using dot notation
 - Global state via `glob` dictionary
 - Meta variables: `LINENUM`, `FILENAME`, `RECNUM`
 

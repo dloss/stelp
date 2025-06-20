@@ -869,6 +869,63 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             Ok(heap.alloc(starlark_list))
         }
     }
+
+    /// Navigate nested data structures using dot notation with array indexing
+    fn get_path<'v>(
+        pathspec: &str,
+        data: Value<'v>,
+        default: Option<Value<'v>>,
+    ) -> anyhow::Result<Value<'v>> {
+        use starlark::values::{dict::DictRef, list::ListRef};
+        
+        if pathspec.is_empty() {
+            return Ok(data);
+        }
+
+        let segments: Vec<&str> = pathspec.split('.').collect();
+        let mut current = data;
+        let default_value = default.unwrap_or(Value::new_none());
+
+        for segment in segments {
+            current = if let Some(dict) = DictRef::from_value(current) {
+                // Dictionary access
+                // Use iteration to find the key (since dict.get() may not have the API we expect)
+                let mut found = None;
+                for (k, v) in dict.iter() {
+                    if let Some(key_str) = k.unpack_str() {
+                        if key_str == segment {
+                            found = Some(v);
+                            break;
+                        }
+                    }
+                }
+                match found {
+                    Some(value) => value,
+                    None => return Ok(default_value),
+                }
+            } else if let Some(list) = ListRef::from_value(current) {
+                // Array access - parse segment as index
+                let index = segment.parse::<i32>().map_err(|_| {
+                    anyhow::anyhow!("Invalid array index '{}' - must be a number", segment)
+                })?;
+                
+                if index < 0 || index as usize >= list.len() {
+                    return Ok(default_value);
+                }
+                
+                // Use iterator to access the element
+                match list.iter().nth(index as usize) {
+                    Some(value) => value,
+                    None => return Ok(default_value),
+                }
+            } else {
+                // Can't navigate further into non-dict/non-list
+                return Ok(default_value);
+            };
+        }
+
+        Ok(current)
+    }
 }
 
 // Helper function for duration parsing with hybrid approach
@@ -2368,6 +2425,132 @@ mod tests {
         let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
         let result = eval.eval_module(ast, &globals);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_path_basic_dict_access() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("name", {"name": "Alice", "age": 30})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("Alice"));
+    }
+
+    #[test]
+    fn test_get_path_nested_dict_access() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("user.name", {"user": {"name": "Bob", "id": 123}})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("Bob"));
+    }
+
+    #[test]
+    fn test_get_path_array_access() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("items.1", {"items": ["first", "second", "third"]})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("second"));
+    }
+
+    #[test]
+    fn test_get_path_nested_array_dict() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("users.0.name", {"users": [{"name": "Charlie", "id": 123}]})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("Charlie"));
+    }
+
+    #[test]
+    fn test_get_path_with_default() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("missing.path", {"existing": "data"}, "fallback")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("fallback"));
+    }
+
+    #[test]
+    fn test_get_path_out_of_bounds_array() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("items.10", {"items": ["a", "b"]}, "not_found")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("not_found"));
+    }
+
+    #[test]
+    fn test_get_path_invalid_array_index() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("items.abc", {"items": ["a", "b"]}, "error")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_path_non_container_access() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("text.field", {"text": "not_a_dict"}, "default")"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("default"));
+    }
+
+    #[test]
+    fn test_get_path_empty_path() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        let script = r#"get_path("", {"key": "value"})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.get_type(), "dict");
+    }
+
+    #[test]
+    fn test_get_path_mixed_types() {
+        let globals = GlobalsBuilder::new().with(global_functions).build();
+        let module = Module::new();
+        let mut eval = Evaluator::new(&module);
+
+        // Test accessing different data types
+        let script = r#"get_path("number", {"number": 42, "text": "hello", "float": 3.14})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_i32(), Some(42));
+
+        let script = r#"get_path("text", {"number": 42, "text": "hello", "float": 3.14})"#;
+        let ast = AstModule::parse("test", script.to_owned(), &Dialect::Extended).unwrap();
+        let result = eval.eval_module(ast, &globals).unwrap();
+        assert_eq!(result.unpack_str(), Some("hello"));
     }
 }
 
