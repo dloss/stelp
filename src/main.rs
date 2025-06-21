@@ -330,7 +330,7 @@ impl Args {
             }
             
             Some(keys)
-        } else {
+        } else if self.keys.is_some() {
             // Normal --keys behavior
             self.keys.as_ref().map(|k| {
                 k.split(',')
@@ -338,6 +338,9 @@ impl Args {
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<String>>()
             })
+        } else {
+            // No keys specified - use original field order
+            None
         }
     }
 }
@@ -615,8 +618,11 @@ fn main() {
         }
     }
 
-    // Add default identity processor if no processing steps were provided
-    if steps.is_empty() && !args.input_files.is_empty() {
+    // Add default identity processor if no processing steps were provided AND actual processing is needed
+    // Skip identity processor for pure format conversion operations (no BEGIN/END scripts)
+    let needs_processing = args.begin.is_some() || args.end.is_some();
+    
+    if steps.is_empty() && !args.input_files.is_empty() && needs_processing {
         // For structured formats, a simple identity transform that preserves the data
         // For line format, just pass through the line
         let identity_script = match input_format.as_ref().unwrap_or(&InputFormat::Line) {

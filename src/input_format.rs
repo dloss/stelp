@@ -111,50 +111,31 @@ impl CsvParser {
         Ok(())
     }
 
-    // Proper field parsing that handles quoted fields with separators
+    // Fast field parsing using the csv crate
     fn parse_fields(&self, line: &str) -> Result<Vec<String>, String> {
-        let mut fields = Vec::new();
-        let mut current_field = String::new();
-        let mut in_quotes = false;
-        let mut chars = line.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            match ch {
-                '"' => {
-                    // Check for escaped quotes (double quotes)
-                    if in_quotes && chars.peek() == Some(&'"') {
-                        chars.next(); // consume the second quote
-                        current_field.push('"');
-                    } else {
-                        // Toggle quote state
-                        in_quotes = !in_quotes;
-                    }
-                }
-                ch if ch == self.separator => {
-                    if in_quotes {
-                        // Inside quotes, separator is part of the field
-                        current_field.push(ch);
-                    } else {
-                        // Outside quotes, separator is field separator
-                        fields.push(current_field.trim().to_string());
-                        current_field.clear();
-                    }
-                }
-                _ => {
-                    current_field.push(ch);
-                }
+        let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
+        
+        // Create a CSV reader for this single line
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(self.separator as u8)
+            .has_headers(false)
+            .from_reader(line.as_bytes());
+        
+        // Read the single record
+        let mut record = csv::StringRecord::new();
+        match reader.read_record(&mut record) {
+            Ok(true) => {
+                // Successfully read a record, trim whitespace from fields
+                Ok(record.iter().map(|s| s.trim().to_string()).collect())
+            }
+            Ok(false) => {
+                // Empty line
+                Ok(vec![])
+            }
+            Err(e) => {
+                Err(format!("{} parsing error: {}", format_name, e))
             }
         }
-
-        // Don't forget the last field
-        fields.push(current_field.trim().to_string());
-
-        if in_quotes {
-            let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
-            return Err(format!("Unclosed quote in {} line", format_name));
-        }
-
-        Ok(fields)
     }
 }
 
@@ -1048,34 +1029,114 @@ impl<'a> InputFormatWrapper<'a> {
 
     fn process_csv_or_tsv<R: BufRead, W: Write>(
         &self,
-        mut reader: R,
+        reader: R,
         pipeline: &mut crate::StreamPipeline,
         output: &mut W,
         filename: Option<&str>,
         is_tsv: bool,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        use std::time::Instant;
+        let start_time = Instant::now();
         let format_name = if is_tsv { "TSV" } else { "CSV" };
         
-        // Read and parse headers first
-        let mut header_line = String::new();
-        reader.read_line(&mut header_line)?;
-
-        if header_line.trim().is_empty() {
-            return Err(format!("{} file is empty", format_name).into());
+        // Initialize streaming context
+        pipeline.init_streaming_context(filename);
+        
+        // Initialize local stats
+        let mut file_stats = crate::context::ProcessingStats::default();
+        
+        // Execute BEGIN processor if present (before reading any data)
+        match pipeline.execute_begin_streaming(output) {
+            Ok(begin_output_count) => {
+                file_stats.records_output += begin_output_count;
+            }
+            Err(e) => {
+                if e.to_string() == "Early exit from BEGIN" {
+                    file_stats.processing_time = start_time.elapsed();
+                    return Ok(file_stats); // Early exit from BEGIN
+                } else {
+                    return Err(e);
+                }
+            }
         }
-
-        let mut parser = if is_tsv {
-            CsvParser::new_tsv()
-        } else {
-            CsvParser::new()
-        };
-        parser.parse_headers(&header_line)?;
-
-        // Use generic streaming function for the data lines
-        self.process_line_based_format_streaming(
-            reader, pipeline, output, filename, 
-            parser, format_name, false // false because we already handled headers
-        )
+        
+        let error_strategy = pipeline.get_config().error_strategy.clone();
+        
+        // Create CSV reader with proper configuration
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .delimiter(if is_tsv { b'\t' } else { b',' })
+            .has_headers(true)
+            .from_reader(reader);
+        
+        // Get headers and convert to owned strings
+        let headers: Vec<String> = csv_reader.headers()?.iter().map(|h| h.to_string()).collect();
+        
+        let mut line_number = 1; // Starting after header
+        
+        // STREAMING: Process each record immediately using csv crate's iterator
+        for record_result in csv_reader.records() {
+            line_number += 1;
+            
+            let record = match record_result {
+                Ok(record) => record,
+                Err(parse_error) => {
+                    // Handle parsing error according to error strategy
+                    match error_strategy {
+                        crate::config::ErrorStrategy::FailFast => {
+                            return Err(format!(
+                                "{} parse error on line {}: {}",
+                                format_name, line_number, parse_error
+                            ).into());
+                        }
+                        crate::config::ErrorStrategy::Skip => {
+                            file_stats.errors += 1;
+                            file_stats.parse_errors.push(crate::context::ParseErrorInfo {
+                                line_number,
+                                format_name: format_name.to_string(),
+                                error: parse_error.to_string(),
+                            });
+                            continue;
+                        }
+                    }
+                }
+            };
+            
+            // Convert CSV record to JSON
+            let mut map = serde_json::Map::new();
+            for (header, value) in headers.iter().zip(record.iter()) {
+                map.insert(header.clone(), serde_json::Value::String(value.to_string()));
+            }
+            let json_value = serde_json::Value::Object(map);
+            
+            // Create structured record
+            let structured_record = crate::context::RecordData::structured(json_value);
+            
+            // STREAMING: Process this single record immediately
+            let should_continue = pipeline.process_single_record_streaming(structured_record, output)?;
+            if !should_continue {
+                break; // Exit or broken pipe
+            }
+        }
+        
+        // Execute END processor if present (after processing all data)
+        match pipeline.execute_end_streaming(output) {
+            Ok(end_output_count) => {
+                file_stats.records_output += end_output_count;
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+        
+        // Copy final stats from pipeline
+        let pipeline_stats = pipeline.get_stats();
+        file_stats.records_processed = pipeline_stats.records_processed;
+        file_stats.records_output = pipeline_stats.records_output;
+        file_stats.records_skipped = pipeline_stats.records_skipped;
+        file_stats.errors += pipeline_stats.errors; // Add to existing parse errors
+        file_stats.processing_time = start_time.elapsed();
+        
+        Ok(file_stats)
     }
 
     fn process_csv<R: BufRead, W: Write>(

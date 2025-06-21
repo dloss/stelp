@@ -2,21 +2,18 @@ use crate::colors::ColorScheme;
 use crate::formatters::RecordFormatter;
 use crate::pipeline::context::RecordData;
 use serde_json::Value;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// Standard logfmt formatter with colored output
 pub struct LogfmtFormatter {
     colors: ColorScheme,
-    timestamp_keys: Vec<&'static str>,
     level_keys: Vec<&'static str>,
-    message_keys: Vec<&'static str>,
 }
 
 impl LogfmtFormatter {
     pub fn new(use_colors: bool) -> Self {
         Self {
             colors: ColorScheme::new(use_colors),
-            timestamp_keys: crate::pipeline::config::TIMESTAMP_KEYS.to_vec(),
             level_keys: vec![
                 "level",
                 "loglevel",
@@ -26,13 +23,12 @@ impl LogfmtFormatter {
                 "levelname",
                 "@l",
             ],
-            message_keys: vec!["message", "msg", "@m", "@message", "text", "content"],
         }
     }
 
-    /// Convert JSON Value to HashMap of strings for easier processing
-    fn value_to_string_map(&self, value: &Value) -> HashMap<String, String> {
-        let mut map = HashMap::new();
+    /// Convert JSON Value to IndexMap of strings for easier processing
+    fn value_to_string_map(&self, value: &Value) -> IndexMap<String, String> {
+        let mut map = IndexMap::new();
 
         if let Value::Object(obj) = value {
             for (key, val) in obj {
@@ -51,61 +47,94 @@ impl LogfmtFormatter {
     }
 
     /// Format structured fields as standard logfmt (space-separated key=value)
-    pub fn format_fields_standard(&self, fields: &HashMap<String, String>) -> String {
+    pub fn format_fields_standard(&self, fields: &IndexMap<String, String>) -> String {
+        self.format_fields_with_order(fields, None)
+    }
+
+    /// Format fields with explicit key ordering
+    pub fn format_fields_with_order(&self, fields: &IndexMap<String, String>, key_order: Option<&[String]>) -> String {
         if fields.is_empty() {
             return String::new();
         }
 
-        let sorted_fields = self.sort_fields_by_priority(fields);
-        let formatted_pairs: Vec<String> = sorted_fields
-            .iter()
-            .map(|(key, value)| self.format_key_value_pair(key, value))
-            .collect();
-
-        formatted_pairs.join(" ")
-    }
-
-    /// Sort fields by priority: timestamp, level, message, then alphabetical
-    pub fn sort_fields_by_priority<'a>(
-        &self,
-        fields: &'a HashMap<String, String>,
-    ) -> Vec<(&'a String, &'a String)> {
-        let mut sorted_fields: Vec<(&String, &String)> = fields.iter().collect();
-        sorted_fields.sort_by_key(|(key, _)| {
-            if self.is_timestamp_field(key) {
-                (0, key.as_str())
-            } else if self.is_level_field(key) {
-                (1, key.as_str())
-            } else if self.is_message_field(key) {
-                (2, key.as_str())
-            } else {
-                (3, key.as_str())
+        // Pre-allocate buffer with estimated capacity
+        let estimated_capacity = fields.len() * 32; // Rough estimate per field
+        let mut output = String::with_capacity(estimated_capacity);
+        
+        let ordered_fields = if let Some(order) = key_order {
+            // Use provided order, then remaining fields in original order
+            let mut result = Vec::new();
+            let mut used_keys = std::collections::HashSet::new();
+            
+            // First, add fields in the specified order
+            for key in order {
+                if let Some(value) = fields.get(key) {
+                    result.push((key, value));
+                    used_keys.insert(key);
+                }
             }
-        });
-        sorted_fields
+            
+            // Then add remaining fields in original order
+            for (key, value) in fields {
+                if !used_keys.contains(key) {
+                    result.push((key, value));
+                }
+            }
+            
+            result
+        } else {
+            // Use original field order (no sorting)
+            fields.iter().collect()
+        };
+        
+        let mut first = true;
+        for (key, value) in ordered_fields {
+            if !first {
+                output.push(' ');
+            }
+            first = false;
+            
+            self.format_key_value_pair_into(key, value, &mut output);
+        }
+
+        output
     }
+
 
     /// Format a single key=value pair with appropriate colors
     pub fn format_key_value_pair(&self, key: &str, value: &str) -> String {
-        let colored_key = if self.colors.key.is_empty() {
-            key.to_string()
-        } else {
-            format!("{}{}{}", self.colors.key, key, self.colors.reset)
-        };
-
-        let equals = if self.colors.equals.is_empty() {
-            "=".to_string()
-        } else {
-            format!("{}{}{}", self.colors.equals, "=", self.colors.reset)
-        };
-
-        let colored_value = self.format_value(key, value);
-
-        format!("{}{}{}", colored_key, equals, colored_value)
+        let mut output = String::with_capacity(key.len() + value.len() + 10); // +10 for colors/equals
+        self.format_key_value_pair_into(key, value, &mut output);
+        output
     }
 
-    /// Format a value with color and quoting based on content and field type
-    fn format_value(&self, key: &str, value: &str) -> String {
+    /// Format a single key=value pair directly into a buffer (zero-allocation)
+    fn format_key_value_pair_into(&self, key: &str, value: &str, output: &mut String) {
+        // Write colored key
+        if !self.colors.key.is_empty() {
+            output.push_str(&self.colors.key);
+        }
+        output.push_str(key);
+        if !self.colors.key.is_empty() {
+            output.push_str(&self.colors.reset);
+        }
+
+        // Write colored equals
+        if !self.colors.equals.is_empty() {
+            output.push_str(&self.colors.equals);
+        }
+        output.push('=');
+        if !self.colors.equals.is_empty() {
+            output.push_str(&self.colors.reset);
+        }
+
+        // Write colored value
+        self.format_value_into(key, value, output);
+    }
+
+
+    /// Format a value directly into a buffer (zero-allocation)
+    fn format_value_into(&self, key: &str, value: &str, output: &mut String) {
         // Choose color based on field type and value content
         let color = if self.is_level_field(key) {
             self.level_color(value)
@@ -114,22 +143,36 @@ impl LogfmtFormatter {
             self.colors.string
         };
 
-        // Quote value if it contains spaces or special characters
-        let quoted_value = if self.needs_quoting(value) {
-            format!("\"{}\"", self.escape_quotes(value))
-        } else {
-            value.to_string()
-        };
+        // Apply color
+        if !color.is_empty() {
+            output.push_str(color);
+        }
 
-        if color.is_empty() {
-            quoted_value
+        // Quote and write value if it contains spaces or special characters
+        if self.needs_quoting(value) {
+            output.push('"');
+            // Inline escape quotes to avoid allocation
+            for ch in value.chars() {
+                if ch == '"' {
+                    output.push_str("\\\"");
+                } else {
+                    output.push(ch);
+                }
+            }
+            output.push('"');
         } else {
-            format!("{}{}{}", color, quoted_value, self.colors.reset)
+            output.push_str(value);
+        }
+
+        // Reset color
+        if !color.is_empty() {
+            output.push_str(&self.colors.reset);
         }
     }
 
-    /// Format a value for plain mode (only value with color, minimal quoting)
-    fn format_value_plain(&self, key: &str, value: &str) -> String {
+
+    /// Format a value for plain mode directly into a buffer (zero-allocation)
+    fn format_value_plain_into(&self, key: &str, value: &str, output: &mut String) {
         // Choose color based on field type and value content
         let color = if self.is_level_field(key) {
             self.level_color(value)
@@ -138,30 +181,43 @@ impl LogfmtFormatter {
             self.colors.string
         };
 
-        // In plain mode, don't quote values - just output them as-is
-        // Users can handle spacing/parsing themselves since there are no keys
-        let display_value = value.to_string();
+        // Apply color
+        if !color.is_empty() {
+            output.push_str(color);
+        }
 
-        if color.is_empty() {
-            display_value
-        } else {
-            format!("{}{}{}", color, display_value, self.colors.reset)
+        // In plain mode, don't quote values - just output them as-is
+        output.push_str(value);
+
+        // Reset color
+        if !color.is_empty() {
+            output.push_str(&self.colors.reset);
         }
     }
 
     /// Format structured fields in plain mode (space-separated values only, no keys)
-    pub fn format_fields_plain(&self, fields: &HashMap<String, String>) -> String {
+    pub fn format_fields_plain(&self, fields: &IndexMap<String, String>) -> String {
         if fields.is_empty() {
             return String::new();
         }
 
-        let sorted_fields = self.sort_fields_by_priority(fields);
-        let formatted_values: Vec<String> = sorted_fields
-            .iter()
-            .map(|(key, value)| self.format_value_plain(key, value))
-            .collect();
+        // Pre-allocate buffer with estimated capacity
+        let estimated_capacity = fields.len() * 16; // Rough estimate per value
+        let mut output = String::with_capacity(estimated_capacity);
+        
+        // Use original field order - no sorting needed for performance
+        let mut first = true;
+        
+        for (key, value) in fields {
+            if !first {
+                output.push(' ');
+            }
+            first = false;
+            
+            self.format_value_plain_into(key, value, &mut output);
+        }
 
-        formatted_values.join(" ")
+        output
     }
 
     /// Get appropriate color for log level values
@@ -183,19 +239,9 @@ impl LogfmtFormatter {
         }
     }
 
-    /// Check if key is likely a timestamp field
-    fn is_timestamp_field(&self, key: &str) -> bool {
-        self.timestamp_keys.iter().any(|&tk| tk == key)
-    }
-
     /// Check if key is likely a log level field
     fn is_level_field(&self, key: &str) -> bool {
         self.level_keys.iter().any(|&lk| lk == key)
-    }
-
-    /// Check if key is likely a message field
-    fn is_message_field(&self, key: &str) -> bool {
-        self.message_keys.iter().any(|&mk| mk == key)
     }
 
     /// Check if value needs to be quoted per logfmt rules
@@ -209,20 +255,22 @@ impl LogfmtFormatter {
             || value.contains('=')
     }
 
-    /// Escape quotes in values per logfmt rules
-    fn escape_quotes(&self, value: &str) -> String {
-        // Escape quotes with backslashes
-        value.replace('"', "\\\"")
-    }
+
+
+
 }
 
 impl RecordFormatter for LogfmtFormatter {
     fn format_record(&self, record: &RecordData) -> String {
+        self.format_record_with_key_order(record, None)
+    }
+    
+    fn format_record_with_key_order(&self, record: &RecordData, key_order: Option<&[String]>) -> String {
         match record {
             RecordData::Text(text) => text.clone(),
             RecordData::Structured(data) => {
                 let fields = self.value_to_string_map(data);
-                self.format_fields_standard(&fields)
+                self.format_fields_with_order(&fields, key_order)
             }
         }
     }
@@ -245,12 +293,12 @@ impl LogfmtFormatter {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     #[test]
     fn test_format_simple_fields() {
         let formatter = LogfmtFormatter::new(false); // No colors for testing
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
         fields.insert("level".to_string(), "info".to_string());
         fields.insert("message".to_string(), "test message".to_string());
         fields.insert("count".to_string(), "42".to_string());
@@ -262,33 +310,13 @@ mod tests {
         assert!(result.contains("count=42"));
     }
 
-    #[test]
-    fn test_field_priority_order() {
-        let formatter = LogfmtFormatter::new(false);
-        let mut fields = HashMap::new();
-        fields.insert("zebra".to_string(), "last".to_string());
-        fields.insert("timestamp".to_string(), "2024-01-01T10:00:00Z".to_string());
-        fields.insert("level".to_string(), "error".to_string());
-        fields.insert("message".to_string(), "test".to_string());
-        fields.insert("alpha".to_string(), "middle".to_string());
-
-        let result = formatter.format_fields_standard(&fields);
-        let parts: Vec<&str> = result.split_whitespace().collect();
-
-        // timestamp should come first, then level, then message
-        assert!(parts[0].starts_with("timestamp="));
-        assert!(parts[1].starts_with("level="));
-        assert!(parts[2].starts_with("message="));
-        // alpha should come before zebra (alphabetical)
-        assert!(result.find("alpha=").unwrap() < result.find("zebra=").unwrap());
-    }
 
     #[test]
     fn test_colored_vs_plain_output() {
         let colored = LogfmtFormatter::new(true);
         let plain = LogfmtFormatter::new(false);
 
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
         fields.insert("level".to_string(), "error".to_string());
 
         let colored_result = colored.format_fields_standard(&fields);
@@ -307,7 +335,7 @@ mod tests {
     #[test]
     fn test_quoting_behavior() {
         let formatter = LogfmtFormatter::new(false);
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
 
         fields.insert("simple".to_string(), "value".to_string());
         fields.insert("spaced".to_string(), "has spaces".to_string());

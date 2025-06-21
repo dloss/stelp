@@ -71,6 +71,7 @@ fn test_field_priority_ordering() {
         .arg("--no-color")
         .arg("-f")
         .arg("jsonl")
+        .arg("--common")
         .arg(temp_file.path())
         .output()
         .expect("Failed to execute stelp");
@@ -78,12 +79,35 @@ fn test_field_priority_ordering() {
     let result = String::from_utf8(output.stdout).unwrap();
     let parts: Vec<&str> = result.trim().split_whitespace().collect();
 
-    // timestamp should come first, then level, then message
+    // With --common flag: timestamp should come first, then level, then message
     assert!(parts[0].starts_with("timestamp="));
     assert!(parts[1].starts_with("level="));
     assert!(parts[2].starts_with("message="));
-    // alpha should come before zebra (alphabetical)
-    assert!(result.find("alpha=").unwrap() < result.find("zebra=").unwrap());
+}
+
+#[test]
+fn test_original_field_order_preservation() {
+    let mut temp_file = NamedTempFile::new().unwrap();
+    writeln!(temp_file, r#"{{"zebra":"last","timestamp":"2024-01-01T10:00:00Z","level":"error","message":"test","alpha":"middle"}}"#).unwrap();
+
+    let output = Command::cargo_bin("stelp")
+        .unwrap()
+        .arg("--no-color")
+        .arg("-f")
+        .arg("jsonl")
+        .arg(temp_file.path())
+        .output()
+        .expect("Failed to execute stelp");
+
+    let result = String::from_utf8(output.stdout).unwrap();
+    let parts: Vec<&str> = result.trim().split_whitespace().collect();
+
+    // Without any flags, should preserve original JSON field order: zebra, timestamp, level, message, alpha
+    assert!(parts[0].starts_with("zebra="));
+    assert!(parts[1].starts_with("timestamp="));
+    assert!(parts[2].starts_with("level="));
+    assert!(parts[3].starts_with("message="));
+    assert!(parts[4].starts_with("alpha="));
 }
 
 #[test]

@@ -122,6 +122,7 @@ impl OutputFormatter {
         }
         data.clone()
     }
+    
 
     fn get_key_order(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
         if let Some(ref key_list) = self.keys {
@@ -374,8 +375,27 @@ impl OutputFormatter {
             let formatted = formatter.format_record_plain(&filtered_record);
             writeln!(output, "{}", formatted)?;
         } else {
-            // Normal logfmt mode with keys
-            let formatted = formatter.format_record(&filtered_record);
+            // Normal logfmt mode with keys - determine effective key order for this record
+            let key_order = if let Some(ref keys) = self.keys {
+                if let RecordData::Structured(data) = &filtered_record {
+                    if let serde_json::Value::Object(obj) = data {
+                        // Filter key list to only keys that exist in this record
+                        let effective_keys: Vec<String> = keys.iter()
+                            .filter(|key| obj.contains_key(*key))
+                            .cloned()
+                            .collect();
+                        Some(effective_keys)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            let formatted = formatter.format_record_with_key_order(&filtered_record, key_order.as_ref().map(|k| k.as_slice()));
             writeln!(output, "{}", formatted)?;
         }
 
