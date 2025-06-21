@@ -48,6 +48,10 @@ stelp -f jsonl --filter 'data["query_time"] > 1.0' -k timestamp,query,query_time
 # Process task durations from CSV data
 echo -e "task,duration\nbackup,5h30m\ncleanup,2h 30m\narchive,1 day" | \
   stelp -f csv --derive 'hours = parse_duration(duration) / 3600; category = "long" if hours > 8 else "short"'
+
+# Visual log level overview (big picture view)
+echo -e '{"timestamp":"2024-01-01T10:00:00Z","level":"error","msg":"DB error"}\n{"timestamp":"2024-01-01T10:00:01Z","level":"warn","msg":"Memory high"}\n{"timestamp":"2024-01-01T10:00:02Z","level":"info","msg":"Started"}' | stelp -f jsonl --levelmap
+# Output: 2024-01-01T10:00:00Z ewi
 ```
 
 ### Basic Text Operations (When You Need Them)
@@ -217,6 +221,7 @@ stelp [OPTIONS] [FILES...]
     --derive <EXPR>         Transform structured data with direct field access
 -k, --keys <KEYS>           Select/order output columns
     --levels <LEVELS>       Show only these log levels
+-M, --levelmap             Visual log level overview (timestamp + chars)
     --window <N>            Keep last N records for analysis
     --plain                 Output values only, not key=value pairs
 ```

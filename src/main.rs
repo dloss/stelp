@@ -1,4 +1,5 @@
 use clap::{ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser};
+use is_terminal::IsTerminal;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
 use stelp::StreamPipeline;
 use stelp::{
-    DeriveProcessor, ExtractProcessor, FilterProcessor, StarlarkProcessor, WindowProcessor,
+    DeriveProcessor, ExtractProcessor, FilterProcessor, LevelMapProcessor, StarlarkProcessor, WindowProcessor,
 };
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,10 @@ struct Args {
     #[arg(short = 'L', long = "exclude-levels")]
     exclude_levels: Option<String>,
 
+    /// Show first character of log levels for visual overview
+    #[arg(long = "levelmap", short = 'M', help = "Output first char of log levels only to give a big picture overview")]
+    levelmap: bool,
+
     /// Force colored output even when not on TTY
     #[arg(long = "color", action = ArgAction::SetTrue)]
     force_color: bool,
@@ -154,6 +159,7 @@ impl Args {
         let has_chunking =
             self.chunk_lines.is_some() || self.chunk_start.is_some() || self.chunk_delim.is_some();
         let has_level_filters = self.levels.is_some() || self.exclude_levels.is_some();
+        let has_levelmap = self.levelmap;
         let has_input_files = !self.input_files.is_empty();
 
         // Check for mutually exclusive chunking options
@@ -170,10 +176,26 @@ impl Args {
             return Err("Cannot specify multiple chunking strategies simultaneously".to_string());
         }
 
+        // Check for incompatible options with levelmap
+        if has_levelmap {
+            if has_output_format {
+                return Err("Cannot use --levelmap with output format options (levelmap has its own output format)".to_string());
+            }
+            if self.keys.is_some() {
+                return Err("Cannot use --levelmap with --keys (levelmap has its own output format)".to_string());
+            }
+            if self.remove_keys.is_some() {
+                return Err("Cannot use --levelmap with --remove-keys (levelmap has its own output format)".to_string());
+            }
+            if self.plain {
+                return Err("Cannot use --levelmap with --plain (levelmap has its own output format)".to_string());
+            }
+        }
+
         let has_any_processing =
             has_extract || has_evals || has_filters || has_derives || has_begin_end;
         let has_format_or_utility =
-            has_input_format || has_output_format || has_chunking || has_level_filters;
+            has_input_format || has_output_format || has_chunking || has_level_filters || has_levelmap;
 
         match (has_script_file, has_any_processing, has_format_or_utility, has_input_files) {
             (true, true, _, _) => Err("Cannot use --script with other processing options".to_string()),
@@ -286,6 +308,18 @@ fn build_final_script(includes: &[PathBuf], user_script: &str) -> Result<String,
     final_script.push_str(user_script);
 
     Ok(final_script)
+}
+
+/// Determine whether to use colors based on flags and environment
+fn determine_color_usage(args: &Args) -> bool {
+    if args.no_color {
+        false
+    } else if args.force_color {
+        true
+    } else {
+        // Auto-detect: use color if outputting to a terminal
+        std::io::stdout().is_terminal()
+    }
 }
 
 fn main() {
@@ -407,6 +441,13 @@ fn main() {
             args.exclude_levels.as_deref(),
         );
         pipeline.add_processor(Box::new(level_filter));
+    }
+
+    // Add levelmap processor if requested
+    if args.levelmap {
+        let use_color = determine_color_usage(&args);
+        let levelmap_processor = LevelMapProcessor::new("levelmap", use_color);
+        pipeline.add_processor(Box::new(levelmap_processor));
     }
 
     // Add processors to pipeline in order

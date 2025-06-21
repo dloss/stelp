@@ -20,5 +20,6 @@ pub use pipeline::context::{ProcessResult, ProcessingStats, RecordContext, Recor
 pub use pipeline::processors::{
     DeriveProcessor, ExtractProcessor, FilterProcessor, LevelFilterProcessor, StarlarkProcessor,
 };
+pub use pipeline::levelmap::LevelMapProcessor;
 pub use pipeline::stream::{RecordProcessor, StreamPipeline};
 pub use processors::WindowProcessor;
