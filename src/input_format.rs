@@ -961,6 +961,7 @@ impl<'a> InputFormatWrapper<'a> {
         for line_result in reader.lines() {
             let line = line_result?;
             line_number += 1;
+            file_stats.lines_seen += 1; // Track all lines seen (including unparseable)
             let line_content = line.trim();
 
             if line_content.is_empty() {
@@ -1023,6 +1024,11 @@ impl<'a> InputFormatWrapper<'a> {
         file_stats.records_skipped = pipeline_stats.records_skipped;
         file_stats.errors += pipeline_stats.errors; // Add to existing parse errors
         file_stats.processing_time = start_time.elapsed();
+        // Copy enhanced stats from pipeline
+        file_stats.earliest_timestamp = pipeline_stats.earliest_timestamp;
+        file_stats.latest_timestamp = pipeline_stats.latest_timestamp;
+        file_stats.keys_seen = pipeline_stats.keys_seen.clone();
+        file_stats.levels_seen = pipeline_stats.levels_seen.clone();
 
         Ok(file_stats)
     }
@@ -1076,6 +1082,7 @@ impl<'a> InputFormatWrapper<'a> {
         // STREAMING: Process each record immediately using csv crate's iterator
         for record_result in csv_reader.records() {
             line_number += 1;
+            file_stats.lines_seen += 1; // Track all lines seen (including unparseable)
             
             let record = match record_result {
                 Ok(record) => record,
@@ -1135,6 +1142,11 @@ impl<'a> InputFormatWrapper<'a> {
         file_stats.records_skipped = pipeline_stats.records_skipped;
         file_stats.errors += pipeline_stats.errors; // Add to existing parse errors
         file_stats.processing_time = start_time.elapsed();
+        // Copy enhanced stats from pipeline
+        file_stats.earliest_timestamp = pipeline_stats.earliest_timestamp;
+        file_stats.latest_timestamp = pipeline_stats.latest_timestamp;
+        file_stats.keys_seen = pipeline_stats.keys_seen.clone();
+        file_stats.levels_seen = pipeline_stats.levels_seen.clone();
         
         Ok(file_stats)
     }

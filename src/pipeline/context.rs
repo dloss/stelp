@@ -2,6 +2,7 @@ use crate::error::ProcessingError;
 use crate::variables::GlobalVariables;
 use serde_json;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 /// A record that flows through the pipeline - either text or structured data
@@ -97,6 +98,106 @@ pub struct ProcessingStats {
     pub errors: usize,
     pub processing_time: Duration,
     pub parse_errors: Vec<ParseErrorInfo>,
+    // Enhanced stats for structured data analysis
+    pub earliest_timestamp: Option<i64>,
+    pub latest_timestamp: Option<i64>,
+    pub keys_seen: HashSet<String>,
+    pub levels_seen: HashMap<String, String>, // level_value -> key_name that contained it
+    pub lines_seen: usize, // Total input lines (including unparseable ones)
+}
+
+impl ProcessingStats {
+    /// Update stats with structured data record
+    pub fn update_with_structured_data(&mut self, data: &serde_json::Value) {
+        use crate::pipeline::config::{TIMESTAMP_KEYS, LEVEL_KEYS};
+        
+        if let Some(obj) = data.as_object() {
+            // Track all keys seen
+            for key in obj.keys() {
+                self.keys_seen.insert(key.clone());
+            }
+            
+            // Look for timestamps
+            for &ts_key in TIMESTAMP_KEYS {
+                if let Some(ts_value) = obj.get(ts_key) {
+                    if let Some(ts_str) = ts_value.as_str() {
+                        // Try to parse timestamp using guess_ts logic
+                        if let Ok(timestamp) = self.parse_timestamp_value(ts_str) {
+                            self.update_timestamp_range(timestamp);
+                        }
+                    } else if let Some(ts_num) = ts_value.as_i64() {
+                        // Handle numeric timestamps
+                        self.update_timestamp_range(ts_num);
+                    } else if let Some(ts_float) = ts_value.as_f64() {
+                        // Handle float timestamps (convert to seconds)
+                        self.update_timestamp_range(ts_float as i64);
+                    }
+                    break; // Found a timestamp, don't check other keys
+                }
+            }
+            
+            // Look for log levels
+            for &level_key in LEVEL_KEYS {
+                if let Some(level_value) = obj.get(level_key) {
+                    if let Some(level_str) = level_value.as_str() {
+                        self.levels_seen.insert(level_str.to_lowercase(), level_key.to_string());
+                    }
+                    break; // Found a level, don't check other keys
+                }
+            }
+        }
+    }
+    
+    /// Update timestamp range with a new timestamp
+    fn update_timestamp_range(&mut self, timestamp: i64) {
+        // Update earliest timestamp
+        if let Some(earliest) = self.earliest_timestamp {
+            if timestamp < earliest {
+                self.earliest_timestamp = Some(timestamp);
+            }
+        } else {
+            self.earliest_timestamp = Some(timestamp);
+        }
+        
+        // Update latest timestamp
+        if let Some(latest) = self.latest_timestamp {
+            if timestamp > latest {
+                self.latest_timestamp = Some(timestamp);
+            }
+        } else {
+            self.latest_timestamp = Some(timestamp);
+        }
+    }
+    
+    /// Parse timestamp string using simplified logic from guess_ts
+    fn parse_timestamp_value(&self, text: &str) -> Result<i64, ()> {
+        use chrono::{DateTime, NaiveDateTime};
+        
+        // Try RFC3339/ISO 8601 first (most common in logs)
+        if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
+            return Ok(dt.timestamp());
+        }
+        
+        // Try ISO 8601 without timezone (assume UTC)
+        if let Ok(dt) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S") {
+            return Ok(dt.and_utc().timestamp());
+        }
+        
+        // Try common log format
+        if let Ok(dt) = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S") {
+            return Ok(dt.and_utc().timestamp());
+        }
+        
+        // Try Unix timestamp as string
+        if let Ok(ts) = text.parse::<i64>() {
+            // Reasonable range check for Unix timestamps (1970-2100)
+            if ts > 0 && ts < 4102444800 {
+                return Ok(ts);
+            }
+        }
+        
+        Err(())
+    }
 }
 
 /// Shared context across all processors

@@ -714,6 +714,11 @@ impl StreamPipeline {
         self.context.line_number += 1;
         self.context.record_count += 1;
         self.stats.records_processed += 1;
+        
+        // Track structured data stats for enhanced analytics
+        if let RecordData::Structured(ref data) = record {
+            self.stats.update_with_structured_data(data);
+        }
 
         // Process the record through the pipeline
         match self

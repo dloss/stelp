@@ -355,6 +355,22 @@ impl Args {
     }
 }
 
+/// Format duration in seconds to human-readable string
+fn format_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("0:00:{:02}", seconds)
+    } else if seconds < 3600 {
+        let minutes = seconds / 60;
+        let secs = seconds % 60;
+        format!("0:{:02}:{:02}", minutes, secs)
+    } else {
+        let hours = seconds / 3600;
+        let minutes = (seconds % 3600) / 60;
+        let secs = seconds % 60;
+        format!("{}:{:02}:{:02}", hours, minutes, secs)
+    }
+}
+
 /// Build the final script by concatenating includes and user script
 fn build_final_script(includes: &[PathBuf], user_script: &str) -> Result<String, String> {
     let mut final_script = String::new();
@@ -745,6 +761,29 @@ fn main() {
                 total_stats.errors += stats.errors;
                 total_stats.processing_time += stats.processing_time;
                 total_stats.parse_errors.extend(stats.parse_errors);
+                // Accumulate enhanced stats
+                total_stats.lines_seen += stats.lines_seen;
+                total_stats.keys_seen.extend(stats.keys_seen);
+                total_stats.levels_seen.extend(stats.levels_seen);
+                // Update timestamp range
+                if let Some(earliest) = stats.earliest_timestamp {
+                    if let Some(total_earliest) = total_stats.earliest_timestamp {
+                        if earliest < total_earliest {
+                            total_stats.earliest_timestamp = Some(earliest);
+                        }
+                    } else {
+                        total_stats.earliest_timestamp = Some(earliest);
+                    }
+                }
+                if let Some(latest) = stats.latest_timestamp {
+                    if let Some(total_latest) = total_stats.latest_timestamp {
+                        if latest > total_latest {
+                            total_stats.latest_timestamp = Some(latest);
+                        }
+                    } else {
+                        total_stats.latest_timestamp = Some(latest);
+                    }
+                }
             }
 
             // Reset pipeline state between files (but keep globals)
@@ -793,8 +832,69 @@ fn main() {
             0.0
         };
 
+        // Basic stats line
+        if total_stats.lines_seen > 0 {
+            let percentage = if total_stats.lines_seen > 0 {
+                (total_stats.records_processed as f64 / total_stats.lines_seen as f64) * 100.0
+            } else {
+                0.0
+            };
+            eprintln!(
+                "Records shown: {} ({:.0}% of {} lines seen)",
+                total_stats.records_processed,
+                percentage,
+                total_stats.lines_seen
+            );
+        } else {
+            eprintln!("Records shown: {}", total_stats.records_processed);
+        }
+
+        // Time span information if we have timestamps
+        if let (Some(earliest), Some(latest)) = (total_stats.earliest_timestamp, total_stats.latest_timestamp) {
+            use chrono::DateTime;
+            if let (Some(earliest_dt), Some(latest_dt)) = (
+                DateTime::from_timestamp(earliest, 0),
+                DateTime::from_timestamp(latest, 0)
+            ) {
+                let duration_seconds = latest - earliest;
+                let records_per_sec = if duration_seconds > 0 {
+                    total_stats.records_processed as f64 / duration_seconds as f64
+                } else {
+                    0.0
+                };
+                
+                let duration = format_duration(duration_seconds);
+                eprintln!(
+                    "Time span shown: {} to {}  ({}, {:.1} records/s)",
+                    earliest_dt.to_rfc3339(),
+                    latest_dt.to_rfc3339(),
+                    duration,
+                    records_per_sec
+                );
+            }
+        }
+
+        // Keys seen (if any structured data was processed)
+        if !total_stats.keys_seen.is_empty() {
+            let mut keys: Vec<_> = total_stats.keys_seen.iter().cloned().collect();
+            keys.sort();
+            eprintln!("Keys seen: {}", keys.join(","));
+        }
+
+        // Log levels seen (if any were detected)
+        if !total_stats.levels_seen.is_empty() {
+            let mut levels: Vec<_> = total_stats.levels_seen.iter().collect();
+            levels.sort_by_key(|(level, _)| level.as_str());
+            let level_summary: Vec<String> = levels
+                .iter()
+                .map(|(level, key)| format!("{} (keys: {})", level, key))
+                .collect();
+            eprintln!("Log levels seen: {}", level_summary.join(", "));
+        }
+
+        // Performance details
         eprintln!(
-            "stelp: {} records processed, {} output, {} skipped, {} errors in {:.2}ms ({:.0} records/s)",
+            "Performance: {} records processed, {} output, {} skipped, {} errors in {:.2}ms ({:.0} records/s)",
             total_stats.records_processed,
             total_stats.records_output,
             total_stats.records_skipped,
