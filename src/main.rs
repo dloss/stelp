@@ -182,7 +182,17 @@ impl Args {
 
         // Check for incompatible options with levelmap
         if has_levelmap {
-            if !has_input_format {
+            // Check if we have structured input format either explicitly or auto-detected
+            let has_structured_format = has_input_format || 
+                (has_input_files && self.input_files.iter().any(|file| {
+                    InputFormat::from_extension(file).map_or(false, |format| {
+                        matches!(format, InputFormat::Jsonl | InputFormat::Csv | InputFormat::Tsv | 
+                               InputFormat::Logfmt | InputFormat::Syslog | InputFormat::Combined | 
+                               InputFormat::Fields)
+                    })
+                }));
+            
+            if !has_structured_format {
                 return Err("--levelmap requires structured data input format (use -f jsonl, -f csv, etc.)".to_string());
             }
             if has_output_format {
