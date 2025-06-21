@@ -199,6 +199,18 @@ impl Args {
             }
         }
 
+        // Check for incompatible options with --common
+        if self.common {
+            if let Some(ref output_format) = self.output_format {
+                match output_format {
+                    OutputFormat::Csv | OutputFormat::Tsv => {
+                        return Err("Cannot use --common with CSV/TSV output formats (use --keys with specific field names instead)".to_string());
+                    }
+                    _ => {} // Other formats are fine
+                }
+            }
+        }
+
         let has_any_processing =
             has_extract || has_evals || has_filters || has_derives || has_begin_end;
         let has_format_or_utility =

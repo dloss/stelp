@@ -57,7 +57,7 @@ echo -e '{"timestamp":"2024-01-01T10:00:00Z","level":"error","msg":"DB error"}\n
 echo '{"timestamp":"2024-01-01T10:00:00Z","level":"INFO","message":"User login","user":"alice","ip":"1.2.3.4"}' | stelp -f jsonl --common
 # Output: timestamp=2024-01-01T10:00:00Z level=INFO message="User login"
 
-# Include additional fields with --common
+# Include additional fields with --common (works with logfmt, jsonl, fields)
 echo '{"ts":"2024-01-01T10:00:00Z","lvl":"WARN","msg":"High CPU","service":"web","cpu":95}' | stelp -f jsonl --common --keys service,cpu
 # Output: ts=2024-01-01T10:00:00Z lvl=WARN msg="High CPU" service=web cpu=95
 ```
@@ -230,7 +230,7 @@ stelp [OPTIONS] [FILES...]
     --filter <EXPR>         Keep lines where expression is true
     --derive <EXPR>         Transform structured data with direct field access
 -k, --keys <KEYS>           Select/order output columns
--c, --common               Show only timestamp, level, message fields (plus any --keys)
+-c, --common               Show only timestamp, level, message fields (plus any --keys; not compatible with CSV/TSV output)
     --levels <LEVELS>       Show only these log levels
 -M, --levelmap             Visual log level overview (requires -f format)
     --window <N>            Keep last N records for analysis
