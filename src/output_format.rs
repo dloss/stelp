@@ -144,6 +144,11 @@ impl OutputFormatter {
     }
 
     fn filter_data(&self, record: &RecordData) -> RecordData {
+        // Fast path: if no filtering options are specified, just return the record
+        if self.keys.is_none() && self.remove_keys.is_none() && !self.format.needs_flattening() {
+            return record.clone();
+        }
+
         match record {
             RecordData::Structured(data) => {
                 // Apply flattening first if needed
@@ -375,12 +380,16 @@ impl OutputFormatter {
             let formatted = formatter.format_record_plain(&filtered_record);
             writeln!(output, "{}", formatted)?;
         } else {
-            // Normal logfmt mode with keys - determine effective key order for this record
-            let key_order = if let Some(ref keys) = self.keys {
-                if let RecordData::Structured(data) = &filtered_record {
+            // Normal logfmt mode - fast path when no keys specified
+            if self.keys.is_none() {
+                let formatted = formatter.format_record(&filtered_record);
+                writeln!(output, "{}", formatted)?;
+            } else {
+                // Determine effective key order for this record when keys are specified
+                let key_order = if let RecordData::Structured(data) = &filtered_record {
                     if let serde_json::Value::Object(obj) = data {
                         // Filter key list to only keys that exist in this record
-                        let effective_keys: Vec<String> = keys.iter()
+                        let effective_keys: Vec<String> = self.keys.as_ref().unwrap().iter()
                             .filter(|key| obj.contains_key(*key))
                             .cloned()
                             .collect();
@@ -390,13 +399,11 @@ impl OutputFormatter {
                     }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
-            
-            let formatted = formatter.format_record_with_key_order(&filtered_record, key_order.as_ref().map(|k| k.as_slice()));
-            writeln!(output, "{}", formatted)?;
+                };
+                
+                let formatted = formatter.format_record_with_key_order(&filtered_record, key_order.as_ref().map(|k| k.as_slice()));
+                writeln!(output, "{}", formatted)?;
+            }
         }
 
         Ok(())

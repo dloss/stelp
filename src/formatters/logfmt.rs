@@ -255,14 +255,136 @@ impl LogfmtFormatter {
             || value.contains('=')
     }
 
+    /// Fast JSON formatting that preserves order without IndexMap conversion
+    fn format_json_as_logfmt_fast(&self, data: &Value) -> String {
+        if let Value::Object(obj) = data {
+            if obj.is_empty() {
+                return String::new();
+            }
 
+            // Pre-allocate buffer with estimated capacity
+            let estimated_capacity = obj.len() * 32;
+            let mut output = String::with_capacity(estimated_capacity);
+            let mut first = true;
 
+            for (key, value) in obj {
+                if !first {
+                    output.push(' ');
+                }
+                first = false;
+
+                // Format key=value directly
+                self.format_json_key_value_into(key, value, &mut output);
+            }
+
+            output
+        } else {
+            // Fallback for non-object JSON
+            let fields = self.value_to_string_map(data);
+            self.format_fields_with_order(&fields, None)
+        }
+    }
+
+    /// Format a JSON key=value pair directly into buffer
+    fn format_json_key_value_into(&self, key: &str, value: &Value, output: &mut String) {
+        // Write colored key
+        if !self.colors.key.is_empty() {
+            output.push_str(&self.colors.key);
+        }
+        output.push_str(key);
+        if !self.colors.key.is_empty() {
+            output.push_str(&self.colors.reset);
+        }
+
+        // Write colored equals
+        if !self.colors.equals.is_empty() {
+            output.push_str(&self.colors.equals);
+        }
+        output.push('=');
+        if !self.colors.equals.is_empty() {
+            output.push_str(&self.colors.reset);
+        }
+
+        // Format value directly from JSON
+        self.format_json_value_into(key, value, output);
+    }
+
+    /// Format a JSON value directly into buffer  
+    fn format_json_value_into(&self, key: &str, value: &Value, output: &mut String) {
+        // Choose color based on field type and value content
+        let color = if self.is_level_field(key) {
+            match value {
+                Value::String(s) => self.level_color(s),
+                _ => "",
+            }
+        } else {
+            self.colors.string
+        };
+
+        // Apply color
+        if !color.is_empty() {
+            output.push_str(color);
+        }
+
+        // Convert JSON value to string and write with quoting
+        match value {
+            Value::String(s) => {
+                // Quote and escape if needed
+                if self.needs_quoting(s) {
+                    output.push('"');
+                    if s.contains('"') {
+                        output.push_str(&s.replace('"', "\\\""));
+                    } else {
+                        output.push_str(s);
+                    }
+                    output.push('"');
+                } else {
+                    output.push_str(s);
+                }
+            }
+            Value::Number(n) => {
+                output.push_str(&n.to_string());
+            }
+            Value::Bool(b) => {
+                output.push_str(&b.to_string());
+            }
+            Value::Null => {
+                // Empty for null
+            }
+            other => {
+                // Complex types - serialize and potentially quote
+                let serialized = serde_json::to_string(other).unwrap_or_else(|_| "null".to_string());
+                if self.needs_quoting(&serialized) {
+                    output.push('"');
+                    if serialized.contains('"') {
+                        output.push_str(&serialized.replace('"', "\\\""));
+                    } else {
+                        output.push_str(&serialized);
+                    }
+                    output.push('"');
+                } else {
+                    output.push_str(&serialized);
+                }
+            }
+        }
+
+        // Reset color
+        if !color.is_empty() {
+            output.push_str(&self.colors.reset);
+        }
+    }
 
 }
 
 impl RecordFormatter for LogfmtFormatter {
     fn format_record(&self, record: &RecordData) -> String {
-        self.format_record_with_key_order(record, None)
+        match record {
+            RecordData::Text(text) => text.clone(),
+            RecordData::Structured(data) => {
+                // Fast path: use direct JSON formatting when no ordering needed
+                self.format_json_as_logfmt_fast(data)
+            }
+        }
     }
     
     fn format_record_with_key_order(&self, record: &RecordData, key_order: Option<&[String]>) -> String {
