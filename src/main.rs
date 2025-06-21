@@ -5,7 +5,7 @@ use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 
 use stelp::chunking::{parse_chunk_strategy, ChunkConfig};
-use stelp::config::{ErrorStrategy, PipelineConfig};
+use stelp::config::{ErrorStrategy, PipelineConfig, TIMESTAMP_KEYS, LEVEL_KEYS, MESSAGE_KEYS};
 use stelp::context::ProcessingStats;
 use stelp::input_format::{InputFormat, InputFormatWrapper};
 use stelp::output_format::OutputFormat;
@@ -86,6 +86,10 @@ struct Args {
     /// Remove keys from structured data output (comma-separated)
     #[arg(short = 'K', long = "remove-keys")]
     remove_keys: Option<String>,
+
+    /// Show only common fields (timestamp, level, message) plus any additional --keys
+    #[arg(short = 'c', long = "common")]
+    common: bool,
 
     // === PROCESSING CONTROL ===
     /// Process N lines at a time
@@ -266,17 +270,14 @@ impl Args {
         if let Some(lines) = self.chunk_lines {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("lines:{}", lines))?,
-                ..Default::default()
             }))
         } else if let Some(pattern) = &self.chunk_start {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("start-pattern:{}", pattern))?,
-                ..Default::default()
             }))
         } else if let Some(delimiter) = &self.chunk_delim {
             Ok(Some(ChunkConfig {
                 strategy: parse_chunk_strategy(&format!("delimiter:{}", delimiter))?,
-                ..Default::default()
             }))
         } else {
             Ok(None)
@@ -291,6 +292,45 @@ impl Args {
             Some(false)
         } else {
             None // Auto-detect based on TTY
+        }
+    }
+
+    /// Build the keys list based on --common and --keys flags
+    fn build_keys_list(&self) -> Option<Vec<String>> {
+        if self.common {
+            // For --common, we need to use a special marker that the output formatter can recognize
+            // We'll return a special key list that includes all variants, and the formatter will
+            // intelligently filter to only existing keys
+            let mut keys = Vec::new();
+            
+            // Add all timestamp key variants
+            keys.extend(TIMESTAMP_KEYS.iter().map(|&s| s.to_string()));
+            
+            // Add all level key variants  
+            keys.extend(LEVEL_KEYS.iter().map(|&s| s.to_string()));
+            
+            // Add all message key variants
+            keys.extend(MESSAGE_KEYS.iter().map(|&s| s.to_string()));
+            
+            // Add any additional keys specified with --keys
+            if let Some(ref additional_keys) = self.keys {
+                for key in additional_keys.split(',') {
+                    let key = key.trim();
+                    if !key.is_empty() && !keys.contains(&key.to_string()) {
+                        keys.push(key.to_string());
+                    }
+                }
+            }
+            
+            Some(keys)
+        } else {
+            // Normal --keys behavior
+            self.keys.as_ref().map(|k| {
+                k.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<String>>()
+            })
         }
     }
 }
@@ -396,12 +436,7 @@ fn main() {
         }
     };
 
-    let keys = args.keys.as_ref().map(|k| {
-        k.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<String>>()
-    });
+    let keys = args.build_keys_list();
 
     let remove_keys = args.remove_keys.as_ref().map(|k| {
         k.split(',')
@@ -417,13 +452,15 @@ fn main() {
             ErrorStrategy::Skip
         },
         debug: args.debug,
+        buffer_size: 65536,
+        max_line_length: 1048576,
+        progress_interval: 0,
         input_format: input_format.clone(),
         output_format, // Use the determined format
         keys,
         remove_keys,
         color_preference,
         plain: args.plain,
-        ..Default::default()
     };
 
     // Create pipeline

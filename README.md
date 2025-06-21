@@ -52,6 +52,14 @@ echo -e "task,duration\nbackup,5h30m\ncleanup,2h 30m\narchive,1 day" | \
 # Visual log level overview (big picture view)
 echo -e '{"timestamp":"2024-01-01T10:00:00Z","level":"error","msg":"DB error"}\n{"timestamp":"2024-01-01T10:00:01Z","level":"warn","msg":"Memory high"}\n{"timestamp":"2024-01-01T10:00:02Z","level":"info","msg":"Started"}' | stelp -f jsonl --levelmap
 # Output: 2024-01-01T10:00:00Z ewi
+
+# Show only essential log fields (timestamp, level, message)
+echo '{"timestamp":"2024-01-01T10:00:00Z","level":"INFO","message":"User login","user":"alice","ip":"1.2.3.4"}' | stelp -f jsonl --common
+# Output: timestamp=2024-01-01T10:00:00Z level=INFO message="User login"
+
+# Include additional fields with --common
+echo '{"ts":"2024-01-01T10:00:00Z","lvl":"WARN","msg":"High CPU","service":"web","cpu":95}' | stelp -f jsonl --common --keys service,cpu
+# Output: ts=2024-01-01T10:00:00Z lvl=WARN msg="High CPU" service=web cpu=95
 ```
 
 ### Basic Text Operations (When You Need Them)
@@ -222,6 +230,7 @@ stelp [OPTIONS] [FILES...]
     --filter <EXPR>         Keep lines where expression is true
     --derive <EXPR>         Transform structured data with direct field access
 -k, --keys <KEYS>           Select/order output columns
+-c, --common               Show only timestamp, level, message fields (plus any --keys)
     --levels <LEVELS>       Show only these log levels
 -M, --levelmap             Visual log level overview (requires -f format)
     --window <N>            Keep last N records for analysis
