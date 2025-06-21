@@ -257,10 +257,10 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             ));
         }
         match items.iterate(heap) {
-            Ok(mut iterable) => {
+            Ok(iterable) => {
                 EMIT_BUFFER.with(|buffer| {
                     let mut buffer = buffer.borrow_mut();
-                    while let Some(item) = iterable.next() {
+                    for item in iterable {
                         buffer.push(item.to_string());
                     }
                 });
@@ -1008,7 +1008,7 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             p.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("percentile value must be numeric, got: {}", p.get_type()))?
         };
         
-        if p_val < 0.0 || p_val > 100.0 {
+        if !(0.0..=100.0).contains(&p_val) {
             return Err(anyhow::anyhow!("percentile must be between 0 and 100, got: {}", p_val));
         }
         

@@ -165,7 +165,7 @@ impl RecordProcessor for LevelMapProcessor {
     fn process(&mut self, record: &RecordData, _ctx: &RecordContext) -> ProcessResult {
         // Extract timestamp and level
         let timestamp = self.extract_timestamp(record);
-        let level = self.extract_level(record).unwrap_or_else(|| "".to_string());
+        let level = self.extract_level(record).unwrap_or_default();
         let level_char = self.level_to_char(&level);
         
         // Update last timestamp if we have one (for use on new lines)

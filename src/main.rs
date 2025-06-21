@@ -201,13 +201,8 @@ impl Args {
 
         // Check for incompatible options with --common
         if self.common {
-            if let Some(ref output_format) = self.output_format {
-                match output_format {
-                    OutputFormat::Csv | OutputFormat::Tsv => {
-                        return Err("Cannot use --common with CSV/TSV output formats (use --keys with specific field names instead)".to_string());
-                    }
-                    _ => {} // Other formats are fine
-                }
+            if let Some(OutputFormat::Csv | OutputFormat::Tsv) = self.output_format {
+                return Err("Cannot use --common with CSV/TSV output formats (use --keys with specific field names instead)".to_string());
             }
         }
 

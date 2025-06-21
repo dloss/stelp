@@ -477,7 +477,7 @@ impl StreamPipeline {
         }
 
         for line_result in input.lines() {
-            let line = line_result.map_err(|e| ProcessingError::IoError(e))?;
+            let line = line_result.map_err(ProcessingError::IoError)?;
 
             self.context.line_number += 1;
             self.context.record_count += 1;

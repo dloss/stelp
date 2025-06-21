@@ -85,5 +85,5 @@ impl RecordProcessor for WindowProcessor {
 
 // Thread-local storage for window context
 thread_local! {
-    pub static WINDOW_CONTEXT: RefCell<Option<VecDeque<WindowRecord>>> = RefCell::new(None);
+    pub static WINDOW_CONTEXT: RefCell<Option<VecDeque<WindowRecord>>> = const { RefCell::new(None) };
 }

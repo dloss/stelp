@@ -49,6 +49,10 @@ impl GlobalVariables {
         self.store.borrow().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.store.borrow().is_empty()
+    }
+
     pub fn keys(&self) -> Vec<String> {
         self.store.borrow().keys().cloned().collect()
     }

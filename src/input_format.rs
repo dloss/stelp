@@ -66,6 +66,12 @@ impl JsonlParser {
     }
 }
 
+impl Default for JsonlParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LineParser for JsonlParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         serde_json::from_str(line.trim()).map_err(|e| format!("Failed to parse JSONL: {}", e))
@@ -152,6 +158,12 @@ impl CsvParser {
     }
 }
 
+impl Default for CsvParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LineParser for CsvParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
         let format_name = if self.separator == '\t' { "TSV" } else { "CSV" };
@@ -193,7 +205,15 @@ impl LogfmtParser {
     pub fn new() -> Self {
         Self
     }
+}
 
+impl Default for LogfmtParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LogfmtParser {
     // Parse logfmt line: key1=value1 key2="value with spaces" key3=value3
     fn parse_logfmt_pairs(&self, line: &str) -> Result<Vec<(String, String)>, String> {
         let mut pairs = Vec::new();
@@ -300,9 +320,15 @@ impl FieldsParser {
     }
 }
 
+impl Default for FieldsParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LineParser for FieldsParser {
     fn parse_line(&self, line: &str) -> Result<serde_json::Value, String> {
-        let fields: Vec<&str> = line.trim().split_whitespace().collect();
+        let fields: Vec<&str> = line.split_whitespace().collect();
 
         let mut map = serde_json::Map::new();
         for (index, field) in fields.iter().enumerate() {
@@ -342,6 +368,12 @@ impl SyslogParser {
         let facility = priority >> 3;
         let severity = priority & 7;
         (facility, severity)
+    }
+}
+
+impl Default for SyslogParser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -510,6 +542,12 @@ impl CombinedParser {
             ),
             _ => (None, None, None),
         }
+    }
+}
+
+impl Default for CombinedParser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -900,7 +938,7 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse JSONL and create structured records
-            match parser.parse_line(&line_content) {
+            match parser.parse_line(line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
                 }
@@ -960,7 +998,7 @@ impl<'a> InputFormatWrapper<'a> {
         }
 
         let mut parser = CsvParser::new();
-        parser.parse_headers(&header_line).map_err(|e| e)?;
+        parser.parse_headers(&header_line)?;
 
         let mut records = Vec::new();
         let config = pipeline.get_config();
@@ -1038,7 +1076,7 @@ impl<'a> InputFormatWrapper<'a> {
         }
 
         let mut parser = CsvParser::new_tsv();
-        parser.parse_headers(&header_line).map_err(|e| e)?;
+        parser.parse_headers(&header_line)?;
 
         let mut records = Vec::new();
         let config = pipeline.get_config();
@@ -1124,7 +1162,7 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse logfmt and create structured record
-            match parser.parse_line(&line_content) {
+            match parser.parse_line(line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
                 }
@@ -1192,7 +1230,7 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse syslog and create structured record
-            match parser.parse_line(&line_content) {
+            match parser.parse_line(line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
                 }
@@ -1260,7 +1298,7 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse combined log and create structured record
-            match parser.parse_line(&line_content) {
+            match parser.parse_line(line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
                 }
@@ -1328,7 +1366,7 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse fields and create structured record
-            match parser.parse_line(&line_content) {
+            match parser.parse_line(line_content) {
                 Ok(data) => {
                     records.push(crate::context::RecordData::structured(data));
                 }
@@ -1385,7 +1423,7 @@ impl<'a> InputFormatWrapper<'a> {
         // Convert chunks to RecordData
         let records: Vec<crate::context::RecordData> = chunks
             .into_iter()
-            .map(|chunk| crate::context::RecordData::text(chunk))
+            .map(crate::context::RecordData::text)
             .collect();
 
         // Process chunks through the pipeline

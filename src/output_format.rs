@@ -7,7 +7,7 @@ use crate::tty::should_use_colors;
 use serde_json::Value;
 use std::io::Write;
 
-#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum, Default)]
 pub enum OutputFormat {
     #[value(name = "line", help = "Line-based text output (unstructured data)")]
     Line,
@@ -18,6 +18,7 @@ pub enum OutputFormat {
     #[value(name = "tsv", help = "Tab-separated values")]
     Tsv,
     #[value(name = "logfmt", help = "Logfmt format (key=value pairs)")]
+    #[default]
     Logfmt,
     #[value(
         name = "fields",
@@ -42,11 +43,6 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Logfmt
-    }
-}
 
 impl OutputFormat {
     /// Check if this output format needs nested data to be flattened
@@ -313,7 +309,7 @@ impl OutputFormatter {
                     if self.keys.is_none() {
                         if let Some(ref schema_keys) = self.csv_schema_keys {
                             let current_keys: std::collections::HashSet<String> =
-                                obj.keys().map(|s| s.clone()).collect();
+                                obj.keys().cloned().collect();
                             let schema_keys_set: std::collections::HashSet<String> =
                                 schema_keys.iter().cloned().collect();
 

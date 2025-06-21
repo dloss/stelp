@@ -128,7 +128,7 @@ impl PipelineContext {
 
 // Thread-local storage for parsed data (add this to your existing thread-locals)
 thread_local! {
-    static PARSED_DATA: RefCell<Option<serde_json::Value>> = RefCell::new(None);
+    static PARSED_DATA: RefCell<Option<serde_json::Value>> = const { RefCell::new(None) };
 }
 
 /// Set parsed data for the current line (called by InputFormatWrapper)

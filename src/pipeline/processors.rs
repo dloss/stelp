@@ -212,25 +212,21 @@ impl StarlarkProcessor {
             } else if let Ok(mut iterator) = result.iterate(module.heap()) {
                 // Handle any iterable (including ranges)
                 let mut strings = Vec::new();
-                loop {
-                    match iterator.next() {
-                        Some(item) => {
-                            let item_str = if item.is_none() {
-                                String::new()
-                            } else if let Some(s) = item.unpack_str() {
-                                s.to_string()
-                            } else {
-                                let s = item.to_string();
-                                if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
-                                    s[1..s.len() - 1].to_string()
-                                } else {
-                                    s
-                                }
-                            };
-                            strings.push(item_str);
+                #[allow(clippy::while_let_on_iterator)]
+                while let Some(item) = iterator.next() {
+                    let item_str = if item.is_none() {
+                        String::new()
+                    } else if let Some(s) = item.unpack_str() {
+                        s.to_string()
+                    } else {
+                        let s = item.to_string();
+                        if s.starts_with('"') && s.ends_with('"') && s.len() > 1 {
+                            s[1..s.len() - 1].to_string()
+                        } else {
+                            s
                         }
-                        None => break,
-                    }
+                    };
+                    strings.push(item_str);
                 }
                 StarlarkResult::List(strings)
             } else {
@@ -832,15 +828,13 @@ impl DeriveProcessor {
 
         // Also check stelp_data for modifications
         if let Some(stelp_data_value) = module.get("stelp_data") {
-            if let Ok(stelp_data_json) = starlark_to_json_value(stelp_data_value) {
-                if let serde_json::Value::Object(stelp_data_obj) = stelp_data_json {
-                    for (key, value) in stelp_data_obj {
-                        if value.is_null() {
-                            // None means deletion
-                            result_obj.remove(&key);
-                        } else {
-                            result_obj.insert(key, value);
-                        }
+            if let Ok(serde_json::Value::Object(stelp_data_obj)) = starlark_to_json_value(stelp_data_value) {
+                for (key, value) in stelp_data_obj {
+                    if value.is_null() {
+                        // None means deletion
+                        result_obj.remove(&key);
+                    } else {
+                        result_obj.insert(key, value);
                     }
                 }
             }
