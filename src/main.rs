@@ -178,6 +178,9 @@ impl Args {
 
         // Check for incompatible options with levelmap
         if has_levelmap {
+            if !has_input_format {
+                return Err("--levelmap requires structured data input format (use -f jsonl, -f csv, etc.)".to_string());
+            }
             if has_output_format {
                 return Err("Cannot use --levelmap with output format options (levelmap has its own output format)".to_string());
             }

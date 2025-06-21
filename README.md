@@ -221,7 +221,7 @@ stelp [OPTIONS] [FILES...]
     --derive <EXPR>         Transform structured data with direct field access
 -k, --keys <KEYS>           Select/order output columns
     --levels <LEVELS>       Show only these log levels
--M, --levelmap             Visual log level overview (timestamp + chars)
+-M, --levelmap             Visual log level overview (requires -f format)
     --window <N>            Keep last N records for analysis
     --plain                 Output values only, not key=value pairs
 ```
