@@ -1051,6 +1051,81 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
             Ok(heap.alloc(result))
         }
     }
+
+    fn round<'v>(heap: &'v Heap, number: Value<'v>, digits: Option<Value<'v>>) -> anyhow::Result<Value<'v>> {
+        // Extract number value
+        let num_val = if let Some(i) = number.unpack_i32() {
+            i as f64
+        } else if let Some(s) = number.unpack_str() {
+            s.parse::<f64>().map_err(|_| anyhow::anyhow!("round() first argument must be numeric, got non-numeric string: {}", s))?
+        } else {
+            // Try to convert via string representation
+            number.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("round() first argument must be numeric, got: {}", number.get_type()))?
+        };
+
+        // Extract digits (default to 0 if not provided)
+        let digits_val = if let Some(d) = digits {
+            if let Some(i) = d.unpack_i32() {
+                i
+            } else if let Some(s) = d.unpack_str() {
+                s.parse::<i32>().map_err(|_| anyhow::anyhow!("round() digits argument must be an integer, got non-numeric string: {}", s))?
+            } else {
+                return Err(anyhow::anyhow!("round() digits argument must be an integer, got: {}", d.get_type()));
+            }
+        } else {
+            0
+        };
+
+        // Perform rounding
+        let multiplier = 10_f64.powi(digits_val);
+        let result = (num_val * multiplier).round() / multiplier;
+        
+        Ok(heap.alloc(result))
+    }
+
+    fn pow<'v>(heap: &'v Heap, base: Value<'v>, exponent: Value<'v>) -> anyhow::Result<Value<'v>> {
+        // Extract base value
+        let base_val = if let Some(i) = base.unpack_i32() {
+            i as f64
+        } else if let Some(s) = base.unpack_str() {
+            s.parse::<f64>().map_err(|_| anyhow::anyhow!("pow() base must be numeric, got non-numeric string: {}", s))?
+        } else {
+            // Try to convert via string representation
+            base.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("pow() base must be numeric, got: {}", base.get_type()))?
+        };
+
+        // Extract exponent value
+        let exp_val = if let Some(i) = exponent.unpack_i32() {
+            i as f64
+        } else if let Some(s) = exponent.unpack_str() {
+            s.parse::<f64>().map_err(|_| anyhow::anyhow!("pow() exponent must be numeric, got non-numeric string: {}", s))?
+        } else {
+            // Try to convert via string representation
+            exponent.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("pow() exponent must be numeric, got: {}", exponent.get_type()))?
+        };
+
+        // Calculate power
+        let result = base_val.powf(exp_val);
+        
+        Ok(heap.alloc(result))
+    }
+
+    fn abs<'v>(heap: &'v Heap, number: Value<'v>) -> anyhow::Result<Value<'v>> {
+        // Extract number value
+        let num_val = if let Some(i) = number.unpack_i32() {
+            i as f64
+        } else if let Some(s) = number.unpack_str() {
+            s.parse::<f64>().map_err(|_| anyhow::anyhow!("abs() argument must be numeric, got non-numeric string: {}", s))?
+        } else {
+            // Try to convert via string representation
+            number.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("abs() argument must be numeric, got: {}", number.get_type()))?
+        };
+
+        // Calculate absolute value
+        let result = num_val.abs();
+        
+        Ok(heap.alloc(result))
+    }
 }
 
 // Helper function for duration parsing with hybrid approach
