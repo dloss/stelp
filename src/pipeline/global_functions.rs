@@ -959,6 +959,35 @@ pub(crate) fn global_functions(builder: &mut starlark::environment::GlobalsBuild
         Ok(heap.alloc(sum / count as f64))
     }
 
+    fn sum<'v>(heap: &'v Heap, sequence: Value<'v>) -> anyhow::Result<Value<'v>> {
+        use starlark::values::list::ListRef;
+        
+        let list = ListRef::from_value(sequence)
+            .ok_or_else(|| anyhow::anyhow!("sum() argument must be a list"))?;
+        
+        if list.is_empty() {
+            return Ok(heap.alloc(0.0));
+        }
+        
+        let mut sum = 0.0;
+        
+        for item in list.iter() {
+            // Try to convert to number using available methods
+            let num_val = if let Some(i) = item.unpack_i32() {
+                i as f64
+            } else if let Some(s) = item.unpack_str() {
+                s.parse::<f64>().map_err(|_| anyhow::anyhow!("sum() requires numeric values, got non-numeric string: {}", s))?
+            } else {
+                // Try to convert via string representation
+                item.to_string().parse::<f64>().map_err(|_| anyhow::anyhow!("sum() requires numeric values, got: {}", item.get_type()))?
+            };
+            
+            sum += num_val;
+        }
+        
+        Ok(heap.alloc(sum))
+    }
+
     fn percentile<'v>(heap: &'v Heap, sequence: Value<'v>, p: Value<'v>) -> anyhow::Result<Value<'v>> {
         use starlark::values::list::ListRef;
         
