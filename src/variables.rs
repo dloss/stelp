@@ -4,6 +4,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// Global variables that persist across lines
+/// TODO: Memory optimization - HashMap grows linearly with unique variable names
+/// For constant memory usage in streaming scenarios, consider:
+/// - Bounded storage with LRU eviction
+/// - Periodic clearing of unused variables  
+/// - Reference counting for variable lifecycle management
 pub struct GlobalVariables {
     store: RefCell<HashMap<String, String>>, // Store as JSON strings to avoid lifetime issues
 }

@@ -989,6 +989,15 @@ impl<'a> InputFormatWrapper<'a> {
         output: &mut W,
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        use std::time::Instant;
+        let start_time = Instant::now();
+
+        // Initialize streaming context
+        pipeline.init_streaming_context(filename);
+
+        // Initialize local stats
+        let mut file_stats = crate::context::ProcessingStats::default();
+
         // Read headers
         let mut header_line = String::new();
         reader.read_line(&mut header_line)?;
@@ -1000,12 +1009,10 @@ impl<'a> InputFormatWrapper<'a> {
         let mut parser = CsvParser::new();
         parser.parse_headers(&header_line)?;
 
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
+        let error_strategy = pipeline.get_config().error_strategy.clone();
         let mut line_number = 1; // Start at 1 since we already read the header line
-        let mut parse_errors = Vec::new();
 
-        // Read and parse remaining lines
+        // STREAMING: Process each line immediately instead of collecting
         for line_result in reader.lines() {
             let line = line_result?;
             line_number += 1;
@@ -1016,13 +1023,11 @@ impl<'a> InputFormatWrapper<'a> {
             }
 
             // Parse CSV and create structured record
-            match parser.parse_line(&line) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
+            let record = match parser.parse_line(&line) {
+                Ok(data) => crate::context::RecordData::structured(data),
                 Err(parse_error) => {
                     // Handle parsing error according to error strategy
-                    match config.error_strategy {
+                    match error_strategy {
                         crate::config::ErrorStrategy::FailFast => {
                             return Err(format!(
                                 "CSV parse error on line {}: {}",
@@ -1031,33 +1036,40 @@ impl<'a> InputFormatWrapper<'a> {
                             .into());
                         }
                         crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
+                            // Add to parse errors and skip
+                            // TODO: Memory optimization - this Vec grows linearly with parsing errors
+                            // For true constant memory usage, consider:
+                            // - Limiting to last N errors only
+                            // - Disabling error collection during streaming
+                            // - Using a bounded circular buffer
+                            file_stats.errors += 1;
+                            file_stats.parse_errors.push(crate::context::ParseErrorInfo {
                                 line_number,
+                                format_name: "CSV".to_string(),
                                 error: parse_error,
                             });
-                            // Skip the malformed line entirely to maintain output format consistency
                             continue;
                         }
                     }
                 }
+            };
+
+            // STREAMING: Process this single record immediately
+            let should_continue = pipeline.process_single_record_streaming(record, output)?;
+            if !should_continue {
+                break; // Exit or broken pipe
             }
         }
 
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
+        // Copy final stats from pipeline
+        let pipeline_stats = pipeline.get_stats();
+        file_stats.records_processed = pipeline_stats.records_processed;
+        file_stats.records_output = pipeline_stats.records_output;
+        file_stats.records_skipped = pipeline_stats.records_skipped;
+        file_stats.errors += pipeline_stats.errors; // Add to existing parse errors
+        file_stats.processing_time = start_time.elapsed();
 
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "CSV".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        Ok(file_stats)
     }
 
     fn process_tsv<R: BufRead, W: Write>(

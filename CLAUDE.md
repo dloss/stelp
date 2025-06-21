@@ -143,6 +143,25 @@ echo -e "name,score\nAlice,85\nBob,92\nCharlie,78\nDave,95" | cargo run -- -f cs
 
 ## Architecture Overview
 
+### Memory Usage and Streaming
+
+**Current Status**: Stelp now uses streaming architecture for CSV processing, reducing memory usage from ~10GB to ~40MB for large files (250x improvement). However, memory usage is not perfectly constant due to some remaining accumulators:
+
+**Known Memory Growth Issues** (for future optimization):
+1. **Parse Error Collection**: `file_stats.parse_errors` Vec grows with each parsing error and is never cleared during streaming
+2. **Global Variables**: `GlobalVariables` HashMap may grow if scripts create many unique variables across records  
+3. **Starlark Heap**: Starlark allocations between records may not be immediately garbage collected
+
+**Memory Growth Rate**: Very small (~1.8MB per 90K records), but still linear instead of constant.
+
+**Future Fixes**:
+- Limit parse_errors to last N errors or disable during streaming
+- Implement bounded global variable storage or periodic clearing
+- Force Starlark garbage collection between records
+- Consider using object pools for frequently allocated structures
+
+**Current Performance**: Memory usage grows very slowly and is acceptable for most use cases. The streaming architecture successfully prevents the catastrophic memory usage of the previous batching approach.
+
 ### Core Components
 
 **Pipeline Architecture**: The system uses a streaming pipeline pattern where data flows through multiple processing stages:

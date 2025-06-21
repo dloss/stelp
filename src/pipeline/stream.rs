@@ -705,6 +705,104 @@ impl StreamPipeline {
         &self.stats
     }
 
+    /// Process a single record with streaming (used by input format parsers)
+    pub fn process_single_record_streaming<W: Write>(
+        &mut self,
+        record: RecordData,
+        output: &mut W,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        self.context.line_number += 1;
+        self.context.record_count += 1;
+        self.stats.records_processed += 1;
+
+        // Process the record through the pipeline
+        match self
+            .process_record(&record)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+        {
+            ProcessResult::Transform(output_record) => {
+                if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                    if e.to_string().contains("Broken pipe") {
+                        return Ok(false); // Signal to stop processing
+                    }
+                    return Err(e.into());
+                }
+                self.stats.records_output += 1;
+            }
+            ProcessResult::FanOut(output_records) => {
+                for output_record in output_records {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        if e.to_string().contains("Broken pipe") {
+                            return Ok(false); // Signal to stop processing
+                        }
+                        return Err(e.into());
+                    }
+                    self.stats.records_output += 1;
+                }
+            }
+            ProcessResult::TransformWithEmissions { primary, emissions } => {
+                if let Some(output_record) = primary {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        if e.to_string().contains("Broken pipe") {
+                            return Ok(false); // Signal to stop processing
+                        }
+                        return Err(e.into());
+                    }
+                    self.stats.records_output += 1;
+                }
+                for emission in emissions {
+                    if let Err(e) = self.output_formatter.write_record(output, &emission) {
+                        if e.to_string().contains("Broken pipe") {
+                            return Ok(false); // Signal to stop processing
+                        }
+                        return Err(e.into());
+                    }
+                    self.stats.records_output += 1;
+                }
+            }
+            ProcessResult::Skip => {
+                self.stats.records_skipped += 1;
+            }
+            ProcessResult::Exit {
+                data: final_output,
+                code,
+            } => {
+                self.exit_code = code;
+                if let Some(output_record) = final_output {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        if !e.to_string().contains("Broken pipe") {
+                            return Err(e.into());
+                        }
+                    }
+                    self.stats.records_output += 1;
+                }
+                return Ok(false); // Signal to stop processing (exit)
+            }
+            ProcessResult::Error(err) => match self.config.error_strategy {
+                ErrorStrategy::FailFast => return Err(Box::new(err)),
+                ErrorStrategy::Skip => {
+                    self.stats.errors += 1;
+                    eprintln!("stelp: line {}: {}", self.context.line_number, err);
+                }
+            },
+        }
+
+        self.context.total_processed += 1;
+        Ok(true) // Continue processing
+    }
+
+    /// Initialize streaming context (used by input format parsers)
+    pub fn init_streaming_context(&mut self, filename: Option<&str>) {
+        self.context.file_name = filename.map(|s| s.to_string());
+        self.context.line_number = 0;
+        self.context.record_count = 0;
+    }
+
+    /// Get mutable access to stats for input format parsers
+    pub fn get_stats_mut(&mut self) -> &mut ProcessingStats {
+        &mut self.stats
+    }
+
     /// Get the exit code from the last processed exit
     pub fn get_exit_code(&self) -> i32 {
         self.exit_code
