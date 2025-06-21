@@ -831,10 +831,6 @@ impl LineParser for CombinedParser {
 
 /// Simple parse error info for summary reporting
 #[derive(Debug)]
-struct ParseError {
-    line_number: usize,
-    error: String,
-}
 
 /// Wrapper that integrates input format parsing with existing StreamPipeline
 pub struct InputFormatWrapper<'a> {
@@ -922,73 +918,22 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = JsonlParser::new();
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 0;
-        let mut parse_errors = Vec::new();
-
-        // Read all lines and parse them
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse JSONL and create structured records
-            match parser.parse_line(line_content) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "JSON parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "JSON".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename,
+            parser, "JSONL", false // No headers for JSONL
+        )
     }
 
-    fn process_csv_or_tsv<R: BufRead, W: Write>(
+    /// Generic streaming processor for all line-based structured formats
+    fn process_line_based_format_streaming<R: BufRead, W: Write, P: LineParser>(
         &self,
         mut reader: R,
         pipeline: &mut crate::StreamPipeline,
         output: &mut W,
         filename: Option<&str>,
-        is_tsv: bool,
+        parser: P,
+        format_name: &str,
+        has_headers: bool,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         use std::time::Instant;
         let start_time = Instant::now();
@@ -1014,24 +959,22 @@ impl<'a> InputFormatWrapper<'a> {
             }
         }
 
-        // Read headers
-        let mut header_line = String::new();
-        reader.read_line(&mut header_line)?;
-
-        let format_name = if is_tsv { "TSV" } else { "CSV" };
-        if header_line.trim().is_empty() {
-            return Err(format!("{} file is empty", format_name).into());
-        }
-
-        let mut parser = if is_tsv {
-            CsvParser::new_tsv()
-        } else {
-            CsvParser::new()
-        };
-        parser.parse_headers(&header_line)?;
-
         let error_strategy = pipeline.get_config().error_strategy.clone();
-        let mut line_number = 1; // Start at 1 since we already read the header line
+        let mut line_number = 0;
+
+        // Handle headers if format requires them (CSV/TSV)
+        if has_headers {
+            let mut header_line = String::new();
+            reader.read_line(&mut header_line)?;
+            line_number = 1; // Start at 1 since we already read the header line
+
+            if header_line.trim().is_empty() {
+                return Err(format!("{} file is empty", format_name).into());
+            }
+
+            // Note: Header parsing is format-specific and handled by the caller
+            // This function only handles the data lines
+        }
 
         // STREAMING: Process each line immediately instead of collecting
         for line_result in reader.lines() {
@@ -1043,8 +986,8 @@ impl<'a> InputFormatWrapper<'a> {
                 continue;
             }
 
-            // Parse CSV/TSV and create structured record
-            let record = match parser.parse_line(&line) {
+            // Parse line using the provided parser and create structured record
+            let record = match parser.parse_line(line_content) {
                 Ok(data) => crate::context::RecordData::structured(data),
                 Err(parse_error) => {
                     // Handle parsing error according to error strategy
@@ -1103,6 +1046,38 @@ impl<'a> InputFormatWrapper<'a> {
         Ok(file_stats)
     }
 
+    fn process_csv_or_tsv<R: BufRead, W: Write>(
+        &self,
+        mut reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+        is_tsv: bool,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        let format_name = if is_tsv { "TSV" } else { "CSV" };
+        
+        // Read and parse headers first
+        let mut header_line = String::new();
+        reader.read_line(&mut header_line)?;
+
+        if header_line.trim().is_empty() {
+            return Err(format!("{} file is empty", format_name).into());
+        }
+
+        let mut parser = if is_tsv {
+            CsvParser::new_tsv()
+        } else {
+            CsvParser::new()
+        };
+        parser.parse_headers(&header_line)?;
+
+        // Use generic streaming function for the data lines
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename, 
+            parser, format_name, false // false because we already handled headers
+        )
+    }
+
     fn process_csv<R: BufRead, W: Write>(
         &self,
         reader: R,
@@ -1131,64 +1106,10 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = LogfmtParser::new();
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 0;
-        let mut parse_errors = Vec::new();
-
-        // Read all lines and parse them
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse logfmt and create structured record
-            match parser.parse_line(line_content) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "logfmt parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "logfmt".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename,
+            parser, "logfmt", false // No headers for logfmt
+        )
     }
 
     fn process_syslog<R: BufRead, W: Write>(
@@ -1199,64 +1120,10 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = SyslogParser::new();
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 0;
-        let mut parse_errors = Vec::new();
-
-        // Read all lines and parse them
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse syslog and create structured record
-            match parser.parse_line(line_content) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "syslog parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "syslog".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename,
+            parser, "syslog", false // No headers for syslog
+        )
     }
 
     fn process_combined<R: BufRead, W: Write>(
@@ -1267,64 +1134,10 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = CombinedParser::new();
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 0;
-        let mut parse_errors = Vec::new();
-
-        // Read all lines and parse them
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse combined log and create structured record
-            match parser.parse_line(line_content) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "combined log parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "combined".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename,
+            parser, "combined", false // No headers for combined log format
+        )
     }
 
     fn process_fields<R: BufRead, W: Write>(
@@ -1335,64 +1148,10 @@ impl<'a> InputFormatWrapper<'a> {
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         let parser = FieldsParser::new();
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 0;
-        let mut parse_errors = Vec::new();
-
-        // Read all lines and parse them
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse fields and create structured record
-            match parser.parse_line(line_content) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "fields parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "fields".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+        self.process_line_based_format_streaming(
+            reader, pipeline, output, filename,
+            parser, "fields", false // No headers for fields format
+        )
     }
 
     fn process_text_with_chunking<R: BufRead, W: Write>(
