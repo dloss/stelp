@@ -998,6 +998,21 @@ impl<'a> InputFormatWrapper<'a> {
         // Initialize local stats
         let mut file_stats = crate::context::ProcessingStats::default();
 
+        // Execute BEGIN processor if present (before reading any data)
+        match pipeline.execute_begin_streaming(output) {
+            Ok(begin_output_count) => {
+                file_stats.records_output += begin_output_count;
+            }
+            Err(e) => {
+                if e.to_string() == "Early exit from BEGIN" {
+                    file_stats.processing_time = start_time.elapsed();
+                    return Ok(file_stats); // Early exit from BEGIN
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
         // Read headers
         let mut header_line = String::new();
         reader.read_line(&mut header_line)?;
@@ -1058,6 +1073,16 @@ impl<'a> InputFormatWrapper<'a> {
             let should_continue = pipeline.process_single_record_streaming(record, output)?;
             if !should_continue {
                 break; // Exit or broken pipe
+            }
+        }
+
+        // Execute END processor if present (after processing all data)
+        match pipeline.execute_end_streaming(output) {
+            Ok(end_output_count) => {
+                file_stats.records_output += end_output_count;
+            }
+            Err(e) => {
+                return Err(e);
             }
         }
 

@@ -798,6 +798,182 @@ impl StreamPipeline {
         self.context.record_count = 0;
     }
 
+    /// Execute BEGIN processor for streaming (used by input format parsers)
+    pub fn execute_begin_streaming<W: Write>(
+        &mut self,
+        output: &mut W,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut records_output = 0;
+        
+        if let Some(begin_processor) = &mut self.begin_processor {
+            let begin_ctx = RecordContext {
+                line_number: 0,
+                record_count: 0,
+                file_name: self.context.file_name.as_deref(),
+                global_vars: &self.context.global_vars,
+                debug: self.config.debug,
+            };
+
+            let empty_record = RecordData::text(String::new());
+
+            match begin_processor.process(&empty_record, &begin_ctx) {
+                ProcessResult::Transform(output_record) => {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        if !e.to_string().contains("Broken pipe") {
+                            return Err(e.into());
+                        }
+                    } else {
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::FanOut(output_records) => {
+                    for output_record in output_records {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::TransformWithEmissions { primary, emissions } => {
+                    if let Some(primary_record) = primary {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e.into());
+                            }
+                        } else {
+                            records_output += 1;
+                        }
+                    }
+                    for emission in emissions {
+                        if let Err(e) = self.output_formatter.write_record(output, &emission) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
+                    if let Some(output_record) = final_output {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e.into());
+                            }
+                        } else {
+                            records_output += 1;
+                        }
+                    }
+                    return Err("Early exit from BEGIN".into()); // Signal early exit
+                }
+                ProcessResult::Error(err) => match self.config.error_strategy {
+                    ErrorStrategy::FailFast => return Err(Box::new(err)),
+                    ErrorStrategy::Skip => {
+                        self.stats.errors += 1;
+                        eprintln!("stelp: BEGIN error: {}", err);
+                    }
+                },
+                ProcessResult::Skip => {
+                    // BEGIN can skip, which means no output but continue processing
+                }
+            }
+        }
+        
+        Ok(records_output)
+    }
+
+    /// Execute END processor for streaming (used by input format parsers)
+    pub fn execute_end_streaming<W: Write>(
+        &mut self,
+        output: &mut W,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut records_output = 0;
+        
+        if let Some(end_processor) = &mut self.end_processor {
+            let end_ctx = RecordContext {
+                line_number: self.context.line_number,
+                record_count: self.context.record_count,
+                file_name: self.context.file_name.as_deref(),
+                global_vars: &self.context.global_vars,
+                debug: self.config.debug,
+            };
+
+            let empty_record = RecordData::text(String::new());
+
+            match end_processor.process(&empty_record, &end_ctx) {
+                ProcessResult::Transform(output_record) => {
+                    if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                        if !e.to_string().contains("Broken pipe") {
+                            return Err(e.into());
+                        }
+                    } else {
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::FanOut(output_records) => {
+                    for output_record in output_records {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::TransformWithEmissions { primary, emissions } => {
+                    if let Some(primary_record) = primary {
+                        if let Err(e) = self.output_formatter.write_record(output, &primary_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e.into());
+                            }
+                        } else {
+                            records_output += 1;
+                        }
+                    }
+                    for emission in emissions {
+                        if let Err(e) = self.output_formatter.write_record(output, &emission) {
+                            if e.to_string().contains("Broken pipe") {
+                                break;
+                            }
+                            return Err(e.into());
+                        }
+                        records_output += 1;
+                    }
+                }
+                ProcessResult::Exit { data: final_output, code } => {
+                    self.exit_code = code;
+                    if let Some(output_record) = final_output {
+                        if let Err(e) = self.output_formatter.write_record(output, &output_record) {
+                            if !e.to_string().contains("Broken pipe") {
+                                return Err(e.into());
+                            }
+                        } else {
+                            records_output += 1;
+                        }
+                    }
+                    // END exit just stops further processing
+                }
+                ProcessResult::Error(err) => match self.config.error_strategy {
+                    ErrorStrategy::FailFast => return Err(Box::new(err)),
+                    ErrorStrategy::Skip => {
+                        self.stats.errors += 1;
+                        eprintln!("stelp: END error: {}", err);
+                    }
+                },
+                ProcessResult::Skip => {
+                    // END can skip, which means no output
+                }
+            }
+        }
+        
+        Ok(records_output)
+    }
+
     /// Get mutable access to stats for input format parsers
     pub fn get_stats_mut(&mut self) -> &mut ProcessingStats {
         &mut self.stats
