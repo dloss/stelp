@@ -77,9 +77,9 @@ impl LevelMapProcessor {
     fn extract_timestamp_from_structured(&self, data: &serde_json::Value) -> Option<String> {
         if let serde_json::Value::Object(obj) = data {
             // Common timestamp field names in order of preference
-            let timestamp_fields = ["timestamp", "ts", "time", "@timestamp"];
+            let timestamp_fields = crate::pipeline::config::TIMESTAMP_KEYS;
             
-            for field in &timestamp_fields {
+            for field in timestamp_fields {
                 if let Some(timestamp_value) = obj.get(*field) {
                     let timestamp_str = match timestamp_value {
                         serde_json::Value::String(s) => s.clone(),

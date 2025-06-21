@@ -16,7 +16,7 @@ impl LogfmtFormatter {
     pub fn new(use_colors: bool) -> Self {
         Self {
             colors: ColorScheme::new(use_colors),
-            timestamp_keys: vec!["timestamp", "ts", "time", "at", "_t", "@t", "@timestamp"],
+            timestamp_keys: crate::pipeline::config::TIMESTAMP_KEYS.to_vec(),
             level_keys: vec![
                 "level",
                 "loglevel",

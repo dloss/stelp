@@ -80,6 +80,8 @@ stelp -f csv -F jsonl data.csv
 | **Syslog** | `Jan 1 10:00:00 host app: message` | Common log format |
 | **Apache/Nginx** | `192.168.1.1 - - [timestamp] "GET /"` | Access logs |
 
+> **Note**: Logfmt output automatically orders timestamp keys (`timestamp`, `ts`, `time`, `t`, `at`, `_ts`, `@t`) and level keys (`level`, `loglevel`, `log_level`, `lvl`, `severity`, `levelname`, `@l`) first for optimal readability.
+
 Force format with `-f`: `stelp -f jsonl data.txt`
 
 ## Core Concepts (5 minutes to learn)

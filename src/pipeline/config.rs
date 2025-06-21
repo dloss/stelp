@@ -1,6 +1,10 @@
 use crate::input_format::InputFormat;
 use crate::output_format::OutputFormat;
 
+/// Shared field key constants
+pub const TIMESTAMP_KEYS: &[&str] = &["timestamp", "ts", "time", "t", "at", "_ts", "@t"];
+pub const LEVEL_KEYS: &[&str] = &["level", "loglevel", "log_level", "lvl", "severity", "levelname", "@l"];
+
 /// Configuration for pipeline behavior
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
