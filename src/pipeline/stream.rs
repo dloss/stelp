@@ -864,9 +864,9 @@ impl StreamPipeline {
                             if !e.to_string().contains("Broken pipe") {
                                 return Err(e.into());
                             }
-                        } else {
-                            records_output += 1;
                         }
+                        // Note: Don't increment records_output here since we're exiting early
+                        // and the caller won't be able to use this count anyway
                     }
                     return Err("Early exit from BEGIN".into()); // Signal early exit
                 }

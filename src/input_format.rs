@@ -982,12 +982,13 @@ impl<'a> InputFormatWrapper<'a> {
         Ok(result)
     }
 
-    fn process_csv<R: BufRead, W: Write>(
+    fn process_csv_or_tsv<R: BufRead, W: Write>(
         &self,
         mut reader: R,
         pipeline: &mut crate::StreamPipeline,
         output: &mut W,
         filename: Option<&str>,
+        is_tsv: bool,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
         use std::time::Instant;
         let start_time = Instant::now();
@@ -1017,11 +1018,16 @@ impl<'a> InputFormatWrapper<'a> {
         let mut header_line = String::new();
         reader.read_line(&mut header_line)?;
 
+        let format_name = if is_tsv { "TSV" } else { "CSV" };
         if header_line.trim().is_empty() {
-            return Err("CSV file is empty".into());
+            return Err(format!("{} file is empty", format_name).into());
         }
 
-        let mut parser = CsvParser::new();
+        let mut parser = if is_tsv {
+            CsvParser::new_tsv()
+        } else {
+            CsvParser::new()
+        };
         parser.parse_headers(&header_line)?;
 
         let error_strategy = pipeline.get_config().error_strategy.clone();
@@ -1037,7 +1043,7 @@ impl<'a> InputFormatWrapper<'a> {
                 continue;
             }
 
-            // Parse CSV and create structured record
+            // Parse CSV/TSV and create structured record
             let record = match parser.parse_line(&line) {
                 Ok(data) => crate::context::RecordData::structured(data),
                 Err(parse_error) => {
@@ -1045,8 +1051,8 @@ impl<'a> InputFormatWrapper<'a> {
                     match error_strategy {
                         crate::config::ErrorStrategy::FailFast => {
                             return Err(format!(
-                                "CSV parse error on line {}: {}",
-                                line_number, parse_error
+                                "{} parse error on line {}: {}",
+                                format_name, line_number, parse_error
                             )
                             .into());
                         }
@@ -1060,7 +1066,7 @@ impl<'a> InputFormatWrapper<'a> {
                             file_stats.errors += 1;
                             file_stats.parse_errors.push(crate::context::ParseErrorInfo {
                                 line_number,
-                                format_name: "CSV".to_string(),
+                                format_name: format_name.to_string(),
                                 error: parse_error,
                             });
                             continue;
@@ -1097,82 +1103,24 @@ impl<'a> InputFormatWrapper<'a> {
         Ok(file_stats)
     }
 
-    fn process_tsv<R: BufRead, W: Write>(
+    fn process_csv<R: BufRead, W: Write>(
         &self,
-        mut reader: R,
+        reader: R,
         pipeline: &mut crate::StreamPipeline,
         output: &mut W,
         filename: Option<&str>,
     ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
-        // Read headers
-        let mut header_line = String::new();
-        reader.read_line(&mut header_line)?;
+        self.process_csv_or_tsv(reader, pipeline, output, filename, false)
+    }
 
-        if header_line.trim().is_empty() {
-            return Err("TSV file is empty".into());
-        }
-
-        let mut parser = CsvParser::new_tsv();
-        parser.parse_headers(&header_line)?;
-
-        let mut records = Vec::new();
-        let config = pipeline.get_config();
-        let mut line_number = 1; // Start at 1 since we already read the header line
-        let mut parse_errors = Vec::new();
-
-        // Read and parse remaining lines
-        for line_result in reader.lines() {
-            let line = line_result?;
-            line_number += 1;
-            let line_content = line.trim();
-
-            if line_content.is_empty() {
-                continue;
-            }
-
-            // Parse TSV and create structured record
-            match parser.parse_line(&line) {
-                Ok(data) => {
-                    records.push(crate::context::RecordData::structured(data));
-                }
-                Err(parse_error) => {
-                    // Handle parsing error according to error strategy
-                    match config.error_strategy {
-                        crate::config::ErrorStrategy::FailFast => {
-                            return Err(format!(
-                                "TSV parse error on line {}: {}",
-                                line_number, parse_error
-                            )
-                            .into());
-                        }
-                        crate::config::ErrorStrategy::Skip => {
-                            // Collect error for later reporting
-                            parse_errors.push(ParseError {
-                                line_number,
-                                error: parse_error,
-                            });
-                            // Skip the malformed line entirely to maintain output format consistency
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Process records directly
-        let mut result = pipeline.process_records(records, output, filename)?;
-
-        // Add parse errors to the statistics
-        result.errors += parse_errors.len();
-        for parse_error in parse_errors {
-            result.parse_errors.push(crate::context::ParseErrorInfo {
-                line_number: parse_error.line_number,
-                format_name: "TSV".to_string(),
-                error: parse_error.error,
-            });
-        }
-
-        Ok(result)
+    fn process_tsv<R: BufRead, W: Write>(
+        &self,
+        reader: R,
+        pipeline: &mut crate::StreamPipeline,
+        output: &mut W,
+        filename: Option<&str>,
+    ) -> Result<crate::context::ProcessingStats, Box<dyn std::error::Error>> {
+        self.process_csv_or_tsv(reader, pipeline, output, filename, true)
     }
 
     fn process_logfmt<R: BufRead, W: Write>(
